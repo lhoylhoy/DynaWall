@@ -5,10 +5,10 @@
  *
  *   node windows/make-icon.cjs
  *
- * macOS ships `sips`, so the Windows icon is derived from the same Luminous
- * Horizon & Eclipse Orb artwork as AppIcon.icns — no third-party tooling. Each
- * size is a PNG inside the ICO container (Vista+ format). app.ico is checked in,
- * so building the Windows app does not need Node.
+ * macOS ships `sips`, so the Windows icon is derived from the same Bauhaus
+ * Sunrise artwork as AppIcon.icns — no third-party tooling. Each size is a PNG
+ * inside the ICO container (Vista+ format). app.ico is checked in, so building the
+ * Windows app does not need Node.
  */
 
 const { execFileSync } = require('node:child_process');

@@ -1468,22 +1468,14 @@ final class WallpaperPreferences: ObservableObject {
         return name.isEmpty ? path : name
     }
 
-    /// One line under the folder row: what will rotate, and whether it follows
-    /// the clock.
+    /// One short badge: what the slideshow rotates through right now.
     ///
     /// The band mirrors `resolvePhotoBand()` in `script.js`: with the palette
     /// pinned to `.auto`, photos follow the clock.
     var photoCollectionHint: String {
-        if photoCount == 0 {
-            if usesStandardPhotoFolder {
-                return "Add images to ~/Pictures/DynaWall — the desktop stays solid black."
-            }
-            return "No supported images in this folder — the desktop stays solid black."
-        }
-        let summary = "\(photoCount) \(photoCount == 1 ? "photo" : "photos")"
-        guard photoSync else { return summary + " · all photos, any time of day" }
-        let band = ThemeSlot.current().label.lowercased()
-        return summary + " · " + band + " photos right now"
+        guard photoCount > 0 else { return "No photos" }
+        guard photoSync else { return "All photos" }
+        return ThemeSlot.current().label + " photos"
     }
 
     // MARK: Typography
@@ -1495,42 +1487,6 @@ final class WallpaperPreferences: ObservableObject {
     /// and lets a re-import replace the face instead of caching the old one.
     var customFontSource: String {
         WallpaperFont.dataURL(atPath: customFontPath) ?? ""
-    }
-
-    /// The file name shown under the font picker, `""` when nothing was imported.
-    var importedFontName: String {
-        let path = customFontPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty else { return "" }
-        let name = (path as NSString).lastPathComponent
-        return name.isEmpty ? path : name
-    }
-
-    /// One line of context for the typography card.
-    var fontFamilyHint: String {
-        let family = WallpaperFont.normalizedFamily(fontFamily)
-        if !importedFontName.isEmpty {
-            return "\(family) · imported from \(importedFontName)"
-        }
-        if WallpaperFont.isBundled(family) {
-            // The same sentence for all four, with no family name spliced in: the
-            // popover follows the measured content height, so a hint that wrapped for
-            // a longer name ("Google Sans Flex ships with DynaWall — no install, no
-            // download." is 297 pt of the 288 pt the card has) would resize the whole
-            // panel the moment the selection changed.
-            return "Bundled with DynaWall — no install, no download."
-        }
-        switch family.lowercased() {
-        case "sf pro", "system sans":
-            return "SF Pro is the macOS system face."
-        case "new york":
-            return "New York is the editorial serif macOS ships."
-        case "sf mono":
-            return "SF Mono is macOS's monospaced face."
-        case "avenir next":
-            return "Avenir Next is the geometric sans macOS ships."
-        default:
-            return "\(family) is a system font on this Mac."
-        }
     }
 
     /// Import a downloaded font file, select it and remember it.
@@ -3047,7 +3003,10 @@ struct SettingsPopoverView: View {
             VStack(alignment: .leading, spacing: 8) {
                 // One menu, not a chip grid: every installed family is listed, the
                 // bundled default is one entry, and the four bundled faces are not
-                // offered as separate choices.
+                // offered as separate choices. The label is the card's only text and it
+                // stays on one line (trimmed in the middle): the popover is sized from
+                // its measured content, so a second line would grow the panel and move
+                // every card below it when the selection changed.
                 Menu {
                     Picker("Font", selection: fontFamilyBinding) {
                         Text("Default (Outfit)").tag(WallpaperFont.defaultFamily)
@@ -3079,16 +3038,6 @@ struct SettingsPopoverView: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .help("Choose a system font, or keep the bundled Outfit default")
-                // One line, always. The popover resizes itself to the measured content
-                // height, so a hint that wrapped for a longer family name would grow the
-                // panel and move every card below it when the selection changed. A long
-                // name is trimmed in the middle instead, and the full line is on hover.
-                Text(preferences.fontFamilyHint)
-                    .font(.system(size: 9.5))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .help(preferences.fontFamilyHint)
             }
         }
     }
@@ -3128,6 +3077,20 @@ struct SettingsPopoverView: View {
 
     // MARK: Photos
 
+    /// A one-line status capsule: the short replacement for the sentences that used to
+    /// explain a control. It holds a fixed single line, so the popover — sized from its
+    /// measured content — never jumps when a status changes.
+    private func statusBadge(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .medium))
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.primary.opacity(0.07)))
+    }
+
     private var photosCard: some View {
         card(systemImage: "photo.on.rectangle.angled", title: "Photos") {
             VStack(alignment: .leading, spacing: 9) {
@@ -3152,6 +3115,10 @@ struct SettingsPopoverView: View {
                             }
                             .buttonStyle(.borderless)
                             .help("Show the next photo now")
+                        } else if controller.photoCount == 0 {
+                            // The switch stays disabled until the folder yields an
+                            // image; two words say why where a sentence used to sit.
+                            statusBadge("No photos")
                         }
                     }
 
@@ -3160,13 +3127,13 @@ struct SettingsPopoverView: View {
                         // the slideshow runs, so they stay out of the way when it
                         // does not.
                         Divider()
-                        Toggle("Match time of day", isOn: $preferences.photoSync)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                        Text(preferences.photoCollectionHint)
-                            .font(.system(size: 9.5))
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                        HStack(spacing: 8) {
+                            Toggle("Match time of day", isOn: $preferences.photoSync)
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                            Spacer(minLength: 0)
+                            statusBadge(preferences.photoCollectionHint)
+                        }
 
                         HStack(spacing: 8) {
                             Text("Rotate every")
@@ -3191,16 +3158,6 @@ struct SettingsPopoverView: View {
                                 .controlSize(.small)
                             Spacer(minLength: 0)
                         }
-                    } else if controller.photoCount > 0 {
-                        Text("Off — your greeting sits on the palette alone. Turn it on to rotate photos behind it.")
-                            .font(.system(size: 9.5))
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else {
-                        Text("No photos yet — add a folder to turn the slideshow on. Without one the desktop is solid black.")
-                            .font(.system(size: 9.5))
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
                 .disabled(controller.photoCount == 0)
@@ -3286,11 +3243,11 @@ struct SettingsPopoverView: View {
     private var folderCaption: String {
         let count = controller.photoCount
         if preferences.usesStandardPhotoFolder {
-            if count == 0 { return "Standard folder · empty · solid black" }
+            if count == 0 { return "Empty · standard folder" }
             return "\(count) \(count == 1 ? "photo" : "photos") · standard folder"
         }
-        if count == 0 { return "No supported images · solid black until one is added" }
-        return "\(count) \(count == 1 ? "photo" : "photos") · drop another folder to switch"
+        if count == 0 { return "No supported images" }
+        return "\(count) \(count == 1 ? "photo" : "photos")"
     }
 
     /// Read the dropped folder URL off the pasteboard and hand it to the model.
@@ -3333,10 +3290,6 @@ struct SettingsPopoverView: View {
                 Toggle("Launch at login", isOn: $preferences.launchAtLogin)
                     .toggleStyle(.switch)
                     .controlSize(.small)
-                Text("Start DynaWall automatically when you log in to your Mac.")
-                    .font(.system(size: 9.5))
-                    .foregroundColor(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
                 if preferences.launchAtLoginRequiresApproval {
                     HStack(spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -3636,90 +3589,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.terminate(nil)
     }
 
-    /// The menu bar mark: a sunrise, not a hard hat.
+    /// The menu bar mark: the app icon's Bauhaus silhouette, drawn at 18×18.
     ///
-    /// A filled solar dome with three short rays rises clear of a rounded horizon
-    /// bar; the eclipse hemisphere below is a faint, dashed arc so it reads as the
-    /// hidden half of the same circle instead of a chin strap. Drawn as a template
-    /// image, so macOS tints it for the light and dark menu bar — and dims it for
-    /// free while the wallpaper is paused (`button.appearsDisabled`).
+    /// One solid bone dome sitting flush on a razor horizon, with the lower half left
+    /// empty — the same two shapes as the app icon, so the status item and the bundle
+    /// are unmistakably the same mark. Drawn as a template image, so macOS tints it
+    /// for the light and dark menu bar and dims it for free while the wallpaper is
+    /// paused (`button.appearsDisabled`).
     static func makeMenuBarIcon() -> NSImage {
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: false) { _ in
-            // Optical centre: the dome reads heavier than the submerged arc, so the
+            // Optical centre: the dome reads heavier than the empty half below, so the
             // horizon sits a touch above the geometric middle of the canvas.
-            let center = NSPoint(x: size.width / 2, y: 9.1)
-            let orbRadius: CGFloat = 5.4
-            let horizonWidth: CGFloat = 15
-            let horizonThickness: CGFloat = 1.15
-            // A real gap above the horizon is what keeps the mark from reading as a
-            // hard hat: the dome rises clear of the bar instead of merging with it.
-            let horizonGap: CGFloat = 1.1
-            let rayGap: CGFloat = 0.7
-            let rayLength: CGFloat = 1.45
-            let rayWidth: CGFloat = 1.0
+            let center = NSPoint(x: size.width / 2, y: 9.2)
+            let orbRadius: CGFloat = 5.6
+            // Wider than the dome, exactly as in the app icon: the line has to read as
+            // a horizon the sun is rising out of, not as an underline.
+            let horizonWidth: CGFloat = 15.4
+            let horizonThickness: CGFloat = 1.2
 
             NSColor.black.setFill()
             NSColor.black.setStroke()
 
-            // Solar hemisphere — a filled dome rising above the horizon.
+            // Solar hemisphere — a solid dome rising out of the horizon.
             let dome = NSBezierPath()
             dome.appendArc(withCenter: center, radius: orbRadius, startAngle: 0, endAngle: 180, clockwise: false)
             dome.close()
             dome.fill()
 
-            // Three short rays at 45°, 90° and 135°: at 18×18 a bare dome over a bar
-            // is ambiguous, and the rays settle it as a sun in one glance.
-            [90.0, 45.0, 135.0].forEach { degrees in
-                let radians = degrees * Double.pi / 180
-                let innerRadius = Double(orbRadius) + Double(rayGap)
-                let outerRadius = innerRadius + Double(rayLength)
-                let inner = NSPoint(
-                    x: center.x + CGFloat(innerRadius * cos(radians)),
-                    y: center.y + CGFloat(innerRadius * sin(radians))
-                )
-                let outer = NSPoint(
-                    x: center.x + CGFloat(outerRadius * cos(radians)),
-                    y: center.y + CGFloat(outerRadius * sin(radians))
-                )
-                let ray = NSBezierPath()
-                ray.move(to: inner)
-                ray.line(to: outer)
-                ray.lineWidth = rayWidth
-                ray.lineCapStyle = .round
-                ray.stroke()
-            }
-
-            // Rounded-cap horizon line, clear of the dome's base.
-            let horizon = NSRect(
+            // Razor horizon: square-ended and flush with the dome's base, so the two
+            // shapes read as one silhouette — the app icon at menu bar scale.
+            NSBezierPath(rect: NSRect(
                 x: center.x - horizonWidth / 2,
-                y: center.y - horizonGap - horizonThickness,
+                y: center.y - horizonThickness,
                 width: horizonWidth,
                 height: horizonThickness
-            )
-            NSBezierPath(
-                roundedRect: horizon,
-                xRadius: horizonThickness / 2,
-                yRadius: horizonThickness / 2
-            ).fill()
-
-            // Eclipse hemisphere — stroked just inside the dome's silhouette, with a
-            // gap between 180° and 202° (and mirrored at 338°) under the horizon. The
-            // dashes and the lowered opacity keep it a reflection of the sun rather
-            // than the strap of a construction helmet.
-            let eclipse = NSBezierPath()
-            eclipse.appendArc(
-                withCenter: center,
-                radius: orbRadius - horizonThickness / 2,
-                startAngle: 202,
-                endAngle: 338,
-                clockwise: false
-            )
-            eclipse.lineWidth = horizonThickness
-            eclipse.lineCapStyle = .round
-            eclipse.setLineDash([0.9, 1.5], count: 2, phase: 0)
-            NSColor.black.withAlphaComponent(0.55).setStroke()
-            eclipse.stroke()
+            )).fill()
 
             return true
         }

@@ -1286,9 +1286,19 @@ test('the Photos card uses a standard folder and waits for images before enablin
   assert.match(swift, /var usesStandardPhotoFolder: Bool/);
   assert.match(swift, /"Pictures\/DynaWall"/);
   assert.match(swift, /"Change Folder…"/);
-  assert.match(swift, /"Standard folder · empty · solid black"/);
+  assert.match(swift, /"Empty · standard folder"/);
   assert.match(swift, /"photos"\) · standard folder/);
-  assert.match(swift, /"photos"\) · drop another folder to switch/);
+  assert.match(swift, /return "No supported images"/);
+  assert.ok(
+    !swift.includes('drop another folder to switch'),
+    'the folder caption must not explain what dropping a folder does'
+  );
+
+  // The empty and off states are a two-word capsule, not a paragraph: the folder row
+  // already reports the count, so only the disabled switch needs a reason.
+  assert.match(photos, /statusBadge\("No photos"\)/, 'the disabled switch says why in two words');
+  assert.ok(!photos.includes('your greeting sits'), 'the off-state paragraph is gone');
+  assert.ok(!photos.includes('No photos yet'), 'the empty-state paragraph is gone');
 });
 
 test('the standard Pictures/DynaWall folder is created and seeded from the bundle', () => {
@@ -1335,14 +1345,17 @@ test('Pause/Resume appears once and an empty folder clears the old photos', () =
   );
 });
 
-test('the menu bar mark keeps air between dome, horizon and eclipse', () => {
+test('the menu bar mark sits flush on its horizon, at the app icon proportions', () => {
   const swift = hostSwift();
   const icon = memberBody(swift, 'static func makeMenuBarIcon() -> NSImage');
-  assert.match(icon, /let horizonGap: CGFloat = [0-9.]+/);
-  assert.match(icon, /roundedRect: horizon/);
-  assert.match(icon, /y: center\.y - horizonGap - horizonThickness/);
-  assert.match(icon, /\[90\.0, 45\.0, 135\.0\]/, 'the sun needs its rays at 18×18');
-  assert.match(icon, /setLineDash/, 'the eclipse arc is a faint reflection, not a chin strap');
+  // Optical anchor: the dome is centred just above the geometric middle, and the
+  // razor horizon is wider than the dome so it reads as a horizon, not an underline.
+  assert.match(icon, /let center = NSPoint\(x: size\.width \/ 2, y: 9\.2\)/);
+  assert.match(icon, /let orbRadius: CGFloat = 5\.6/);
+  assert.match(icon, /let horizonWidth: CGFloat = 15\.4/);
+  // Flush: the dome's base meets the line, exactly as in the app icon — no gap.
+  assert.doesNotMatch(icon, /horizonGap/);
+  assert.match(icon, /y: center\.y - horizonThickness/);
 });
 
 test('the popover includes an option to run on startup / launch at login', () => {
@@ -1354,6 +1367,12 @@ test('the popover includes an option to run on startup / launch at login', () =>
   assert.match(swift, /private var startupCard: some View/);
   assert.match(swift, /Toggle\("Launch at login", isOn: \$preferences\.launchAtLogin\)/);
   assert.match(swift, /startupCard/);
+  // The label already says what the switch does; the card is one row plus the warning
+  // that only appears when macOS is waiting for approval.
+  assert.ok(
+    !swift.includes('Start DynaWall automatically when you log in'),
+    'the startup explainer is gone'
+  );
 });
 
 
@@ -1381,7 +1400,7 @@ test('the macOS bundle ships a custom AppIcon.icns and Info.plist icon entry', (
   assert.equal(icnsHeader, 'icns', 'AppIcon.icns must begin with the icns magic header');
 });
 
-test('the icon master is pure geometry: two tones, snapped hairlines, no aura', () => {
+test('the icon master is pure geometry: one dome, one razor line, no aura', () => {
   const swift = fs.readFileSync(path.join(ROOT, 'macos', 'make-icon.swift'), 'utf8');
 
   // Apple's icon grid, intact: an 824 pt squircle with 185 pt corners centred in the
@@ -1390,16 +1409,23 @@ test('the icon master is pure geometry: two tones, snapped hairlines, no aura', 
   assert.match(swift, /let cornerRadius: CGFloat = 185\.0/);
 
   // Every hairline snaps to whole device pixels, so the 16x16 entry keeps a one-pixel
-  // horizon and eclipse arc instead of smearing them into grey haze.
+  // horizon instead of smearing it into grey haze.
   assert.match(swift, /func hairline\(_ modelled: CGFloat\) -> CGFloat/);
   assert.match(swift, /let horizonThickness = hairline\(/);
-  assert.match(swift, /let arcThickness = hairline\(/);
 
-  // The solar dome is a two-stop dawn — ivory into amber — with no third colour.
+  // The shipped mark is the Bauhaus silhouette: one flat bone dome on a flat obsidian
+  // field, cut by a single razor horizon. No gradients anywhere in that path.
+  assert.match(swift, /func renderBauhausIcon\(pixelSize: Int, drawArc: Bool\)/);
+  assert.match(swift, /let bone = srgb\(250, 246, 238\)/);
+  assert.match(swift, /default: return \.bauhaus/, 'Bauhaus is the default mark');
+
+  // The earlier gradient reading of the same geometry stays switchable, so both can be
+  // rendered from one generator (DYNAWALL_ICON_DESIGN=monolith|arc).
+  assert.match(swift, /case \.luminousMonolith:/);
   assert.match(swift, /colors: \[ivory, amber\] as CFArray/);
 
-  // The atmospheric layers that used to soften the mark stay gone: no dusk whisper,
-  // no corona bloom, no specular inner rim and no reflection bleeding off the water.
+  // The atmospheric layers stay gone: no dusk whisper, no corona bloom, no specular
+  // inner rim and no reflection bleeding off the water.
   assert.doesNotMatch(swift, /drawRadialGradient/, 'the mark must stay free of radial bloom');
   assert.doesNotMatch(swift, /let (whisper|corona|reflection) = CGGradient/, 'the aura layers are gone for good');
 });
@@ -1409,11 +1435,13 @@ test('the menu bar icon is a custom vector template, not an SF Symbol', () => {
   assert.match(swift, /static func makeMenuBarIcon\(\) -> NSImage/);
   assert.match(swift, /image\.isTemplate = true/);
   assert.match(swift, /button\.image = Self\.makeMenuBarIcon\(\)/);
-  // The mark mirrors the app icon: a filled solar dome with three short rays over a
-  // rounded horizon, with the eclipse hemisphere stroked as a faint, gapped arc below.
+  // The mark is the app icon at menu bar scale: one solid dome sitting flush on a
+  // square-ended razor horizon, with no rays and no eclipse arc.
   const icon = memberBody(swift, 'static func makeMenuBarIcon() -> NSImage');
   assert.match(icon, /appendArc\(withCenter: center, radius: orbRadius, startAngle: 0, endAngle: 180/);
-  assert.match(icon, /startAngle: 202,?\s*endAngle: 338/);
+  assert.match(icon, /NSBezierPath\(rect: NSRect\(/, 'the horizon is a square-ended razor line');
+  assert.doesNotMatch(icon, /\[90\.0, 45\.0, 135\.0\]/, 'the three rays are gone');
+  assert.doesNotMatch(icon, /setLineDash/, 'the dashed eclipse arc is gone');
   assert.ok(!swift.includes('text.below.photo'), 'the generic SF Symbol menu bar icon is gone');
 });
 
@@ -2213,36 +2241,27 @@ test('the only webfonts are the four bundled faces', () => {
   assert.match(css, /font-weight:\s*300 700/);
 });
 
-test('the typography hint cannot resize the popover', () => {
+test('the typography card is the picker alone, with nothing under it', () => {
   const swift = hostSwift();
   const card = memberBody(swift, 'private var typographyCard: some View');
 
-  // The popover is resized from the measured content height (PopoverHeightKey →
-  // popover.contentSize), so a hint that wrapped for a longer family name grew the
-  // panel and moved every card under it the moment that chip was clicked. It is one
-  // line now, and a long name truncates instead of wrapping.
-  assert.match(card, /Text\(preferences\.fontFamilyHint\)\s*\n\s*\.font\(\.system\(size: 9\.5\)\)/);
-  assert.match(card, /\.lineLimit\(1\)\s*\n\s*\.truncationMode\(\.middle\)/);
-  assert.ok(!/\.lineLimit\(2\)[\s\S]{0,80}fontFamilyHint/.test(card), 'the hint must not wrap');
-
-  // The bundled sentence is the same for all four faces — no family name spliced in —
-  // so clicking between chips cannot change the line at all.
-  const hint = memberBody(swift, 'var fontFamilyHint: String');
-  const bundled = hint.slice(hint.indexOf('isBundled(family)'), hint.indexOf('switch family'));
-  assert.match(bundled, /return "Bundled with DynaWall — no install, no download\."/);
-  assert.ok(!bundled.includes('\\(family)'), 'the bundled hint must not interpolate the family name');
-
-  // Windows grows its cards the same way, so both of its hints are constant too (the
-  // imported case above them does name the file, which is a deliberate one-off).
-  const form = readText('windows/SettingsForm.cs');
-  const update = memberBody(form, 'private void UpdateFontHint()');
-  assert.match(update, /fontHint\.Text = "Bundled with DynaWall — every other family falls back to Outfit\."/);
-  assert.match(update, /fontHint\.Text = "A system font from this PC — missing families fall back to Outfit\."/);
-  const familyHints = update.slice(update.indexOf('IsBundledFontFamily(Preferences.FontFamily)'));
-  assert.ok(
-    !familyHints.includes('$"'),
-    'an interpolated hint re-wraps when the family name changes length'
+  // The card's only text is the family name in the picker label. It stays on one line
+  // and trims in the middle: the popover is resized from the measured content height,
+  // so a second line would grow the panel and move every card below it.
+  assert.match(
+    card,
+    /Text\(fontPickerLabel\)\s*\n\s*\.font\(WallpaperFont\.regular\(size: 11, family: preferences\.fontFamily\)\)/
   );
+  assert.match(card, /\.lineLimit\(1\)\s*\n\s*\.truncationMode\(\.middle\)/);
+  assert.ok(!card.includes('fontFamilyHint'), 'the explainer line under the picker is gone');
+  assert.ok(!swift.includes('var fontFamilyHint'), 'no hint strings are kept for a hint nobody sees');
+  assert.ok(!swift.includes('importedFontName'), 'the hint was its only reader');
+
+  // Windows matches: one dropdown with its Add font… button, nothing underneath.
+  const form = readText('windows/SettingsForm.cs');
+  assert.match(form, /AddCard\(root, "Typography"/);
+  assert.ok(!form.includes('fontHint'), 'the label under the Windows font list is gone');
+  assert.ok(!form.includes('UpdateFontHint'), 'and so is the code that wrote it');
 });
 
 test('the bundled four stay the shared default but are hidden from the macOS dropdown', () => {

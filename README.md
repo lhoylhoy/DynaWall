@@ -73,7 +73,7 @@ SmartScreen (**More info → Run anyway**). The DMG is built on the Apple silico
 | `images/` | The bundled wallpapers: the six Golden Gate 5K time-of-day pictures plus six generated abstracts (replaceable — see Notes) |
 | `tests/verify.cjs` | Headless checks for `script.js` and the manifests |
 | `macos/DynaWallApp.swift` | Native macOS host: desktop-level windows, WebKit, menu bar settings |
-| `macos/make-icon.swift` | CoreGraphics generator for the app icon — the Luminous Horizon & Eclipse Orb, drawn from 16×16 to 1024×1024 |
+| `macos/make-icon.swift` | CoreGraphics generator for the app icon — the Bauhaus Sunrise mark (one flat dome, one razor horizon), drawn from 16×16 to 1024×1024; `DYNAWALL_ICON_DESIGN=monolith\|arc` re-renders the earlier variants |
 | `macos/AppIcon.icns` | Generated icon set (`AppIcon.png` is the 1024×1024 master it ships alongside) |
 | `macos/Info.plist` | Bundle metadata (`com.dynawall.macos`, `LSUIElement`) |
 | `build-macos.sh` | Zero-dependency `swiftc` build that assembles and signs `dist/DynaWall.app` |
@@ -332,10 +332,10 @@ Inside the popover:
   installing it system-wide: DynaWall copies the file into `~/Library/Application Support/DynaWall/Fonts`,
   registers it with CoreText, and reads the family name out of the file so the popover preview and the desktop
   use the same face. Every stack still tails into the bundled Outfit, so a font that is later uninstalled,
-  renamed or deleted degrades to the shipped look instead of a blank greeting. The hint under the picker stays
-  on one line (a long name truncates, with the full text on hover), because the popover is sized from its
-  measured content: a hint that wrapped for "Google Sans Flex" would grow the panel and shift every card below
-  it under the pointer.
+  renamed or deleted degrades to the shipped look instead of a blank greeting. The picker is the card's only
+  text: it stays on one line (a long family name truncates in the middle, with the full name on hover),
+  because the popover is sized from its measured content — a second line would grow the panel and shift
+  every card below it under the pointer.
 - **Startup.** A native **Launch at login** switch registers DynaWall with macOS (`SMAppService`) so it starts automatically when you log in, without having to open System Settings manually.
 - **Reset** in the footer restores the default subtitle, palette, slideshow and sync settings in one
   click, and returns the photo source to `~/Pictures/DynaWall`.
@@ -449,7 +449,7 @@ shortcuts, and can register it to start when you sign in.
 | Layering | `FindWindow("Progman")` + `SendMessageTimeout(0x052C)` asks Explorer to spawn the wallpaper `WorkerW`; each window is parented to the `WorkerW` below `SHELLDLL_DefView` with `SetParent`, so desktop icons stay on top |
 | Rendering | One borderless WebView2 window per display, loading `web/index.html` from the `https://dynawall.local/` virtual host |
 | Desktop interaction | The windows are `WS_EX_NOACTIVATE` children of the wallpaper layer, below the icon view — clicks, rubber-band selection and the desktop context menu keep working, and nothing appears in Alt+Tab |
-| Photos | The twelve curated wallpapers are served from `web/images/`; **Folder → Choose…** maps `https://dynawall-photos.local/` to that folder, keeping each filename in the URL so `script.js` can match it to the time of day |
+| Photos | The twelve curated wallpapers are served from `web/images/`; **Change…** maps `https://dynawall-photos.local/` to that folder, keeping each filename in the URL so `script.js` can match it to the time of day (and **Reveal** opens that folder, or `web/images/` when the bundled set is in use) |
 | Multi-monitor | One window per `Screen.AllScreens`, rebuilt when `SystemEvents.DisplaySettingsChanged` fires |
 | Sleep/wake | `PowerModes.Suspend/Resume` and session lock/unlock park the page and re-push settings and photos on resume |
 | Live settings | Every change is pushed with `window.livelyPropertyListener(...)` — the exact bridge the macOS app and Lively use |
@@ -469,8 +469,12 @@ shortcuts, and can register it to start when you sign in.
 | Exit | Stops the app (closing Settings leaves the wallpaper running) |
 
 Settings apply live: the window writes `settings.json`, pushes the changed values into every WebView2 and
-re-scans the folder if the photo source changed. **Reset** restores the shipped subtitle, palette, slideshow
-and sync settings but keeps your folder. The **Typography** card lists the quick picks (**Outfit**, **Google Sans
+re-scans the folder if the photo source changed. The window is the same panel the macOS app shows — a live
+miniature of the desktop on top (the band's background and glow, the greeting the page is painting, what the
+photos are doing, and a **Pause**/**Resume** pill), then one rounded card per topic. The photo options — the
+**Rotate every** pills (1m, 5m, 15m, 30m, 1h), shuffle, slow zoom and time-of-day matching — only appear while
+the slideshow runs, so the card stays short when it is off. **Reset** restores the shipped subtitle, palette,
+slideshow and sync settings but keeps your folder. The **Typography** card lists the quick picks (**Outfit**, **Google Sans
 Flex**, **Space Grotesk**, **Geist** — the bundled faces) plus every family installed in Windows, and **Add
 font…** copies a downloaded `.ttf`/`.otf`/`.ttc`/`.woff`/`.woff2` (up to 4 MB) into
 `%LOCALAPPDATA%\DynaWall\Fonts` and sends its bytes to the page as a `data:` URL — the file stays put even if you

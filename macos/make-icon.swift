@@ -62,16 +62,44 @@ func strokeGradient(_ ctx: CGContext,
     ctx.restoreGState()
 }
 
-/// Renders the DynaWall icon at `pixelSize x pixelSize`.
+/// Which mark the generator draws. `DYNAWALL_ICON_DESIGN=monolith|arc` re-renders the
+/// earlier variants; the default is the radical Bauhaus silhouette.
+enum IconDesign: String {
+    case bauhaus            // flat bone dome on a razor horizon, no arc (default)
+    case bauhausArc         // same, with a hairline submerged eclipse arc
+    case luminousMonolith   // gradient dome, hairline horizon, fading arc
+
+    static let current: IconDesign = {
+        switch ProcessInfo.processInfo.environment["DYNAWALL_ICON_DESIGN"]?.lowercased() {
+        case "monolith", "luminous", "a": return .luminousMonolith
+        case "arc", "bauhaus-arc", "3": return .bauhausArc
+        default: return .bauhaus
+        }
+    }()
+}
+
+/// Renders the definitive DynaWall icon at `pixelSize x pixelSize`.
 ///
-/// The mark is deliberately ultra-minimalist: pure geometry, two tones and vast
-/// negative space. Inside an obsidian squircle a single orb is cut by a razor
-/// horizon — a warm solar hemisphere rises above it, a submerged eclipse
-/// hemisphere rests below it. Day over night, in one clean optical split. There is
-/// no bloom, no corona, no specular inner rim and no reflection: every one of those
-/// blurred the silhouette at small sizes, and anything that cannot survive 16x16 is
-/// noise, not identity.
+/// One idea, two shapes: a solid bone hemisphere rising over a razor horizon, the
+/// lower half left as pure obsidian negative space. No gradients, no bloom, no
+/// corona, no specular inner rim — 100% vector starkness, the way a Bauhaus poster
+/// or a Teenage Engineering faceplate is built. The dome and the line still read at
+/// 16x16, which is the whole test: anything that cannot survive that size is noise,
+/// not identity.
 func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
+    switch IconDesign.current {
+    case .bauhaus:
+        return renderBauhausIcon(pixelSize: pixelSize, drawArc: false)
+    case .bauhausArc:
+        return renderBauhausIcon(pixelSize: pixelSize, drawArc: true)
+    case .luminousMonolith:
+        return renderLuminousMonolithIcon(pixelSize: pixelSize)
+    }
+}
+
+/// The gradient "Luminous Monolith" mark: kept switchable (`DYNAWALL_ICON_DESIGN=monolith`)
+/// so the two readings of the same geometry can be compared from one generator.
+func renderLuminousMonolithIcon(pixelSize: Int) -> NSBitmapImageRep {
     let size = CGFloat(pixelSize)
     let scale = size / 1024.0
 
@@ -304,6 +332,141 @@ func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
         from: CGPoint(x: center.x, y: bodyRect.minY),
         to: CGPoint(x: center.x, y: bodyRect.maxY)
     )
+
+    ctx.restoreGState() // end squircle clip
+    NSGraphicsContext.restoreGraphicsState()
+
+    return rep
+}
+
+/// Renders the Bauhaus mark: flat obsidian field, flat bone hemisphere, one razor
+/// horizon. `drawArc` completes the circle with a single hairline submerged arc for
+/// the eclipse reading; without it the silhouette is the starkest form of the mark.
+func renderBauhausIcon(pixelSize: Int, drawArc: Bool) -> NSBitmapImageRep {
+    let size = CGFloat(pixelSize)
+    let scale = size / 1024.0
+
+    guard let rep = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: pixelSize,
+        pixelsHigh: pixelSize,
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bytesPerRow: 0,
+        bitsPerPixel: 0
+    ) else {
+        fatalError("Failed to allocate bitmap rep for size \(pixelSize)")
+    }
+
+    NSGraphicsContext.saveGraphicsState()
+    guard let nsCtx = NSGraphicsContext(bitmapImageRep: rep) else {
+        fatalError("Failed to create NSGraphicsContext")
+    }
+    NSGraphicsContext.current = nsCtx
+    let ctx = nsCtx.cgContext
+    ctx.setAllowsAntialiasing(true)
+    ctx.setShouldAntialias(true)
+    ctx.interpolationQuality = .high
+    ctx.scaleBy(x: scale, y: scale)
+
+    // Apple HIG icon grid: 824x824 body centered inside 1024x1024 (100pt margin)
+    let bodyRect = CGRect(x: 100, y: 100, width: 824, height: 824)
+    let cornerRadius: CGFloat = 185.0
+    let bodyPath = squirclePath(in: bodyRect, cornerRadius: cornerRadius)
+
+    // The same optical anchor as every DynaWall mark: a horizon a hair above the
+    // geometric centre, so the dome reads as rising light, not a bisected disc.
+    let center = CGPoint(x: 512, y: 488)
+    let orbRadius: CGFloat = 204.0
+    let orbRect = CGRect(
+        x: center.x - orbRadius,
+        y: center.y - orbRadius,
+        width: orbRadius * 2,
+        height: orbRadius * 2
+    )
+    let orbPath = CGPath(ellipseIn: orbRect, transform: nil)
+    let upperHalf = CGRect(x: bodyRect.minX, y: center.y, width: bodyRect.width, height: bodyRect.maxY - center.y)
+    let lowerHalf = CGRect(x: bodyRect.minX, y: bodyRect.minY, width: bodyRect.width, height: center.y - bodyRect.minY)
+
+    // Hairlines snap to whole device pixels: one razor pixel at every iconset entry.
+    let onePixel = 1.0 / scale
+    func hairline(_ modelled: CGFloat) -> CGFloat {
+        let devicePixels = (modelled * scale).rounded(.toNearestOrAwayFromZero)
+        return max(1.0, devicePixels) * onePixel
+    }
+    let horizonThickness = hairline(2.5)
+    // A flat hairline rim, never a gradient: just enough edge to hold the squircle
+    // against a dark desktop without breaking the no-gradient rule.
+    let rimThickness: CGFloat = pixelSize >= 128 ? hairline(3.0) : 3.0
+    // One material only: bone. Every shape in the mark is this single colour.
+    let bone = srgb(250, 246, 238)
+
+    // 1. Ambient contact shadow — the only soft thing here, and it sits outside the
+    //    squircle so the mark itself stays hard-edged.
+    ctx.saveGState()
+    ctx.setShadow(
+        offset: CGSize(width: 0, height: -18 * max(0.35, scale)),
+        blur: 32,
+        color: srgb(0, 0, 0, 0.55)
+    )
+    ctx.setFillColor(srgb(7, 10, 17))
+    ctx.addPath(bodyPath)
+    ctx.fillPath()
+    ctx.restoreGState()
+
+    // 2. Clip to the squircle body
+    ctx.saveGState()
+    ctx.addPath(bodyPath)
+    ctx.clip()
+
+    // 3. Flat obsidian canvas: no gradient at all. The negative space is the icon.
+    ctx.setFillColor(srgb(7, 10, 17))
+    ctx.fill(bodyRect)
+
+    // 4. Solar hemisphere: solid bone, clipped to the half above the horizon.
+    ctx.saveGState()
+    ctx.clip(to: upperHalf)
+    ctx.addPath(orbPath)
+    ctx.clip()
+    ctx.setFillColor(bone)
+    ctx.fill(upperHalf)
+    ctx.restoreGState()
+
+    // 5. Optional submerged eclipse arc: a single flat hairline, brightest where it
+    //    meets the horizon. Flat alpha only — a gradient would soften the silhouette.
+    if drawArc {
+        ctx.saveGState()
+        ctx.addPath(orbPath)
+        ctx.setLineWidth(hairline(2.5))
+        ctx.replacePathWithStrokedPath()
+        ctx.clip()
+        ctx.clip(to: lowerHalf)
+        ctx.setFillColor(srgb(250, 246, 238, pixelSize >= 128 ? 0.42 : 0.62))
+        ctx.fill(lowerHalf)
+        ctx.restoreGState()
+    }
+
+    // 6. Razor horizon: one crisp line wider than the dome, held clear of the
+    //    squircle margins so it never reads as a ruler laid across the icon.
+    ctx.setFillColor(srgb(250, 246, 238, 0.92))
+    ctx.fill(CGRect(
+        x: bodyRect.minX + 96,
+        y: center.y - horizonThickness,
+        width: bodyRect.width - 192,
+        height: horizonThickness
+    ))
+
+    // 7. Flat rim hairline: a single tone, no gradient — just enough edge to hold the
+    //    squircle against a dark desktop.
+    ctx.saveGState()
+    ctx.addPath(bodyPath)
+    ctx.setLineWidth(rimThickness)
+    ctx.setStrokeColor(srgb(255, 255, 255, 0.09))
+    ctx.strokePath()
+    ctx.restoreGState()
 
     ctx.restoreGState() // end squircle clip
     NSGraphicsContext.restoreGraphicsState()

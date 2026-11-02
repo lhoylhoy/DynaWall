@@ -1,16 +1,29 @@
 name: Release
 
-# Push a tag (v1.0.0) to build both desktop packages and attach them to a GitHub
-# release. Run it manually from the Actions tab to smoke-test the build without
-# publishing anything.
+# Two download channels:
+#
+#   push to main  -> refreshes the rolling "nightly" pre-release, so there is
+#                    always an installer at a stable URL
+#   push a v* tag -> publishes a stable release (that is what /releases/latest
+#                    points at) with the same three files attached
+#
+# Run it manually from the Actions tab to refresh the nightly build.
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+# Serialise runs per ref: two pushes to main must not clobber the nightly
+# release at the same time.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   macos:
@@ -30,6 +43,7 @@ jobs:
         run: |
           hdiutil verify dist/DynaWall.dmg
           codesign --verify --verbose=2 dist/DynaWall.dmg
+          lipo -archs dist/DynaWall.app/Contents/MacOS/DynaWall
 
       - name: Upload the disk image
         uses: actions/upload-artifact@v4
@@ -59,7 +73,7 @@ jobs:
       - name: Build DynaWall.exe, portable zip and setup
         shell: pwsh
         run: |
-          $version = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}' } else { '0.0.0-dev' }
+          $version = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}' } else { '0.0.${{ github.run_number }}' }
           ./windows/build-release.ps1 -Version $version
 
       - name: Upload the Windows builds
@@ -71,10 +85,11 @@ jobs:
             dist/DynaWall-Windows-Portable.zip
           if-no-files-found: error
 
-  release:
-    name: Publish the GitHub release
+  publish:
+    name: Publish the downloads
     needs: [macos, windows]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Publish whatever did build: a Windows hiccup must not hide the macOS DMG.
+    if: always() && !cancelled()
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -85,14 +100,56 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Attach the artifacts to the release
+      - name: Attach the installers to a release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
-          else
-            gh release create "$TAG" dist/* --title "DynaWall $TAG" --generate-notes
+          set -euo pipefail
+          if ! ls dist/* >/dev/null 2>&1; then
+            echo "error: no installers reached the publish job" >&2
+            exit 1
           fi
+          ls -l dist
+
+          # A version tag publishes a stable release; /releases/latest points here.
+          if [ "$REF_TYPE" = "tag" ]; then
+            TAG="$REF_NAME"
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release upload "$TAG" dist/* --clobber
+            else
+              gh release create "$TAG" dist/* --title "DynaWall $TAG" --generate-notes
+            fi
+          else
+            # Everything else refreshes one rolling pre-release: the tag and the asset
+            # names stay put, so these URLs are always live.
+            TAG=nightly
+            NOTES="Latest build of $REF_NAME at $SHA.
+
+          - macOS 12+ (Apple silicon): DynaWall.dmg
+          - Windows 10/11 x64: DynaWall-Setup.exe or DynaWall-Windows-Portable.zip
+
+          Every push to main replaces these files. Versioned releases live under the v* tags."
+
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              gh release edit "$TAG" --title "Latest build" --notes "$NOTES"
+              gh release upload "$TAG" dist/* --clobber
+            else
+              gh release create "$TAG" dist/* --target "$SHA" --prerelease \
+                --title "Latest build" --notes "$NOTES"
+            fi
+          fi
+
+          # Put the download links on the workflow run page as well.
+          {
+            echo "### Installers"
+            echo
+            echo "- macOS 12+ (Apple silicon): https://github.com/$GH_REPO/releases/download/$TAG/DynaWall.dmg"
+            echo "- Windows setup: https://github.com/$GH_REPO/releases/download/$TAG/DynaWall-Setup.exe"
+            echo "- Windows portable: https://github.com/$GH_REPO/releases/download/$TAG/DynaWall-Windows-Portable.zip"
+            echo
+            echo "Release page: https://github.com/$GH_REPO/releases/tag/$TAG"
+          } >> "$GITHUB_STEP_SUMMARY"

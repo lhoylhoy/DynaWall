@@ -4,8 +4,9 @@
 #
 #   ./build-macos.sh
 #
-# Produces an ad-hoc signed, single-architecture (arm64 or x86_64, whichever is
-# running here) bundle at dist/DynaWall.app, targeted at macOS 12+.
+# Produces an ad-hoc signed bundle at dist/DynaWall.app, targeted at macOS 12+ and
+# built for the Mac running the script (the release DMG is built on an Apple
+# silicon runner; an Intel Mac runs `./build-macos.sh` itself).
 #
 # Requirements: macOS 12+ with the Xcode Command Line Tools (`xcode-select --install`).
 #
@@ -41,10 +42,12 @@ CURATED_PHOTOS=(
   "06-graphite.jpg"
 )
 
-if ! command -v swiftc >/dev/null 2>&1; then
-  echo "error: swiftc not found. Install the Xcode Command Line Tools: xcode-select --install" >&2
-  exit 1
-fi
+for tool in swiftc lipo; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "error: $tool not found. Install the Xcode Command Line Tools: xcode-select --install" >&2
+    exit 1
+  fi
+done
 
 for asset in index.html style.css script.js \
   assets/fonts/outfit-latin.woff2 \
@@ -72,10 +75,10 @@ if [[ ! -f "$ROOT/macos/AppIcon.icns" || "$ROOT/macos/make-icon.swift" -nt "$ROO
   swift -module-cache-path /tmp/swift-module-cache "$ROOT/macos/make-icon.swift" "$ROOT/macos"
 fi
 
-echo "==> Compiling for $(uname -m)"
 # One whole-module optimisation pass (the single source file can be inlined and
 # specialised as a unit, and unused generic/SwiftUI shims are dropped by the
 # linker) rather than per-file -O.
+echo "==> Compiling for $(uname -m)"
 swiftc -parse-as-library -swift-version 5 -O -whole-module-optimization \
   -module-cache-path /tmp/swift-module-cache \
   -target "$(uname -m)-apple-macos$MIN_MACOS" \
@@ -98,5 +101,5 @@ echo "==> Signing (ad-hoc)"
 codesign --force --sign - --timestamp=none "$APP_BUNDLE"
 codesign --verify --verbose=2 "$APP_BUNDLE"
 
-echo "==> Built $APP_BUNDLE"
+echo "==> Built $APP_BUNDLE ($(lipo -archs "$MACOS_BIN/$APP_NAME"))"
 echo "    Launch with: open $APP_BUNDLE"

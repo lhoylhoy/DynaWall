@@ -1814,16 +1814,39 @@ test('the Windows installer is per-user and ships the curated wallpapers', () =>
   );
 });
 
-test('the release workflow packages both platforms from one tag', () => {
+test('the release workflow keeps installers downloadable', () => {
   const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8');
-  assert.match(workflow, /tags:\s*\n\s*-\s*'v\*'/);
+  assert.ok(
+    workflow.includes('    branches:\n      - main'),
+    'main must refresh the nightly build'
+  );
+  assert.ok(
+    workflow.includes("    tags:\n      - 'v*'"),
+    'a tag must publish a stable release'
+  );
   assert.match(workflow, /runs-on: macos-latest/);
   assert.match(workflow, /runs-on: windows-latest/);
   assert.match(workflow, /\.\/build-dmg\.sh/);
   assert.match(workflow, /build-release\.ps1/);
   assert.match(workflow, /DynaWall-Setup\.exe/);
   assert.match(workflow, /DynaWall-Windows-Portable\.zip/);
-  assert.match(workflow, /gh release create "\$TAG" dist\/\*/);
+  assert.match(workflow, /TAG=nightly/, 'the rolling pre-release needs a fixed tag');
+  assert.match(workflow, /gh release create "\$TAG" dist\/\* --target "\$SHA" --prerelease/);
+  assert.match(workflow, /gh release edit "\$TAG" --title "Latest build"/);
+  assert.match(workflow, /gh release upload "\$TAG" dist\/\* --clobber/);
+
+  // The README points at those releases, so GitHub is the download page.
+  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  [
+    '../../releases/latest/download/DynaWall.dmg',
+    '../../releases/latest/download/DynaWall-Setup.exe',
+    '../../releases/latest/download/DynaWall-Windows-Portable.zip',
+    '../../releases/download/nightly/DynaWall.dmg',
+    '../../releases/download/nightly/DynaWall-Setup.exe',
+    '../../releases/download/nightly/DynaWall-Windows-Portable.zip'
+  ].forEach((link) => {
+    assert.ok(readme.includes(link), `README must link ${link}`);
+  });
 });
 
 /* -------------------------------------------------------------------------- *

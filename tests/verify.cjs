@@ -48,6 +48,33 @@ function readText(fileName) {
 }
 
 /**
+ * The Content Security Policy meta tag in `index.html`: the one place the wallpaper
+ * is allowed to name a remote host, because naming them is what forbids every other
+ * request. Tests strip it before scanning for remote URLs and read it here.
+ */
+const CONTENT_SECURITY_POLICY =
+  /<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]+)"\s*\/?>/;
+
+/** The shipped policy, parsed into a directive → source-list map. */
+function contentSecurityPolicy() {
+  const tag = CONTENT_SECURITY_POLICY.exec(readText('index.html'));
+  assert.ok(tag, 'index.html must deliver a Content Security Policy in a meta tag');
+
+  const directives = new Map();
+  tag[1].split(';').forEach((chunk) => {
+    const parts = chunk.trim().split(/\s+/).filter(Boolean);
+    if (parts.length) directives.set(parts[0], parts.slice(1));
+  });
+  return directives;
+}
+
+/** Sorted source list for one directive, or `null` when it is not declared. */
+function cspSources(directives, name) {
+  const sources = directives.get(name);
+  return sources ? sources.slice().sort() : null;
+}
+
+/**
  * The faces that ship in `assets/fonts`, derived from the list script.js exports:
  * `<slug>-latin.woff2` is what the page loads through `@font-face`, and the static
  * `<slug>-regular/semibold.ttf` pair is what the native preview cards register.
@@ -2181,6 +2208,194 @@ test('the release workflow keeps installers downloadable', () => {
 });
 
 /* -------------------------------------------------------------------------- *
+ * Production hardening
+ * -------------------------------------------------------------------------- */
+
+group('Production hardening');
+
+test('index.html ships a strict Content Security Policy', () => {
+  const policy = contentSecurityPolicy();
+
+  // Nothing may load unless a directive below allows it: no remote code, no frames,
+  // no plugins, no workers, no media.
+  assert.deepEqual(cspSources(policy, 'default-src'), ["'none'"], 'default-src must be none');
+  assert.deepEqual(cspSources(policy, 'object-src'), ["'none'"], 'plugins must never load');
+  assert.deepEqual(cspSources(policy, 'base-uri'), ["'none'"], 'injected markup cannot retarget relative URLs');
+  assert.deepEqual(cspSources(policy, 'form-action'), ["'none'"], 'the wallpaper cannot submit anything');
+
+  // The only script is the bundled one. `file:` is what makes the macOS host work:
+  // its WKWebView loads the page over file://, where `'self'` can resolve to an
+  // opaque origin and match nothing.
+  assert.deepEqual(
+    cspSources(policy, 'script-src'),
+    ["'self'", 'file:'].sort(),
+    'script-src must stay at the bundled script'
+  );
+  ['style-src', 'font-src'].forEach((directive) => {
+    const sources = cspSources(policy, directive);
+    assert.ok(sources.includes("'self'"), `${directive} must allow the bundled files`);
+    assert.ok(sources.includes('file:'), `${directive} must allow the file:// bundle`);
+  });
+  assert.ok(
+    cspSources(policy, 'style-src').includes("'unsafe-inline'"),
+    'the hosts inject a style element while live-editing settings'
+  );
+  assert.ok(
+    cspSources(policy, 'font-src').includes('data:'),
+    'an imported font arrives as a data: URL'
+  );
+
+  // No escape hatches anywhere in the policy.
+  const everySource = [...policy.keys(), ...[...policy.values()].flat()].join(' ');
+  assert.ok(!/'unsafe-eval'|wasm-unsafe-eval/.test(everySource), 'no eval');
+  assert.ok(!/\*/.test(everySource), 'no wildcard sources');
+  assert.ok(!/http:/.test(everySource), 'no plaintext http anywhere');
+});
+
+test('the policy names exactly the hosts the page and the native hosts use', () => {
+  const policy = contentSecurityPolicy();
+
+  // The weather card is the only thing that fetches, and it is keyless Open-Meteo.
+  assert.deepEqual(
+    cspSources(policy, 'connect-src'),
+    ["'self'"]
+      .concat(Array.from(DynaWall.WIDGET_FETCH_HOSTS, (host) => `https://${host}`))
+      .sort(),
+    'connect-src must be the declared fetch hosts and nothing else'
+  );
+
+  // YouTube and Google News are handed to the OS browser; nothing in the page may
+  // ever reach them, so they cannot appear as a CSP source.
+  const everySource = [...policy.keys(), ...[...policy.values()].flat()].join(' ');
+  DynaWall.WIDGET_LINK_HOSTS.forEach((host) => {
+    assert.ok(!everySource.includes(host), `${host} is browser-only and must not be a CSP source`);
+  });
+
+  // Images: the bundled pictures ('self'), the macOS scheme handler, the user's
+  // folder behind the WebView2 virtual host, and data:/blob: for host payloads. The
+  // scheme and the host names are read from the hosts, so they cannot drift.
+  const imgSrc = cspSources(policy, 'img-src');
+  const macScheme = /static let scheme = "([^"]+)"/.exec(readText('macos/DynaWallApp.swift'))[1];
+  const bundledHost = /BundledHost = "([^"]+)"/.exec(readText('windows/PhotoLibrary.cs'))[1];
+  const folderHost = /FolderHost = "([^"]+)"/.exec(readText('windows/PhotoLibrary.cs'))[1];
+  ["'self'", 'file:', 'data:', 'blob:', `${macScheme}:`, `https://${bundledHost}`, `https://${folderHost}`].forEach(
+    (source) => {
+      assert.ok(imgSrc.includes(source), `img-src must allow ${source}`);
+    }
+  );
+
+  // A remote image is never a wallpaper source (script.js ships relative `images/…`
+  // paths and host URLs only), so https: is not opened up wholesale.
+  assert.ok(!imgSrc.includes('https:'), 'img-src must list hosts, not the whole https: scheme');
+
+  const markup = readText('index.html');
+  assert.match(markup, /<meta name="referrer" content="no-referrer"/, 'no referrer leaks to Open-Meteo');
+});
+
+test('a Windows desktop click converts screen pixels into CSS pixels', () => {
+  // Screen coordinates are physical (PerMonitorV2); the page reports CSS pixels.
+  const project = readText('windows/DynaWall.csproj');
+  assert.match(
+    project,
+    /<ApplicationHighDpiMode>PerMonitorV2<\/ApplicationHighDpiMode>/,
+    'the host must know the real display scale'
+  );
+
+  const window = readText('windows/WallpaperWindow.cs');
+  assert.match(
+    window,
+    /internal float DeviceScale => DeviceDpi > 0 \? DeviceDpi \/ 96f : 1f;/,
+    'the display scale is DeviceDpi / 96, with a safe fallback'
+  );
+
+  const controller = readText('windows/WallpaperController.cs');
+  assert.match(controller, /var scale = window\.DeviceScale;/, 'the click path must read the scale');
+  assert.match(controller, /\(point\.X - window\.ScreenBounds\.X\) \/ scale/);
+  assert.match(controller, /\(point\.Y - window\.ScreenBounds\.Y\) \/ scale/);
+  assert.doesNotMatch(
+    controller,
+    /new PointF\(point\.X - window\.ScreenBounds\.X, point\.Y - window\.ScreenBounds\.Y\)/,
+    'raw screen pixels are the 125–200% DPI defect: the hit area is in CSS pixels'
+  );
+});
+
+test('build-macos.sh merges an arm64 and an x86_64 slice into a Universal 2 binary', () => {
+  const build = readText('build-macos.sh');
+
+  assert.match(build, /ARCHS="\$\{DYNAWALL_ARCHS:-arm64 x86_64\}"/, 'both slices are the default');
+  assert.match(build, /-target "\$arch-apple-macos\$MIN_MACOS"/, 'each slice is compiled for macOS 12+');
+  assert.match(build, /lipo -create "\$\{SLICES\[@\]\}" -output "\$MACOS_BIN\/\$APP_NAME"/);
+  assert.match(build, /lipo -archs "\$MACOS_BIN\/\$APP_NAME"/, 'the merged binary is inspected');
+  assert.match(build, /slice is missing/, 'a half-built universal binary must fail the build');
+  assert.ok(
+    !/-target "\$\(uname -m\)/.test(build),
+    'the build must not fall back to the runner architecture'
+  );
+  assert.ok(
+    !/echo "==> Compiling for \$\(uname -m\)"/.test(build),
+    'the log must report the target architectures, not the runner'
+  );
+});
+
+test('the release publishes SHA-256 checksums and refuses a single-architecture DMG', () => {
+  const workflow = readText('.github/workflows/release.yml');
+
+  // The macOS job gates on both slices, not on whatever the runner happened to build.
+  assert.match(workflow, /for arch in arm64 x86_64; do/);
+  assert.match(workflow, /the \$arch slice is missing from the app bundle/);
+
+  // Checksums are written before the upload, so the file rides along with the rest.
+  const checksumStep = workflow.indexOf('Write SHA-256 checksums');
+  const publishStep = workflow.indexOf('Attach the installers to a release');
+  assert.ok(checksumStep > 0, 'the publish job must write SHA256SUMS.txt');
+  assert.ok(checksumStep < publishStep, 'the checksums must exist before the upload');
+  assert.match(workflow, /sha256sum "\$asset" >> SHA256SUMS\.txt/);
+  assert.match(workflow, /gh release upload "\$TAG" dist\/\* --clobber/, 'the checksum file is uploaded too');
+
+  // The Windows job verifies what it built: the setup exists, and the portable zip is
+  // actually runnable on its own (exe + web wallpaper + a bundled font).
+  assert.match(workflow, /Verify the Windows builds/);
+  assert.match(workflow, /the portable zip is missing \$entry/);
+  assert.match(workflow, /'web\/index\.html'/);
+});
+
+test('the Windows host recovers from a missing WebView2 runtime', () => {
+  const controller = readText('windows/WallpaperController.cs');
+  assert.match(controller, /catch \(WebView2RuntimeNotFoundException\)/);
+  assert.match(controller, /MessageBoxButtons\.YesNo/, 'the user must be offered the runtime download');
+  assert.match(controller, /private static void OpenWebView2DownloadPage\(\)/);
+  assert.match(controller, /https:\/\/go\.microsoft\.com\/fwlink\/p\/\?LinkId=2124703/);
+  assert.match(controller, /UseShellExecute = true/, 'the download page opens in the default browser');
+
+  // The installer warns about the same runtime and names the same address, so both
+  // entry points tell the user the same story.
+  const iss = readText('windows/installer.iss');
+  assert.match(iss, /function WebView2Installed: Boolean/);
+  assert.match(iss, /LinkId=2124703/);
+});
+
+test('the checked-in app bundle ships the same wallpaper the sources build', () => {
+  // dist/DynaWall.app is committed, so it can go stale: a bundle built before the CSP
+  // landed would still show the old page. One build keeps them in step.
+  const bundled = path.join(ROOT, 'dist/DynaWall.app/Contents/Resources/index.html');
+  assert.ok(fs.existsSync(bundled), 'dist/DynaWall.app must ship index.html');
+  const shipped = fs.readFileSync(bundled, 'utf8').replace(/\r\n/g, '\n');
+  assert.equal(shipped, readText('index.html'), 're-run ./build-macos.sh: the bundle is stale');
+  assert.match(shipped, /http-equiv="Content-Security-Policy"/, 'the app bundle must enforce the policy');
+});
+
+test('the docs describe the universal build, the DPI fix and the checksums', () => {
+  const readme = readText('README.md');
+  assert.match(readme, /macOS 12\+ \(Universal 2/, 'the download table must say Universal 2');
+  assert.match(readme, /SHA256SUMS\.txt/, 'verifying a download must be documented');
+  assert.match(readme, /DeviceDpi \/ 96/, 'the Windows DPI mapping must be documented');
+  assert.ok(
+    !/Apple silicon\)/.test(readme),
+    'the README must not advertise an Apple-silicon-only DMG any more'
+  );
+});
+
+/* -------------------------------------------------------------------------- *
  * Font selection
  * -------------------------------------------------------------------------- */
 
@@ -2191,6 +2406,8 @@ test('the font stack always ends on the vendored Outfit face', () => {
   // Outfit and an unset family are the same stack: the stylesheet's own value, so
   // the shipped look never depends on script.js having run.
   assert.equal(DynaWall.fontStack(''), declared, 'the script must reproduce --font-sans exactly');
+
+
   assert.equal(DynaWall.fontStack('Outfit'), declared);
   assert.ok(declared.startsWith('"Outfit"'), 'Outfit leads the fallback tail');
   assert.ok(declared.endsWith('sans-serif'), 'a missing font still lands on a sans face');
@@ -2475,9 +2692,14 @@ test('the bundled four stay the shared default but are hidden from the macOS dro
 });
 
 test('the wallpaper itself never reaches the network, and the widgets name only declared hosts', () => {
-  // The chrome — markup, styles, fonts, photos — stays proof-positive offline.
+  // The chrome — markup, styles, fonts, photos — stays proof-positive offline. The
+  // Content Security Policy is the one place index.html may name a remote host (it
+  // has to: it is what forbids every other request), so it is removed before the scan
+  // and then checked host by host in the production-hardening group below.
   ['style.css', 'index.html'].forEach((file) => {
-    const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    const source = fs
+      .readFileSync(path.join(ROOT, file), 'utf8')
+      .replace(CONTENT_SECURITY_POLICY, '');
     assert.ok(!/https?:\/\//.test(source), `${file} must not reference a remote URL`);
   });
 

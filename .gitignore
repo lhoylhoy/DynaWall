@@ -20,7 +20,10 @@
 dist/DynaWall.dmg
 dist/DynaWall-Setup.exe
 dist/DynaWall-Windows-Portable.zip
+dist/SHA256SUMS.txt
 dist/dmg_root/
+# Per-slice scratch binaries while build-macos.sh links the Universal 2 app
+dist/bin/
 
 # .NET build output
 windows/bin/

@@ -57,6 +57,17 @@ internal sealed class WallpaperWindow : Form
     /// <summary>Where this wallpaper sits on the virtual desktop, in screen pixels.</summary>
     internal Rectangle ScreenBounds => screenBounds;
 
+    /// <summary>
+    /// Physical screen pixels per CSS pixel on this display.
+    ///
+    /// WebView2 rasterises the page at the host window's DPI (the process is
+    /// PerMonitorV2 — see DynaWall.csproj), so the page's CSS viewport is
+    /// <c>DeviceDpi / 96</c> times smaller than the wallpaper window. A click the
+    /// desktop hook reports in screen pixels has to be divided by exactly this
+    /// factor before it can be compared with a rectangle the page reported.
+    /// </summary>
+    internal float DeviceScale => DeviceDpi > 0 ? DeviceDpi / 96f : 1f;
+
     /// <summary>What the page last said it would take a click in.</summary>
     internal WidgetHitArea HitArea => hitArea;
 

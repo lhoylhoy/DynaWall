@@ -10,6 +10,41 @@
       content="DynaWall — a minimalist, time-aware live wallpaper for macOS, Lively Wallpaper and Wallpaper Engine."
     />
     <title>DynaWall</title>
+
+    <!--
+      Strict Content Security Policy, delivered as a meta tag because every host
+      loads this page straight from disk or from a folder mapping (there is no
+      server that could send a header).
+
+        default-src 'none'          nothing loads unless a directive below says so
+        script-src 'self' file:     only the bundled script.js — the native hosts
+                                    evaluate their own JS out of band, which CSP
+                                    does not (and must not) police
+        style-src 'self' file:      style.css, plus 'unsafe-inline' for the CSS the
+          'unsafe-inline'           hosts inject while live-editing settings
+        font-src 'self' file: data: the four vendored faces and an imported font,
+                                    which travels as a data: URL
+        img-src ... dynawall-photo: the bundled pictures, the user's folder behind
+                                    the macOS scheme handler, and the two WebView2
+                                    virtual hosts (dynawall.local = the page itself,
+                                    dynawall-photos.local = a chosen folder)
+        connect-src ...             exactly the two keyless Open-Meteo endpoints the
+                                    weather card declares; YouTube and Google News
+                                    are only ever handed to the OS browser
+        base-uri / form-action      neither can be retargeted by injected markup
+
+      `file:` is what keeps the macOS bundle working: its WKWebView loads this file
+      over file://, where `'self'` resolves to an opaque origin in some WebKit
+      versions. frame-ancestors is deliberately absent — browsers ignore it in a
+      meta tag, and nothing ever frames the wallpaper (default-src 'none' blocks it).
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; font-src 'self' file: data:; img-src 'self' file: data: blob: dynawall-photo: https://dynawall.local https://dynawall-photos.local; connect-src 'self' https://api.open-meteo.com https://geocoding-api.open-meteo.com; base-uri 'none'; form-action 'none'; object-src 'none'"
+    />
+    <!-- The wallpaper never needs to tell a remote server where it came from. -->
+    <meta name="referrer" content="no-referrer" />
+
     <link rel="stylesheet" href="style.css" />
     <script src="script.js" defer></script>
   </head>

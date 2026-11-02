@@ -43,7 +43,16 @@ jobs:
         run: |
           hdiutil verify dist/DynaWall.dmg
           codesign --verify --verbose=2 dist/DynaWall.dmg
-          lipo -archs dist/DynaWall.app/Contents/MacOS/DynaWall
+          # Universal 2 or nothing: an arm64-only DMG cannot run on an Intel Mac
+          # (Rosetta 2 translates x86_64 → arm64, never the other way round).
+          archs="$(lipo -archs dist/DynaWall.app/Contents/MacOS/DynaWall)"
+          echo "DynaWall.app architectures: $archs"
+          for arch in arm64 x86_64; do
+            case " $archs " in
+              *" $arch "*) ;;
+              *) echo "error: the $arch slice is missing from the app bundle" >&2; exit 1 ;;
+            esac
+          done
 
       - name: Upload the disk image
         uses: actions/upload-artifact@v4
@@ -76,6 +85,35 @@ jobs:
           $version = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}' } else { '0.0.${{ github.run_number }}' }
           ./windows/build-release.ps1 -Version $version
 
+      - name: Verify the Windows builds
+        shell: pwsh
+        run: |
+          # The portable zip has to be runnable on its own: the exe plus the whole web/
+          # wallpaper folder. A zip that lost index.html or the fonts would install and
+          # then show a blank desktop.
+          if (-not (Test-Path 'dist/DynaWall-Setup.exe')) { throw 'DynaWall-Setup.exe was not produced' }
+          if (-not (Test-Path 'dist/DynaWall-Windows-Portable.zip')) { throw 'DynaWall-Windows-Portable.zip was not produced' }
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = (Resolve-Path 'dist/DynaWall-Windows-Portable.zip').Path
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
+          try {
+            $names = @($archive.Entries | ForEach-Object { $_.FullName -replace '\\', '/' })
+            $required = @(
+              'DynaWall.exe',
+              'web/index.html',
+              'web/script.js',
+              'web/style.css',
+              'web/assets/fonts/outfit-latin.woff2'
+            )
+            foreach ($entry in $required) {
+              if ($names -notcontains $entry) { throw "the portable zip is missing $entry" }
+            }
+            Write-Host "portable zip OK: $($names.Count) entries"
+          } finally {
+            $archive.Dispose()
+          }
+
       - name: Upload the Windows builds
         uses: actions/upload-artifact@v4
         with:
@@ -100,6 +138,31 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Write SHA-256 checksums
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cd dist
+          # One line per installer that actually built, in the same format `sha256sum
+          # --check` and `shasum -a 256 --check` both accept, so a download can be
+          # verified without trusting the release page.
+          : > SHA256SUMS.txt
+          for asset in DynaWall.dmg DynaWall-Setup.exe DynaWall-Windows-Portable.zip; do
+            if [ -f "$asset" ]; then
+              sha256sum "$asset" >> SHA256SUMS.txt
+            else
+              echo "warning: $asset did not build; it is left out of the checksums" >&2
+            fi
+          done
+          if [ ! -s SHA256SUMS.txt ]; then
+            # No installer survived the build jobs: publish nothing rather than an
+            # empty checksum file that would make dist/ look populated.
+            echo "warning: nothing to checksum" >&2
+            rm -f SHA256SUMS.txt
+            exit 0
+          fi
+          cat SHA256SUMS.txt
+
       - name: Attach the installers to a release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -109,7 +172,12 @@ jobs:
           SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if ! ls dist/* >/dev/null 2>&1; then
+          # A checksum file alone is not a release: require at least one installer.
+          found=0
+          for asset in DynaWall.dmg DynaWall-Setup.exe DynaWall-Windows-Portable.zip; do
+            if [ -f "dist/$asset" ]; then found=1; fi
+          done
+          if [ "$found" -eq 0 ]; then
             echo "error: no installers reached the publish job" >&2
             exit 1
           fi
@@ -129,8 +197,9 @@ jobs:
             TAG=nightly
             NOTES="Latest build of $REF_NAME at $SHA.
 
-          - macOS 12+ (Apple silicon): DynaWall.dmg
+          - macOS 12+ (Universal 2: Apple silicon + Intel): DynaWall.dmg
           - Windows 10/11 x64: DynaWall-Setup.exe or DynaWall-Windows-Portable.zip
+          - SHA256SUMS.txt: sha256 of every installer above
 
           Every push to main replaces these files. Versioned releases live under the v* tags."
 
@@ -147,9 +216,12 @@ jobs:
           {
             echo "### Installers"
             echo
-            echo "- macOS 12+ (Apple silicon): https://github.com/$GH_REPO/releases/download/$TAG/DynaWall.dmg"
+            echo "- macOS 12+ (Universal 2: Apple silicon + Intel): https://github.com/$GH_REPO/releases/download/$TAG/DynaWall.dmg"
             echo "- Windows setup: https://github.com/$GH_REPO/releases/download/$TAG/DynaWall-Setup.exe"
             echo "- Windows portable: https://github.com/$GH_REPO/releases/download/$TAG/DynaWall-Windows-Portable.zip"
+            echo "- Checksums: https://github.com/$GH_REPO/releases/download/$TAG/SHA256SUMS.txt"
+            echo
+            echo "Verify a download with \`shasum -a 256 --check SHA256SUMS.txt\` (macOS) or \`certutil -hashfile <file> SHA256\` (Windows)."
             echo
             echo "Release page: https://github.com/$GH_REPO/releases/tag/$TAG"
           } >> "$GITHUB_STEP_SUMMARY"

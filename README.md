@@ -22,20 +22,28 @@ always the newest successful build:
 
 | Platform | Download now | Tagged release |
 | --- | --- | --- |
-| macOS 12+ (Apple silicon) | [DynaWall.dmg](../../releases/download/nightly/DynaWall.dmg) | [DynaWall.dmg](../../releases/latest/download/DynaWall.dmg) |
+| macOS 12+ (Universal 2: Apple silicon + Intel) | [DynaWall.dmg](../../releases/download/nightly/DynaWall.dmg) | [DynaWall.dmg](../../releases/latest/download/DynaWall.dmg) |
 | Windows 10 1809+ / 11 (x64) | [DynaWall-Setup.exe](../../releases/download/nightly/DynaWall-Setup.exe) · [portable zip](../../releases/download/nightly/DynaWall-Windows-Portable.zip) | [DynaWall-Setup.exe](../../releases/latest/download/DynaWall-Setup.exe) · [portable zip](../../releases/latest/download/DynaWall-Windows-Portable.zip) |
 
 The **download now** links are refreshed on every push to `main`, so they carry the latest fixes from the
 first commit. The **tagged release** links always resolve to the newest `v*` release and start working with
 the first tag. Nothing is code-signed: macOS needs **right-click → Open** once, and Windows may show
-SmartScreen (**More info → Run anyway**). The DMG is built on the Apple silicon runner; on an Intel Mac run
-`./build-macos.sh` (see [macOS app](#macos-app-native)).
+SmartScreen (**More info → Run anyway**). The DMG is a Universal 2 bundle — `arm64` and `x86_64` slices in one
+binary, built with `swiftc` + `lipo` — so the same download runs on Apple silicon and on Intel Macs, and every
+release attaches a `SHA256SUMS.txt` so a download can be checked before it is opened:
+
+```bash
+shasum -a 256 --check SHA256SUMS.txt            # macOS, run in the folder you downloaded into
+certutil -hashfile DynaWall-Setup.exe SHA256    # Windows equivalent for one file
+```
 
 ### Installing it
 
 1. **macOS** — download `DynaWall.dmg`, double-click it, drag **DynaWall** into **Applications**, then open it
    from Applications. On the first launch only, right-click (or Control-click) the DynaWall icon → **Open** →
-   **Open**; macOS remembers it after that. DynaWall appears in the menu bar and sets the wallpaper itself.
+   **Open**; macOS remembers it after that. On macOS 15 Sequoia and later that shortcut is gone — the app is
+   listed under **System Settings → Privacy & Security** instead, with an **Open Anyway** button. DynaWall
+   appears in the menu bar and sets the wallpaper itself.
 2. **Windows** — download `DynaWall-Setup.exe` and run it. It installs for the current user only, so Windows
    never asks for an administrator password; DynaWall then starts with Windows and lives in the system tray.
    `DynaWall-Windows-Portable.zip` is the same app without an installer: unzip it anywhere and run
@@ -63,7 +71,7 @@ SmartScreen (**More info → Run anyway**). The DMG is built on the Apple silico
 
 | File | Purpose |
 | --- | --- |
-| `index.html` | Wallpaper markup and default copy |
+| `index.html` | Wallpaper markup, default copy and the strict Content Security Policy every host enforces |
 | `style.css` | Time-aware palette bands, typography tokens, layout and transitions |
 | `script.js` | Clock (greeting + palette), configuration resolution, host IPC and rendering |
 | `LivelyProperties.json` | Lively Wallpaper customization panel |
@@ -77,7 +85,7 @@ SmartScreen (**More info → Run anyway**). The DMG is built on the Apple silico
 | `macos/make-icon.swift` | CoreGraphics generator for the app icon — the Bauhaus Sunrise mark (one flat dome, one razor horizon), drawn from 16×16 to 1024×1024; `DYNAWALL_ICON_DESIGN=monolith\|arc` re-renders the earlier variants |
 | `macos/AppIcon.icns` | Generated icon set (`AppIcon.png` is the 1024×1024 master it ships alongside) |
 | `macos/Info.plist` | Bundle metadata (`com.dynawall.macos`, `LSUIElement`) |
-| `build-macos.sh` | Zero-dependency `swiftc` build that assembles and signs `dist/DynaWall.app` |
+| `build-macos.sh` | Zero-dependency `swiftc` build that compiles `arm64` + `x86_64`, merges them with `lipo`, assembles and signs `dist/DynaWall.app` |
 | `build-dmg.sh` | Builds the app, then packs it with an `/Applications` symlink into `dist/DynaWall.dmg` |
 | `windows/DynaWall.csproj` | .NET 8 / WinForms project — single-file, self-contained, WebView2, curated wallpapers under `web/` |
 | `windows/*.cs` | Native Windows host: tray icon, settings window, WorkerW layering, WebView2 bridge, photo library, installed/imported fonts (`FontLibrary.cs`), Run-key startup, and the observe-only desktop click watch that lets the widget cards answer the mouse (`DesktopClicks.cs`, `WidgetBridge.cs`) |
@@ -294,17 +302,22 @@ desktop background. No extra tools, no browser window, no Dock icon.
 ### Build & run
 
 ```bash
-./build-macos.sh                 # compiles with swiftc, ad-hoc signs, writes dist/DynaWall.app
+./build-macos.sh                 # compiles both slices, ad-hoc signs, writes dist/DynaWall.app
 open dist/DynaWall.app           # starts the menu bar item and the wallpaper
 ```
 
-The script builds for the architecture of the Mac running it (arm64 or x86_64) and targets macOS 12+, in one
-whole-module optimisation pass with `-dead_strip`, and copies only the twelve curated wallpapers — a 23 MB
-bundle with a 426 KB binary. The published DMG is built on an Apple silicon runner; an Intel Mac builds its own
-copy with the same script.
+The script compiles **both** slices — `arm64-apple-macos12.0` and `x86_64-apple-macos12.0` — with one
+whole-module optimisation pass and `-dead_strip` each, merges them into a Universal 2 binary with `lipo
+-create`, then copies only the twelve curated wallpapers: a 23 MB bundle whose binary runs natively on Apple
+silicon and on Intel Macs (macOS never translates `arm64` to `x86_64`, so an Apple-silicon-only DMG simply
+cannot run there). The build fails if either slice is missing; `DYNAWALL_ARCHS="arm64" ./build-macos.sh`
+builds a single slice when you are iterating locally, and a toolchain that cannot link a slice (Apple's newest
+Command Line Tools ship the Swift compatibility libraries for arm64 only) stops with the reason instead of a
+linker dump.
 `DynaWall` lives in the menu bar — click the icon to open the settings popover, or use **Quit DynaWall**
-there to stop it. Because the app is ad-hoc signed, Gatekeeper is happy with locally built copies; if you
-move the app to another Mac, re-run `build-macos.sh` on that Mac instead of copying the binary.
+there to stop it. Because the app is ad-hoc signed, a build you make here launches without a Gatekeeper
+prompt; the Universal 2 bundle also runs unchanged on an Intel Mac, which only needs the one-time
+**System Settings → Privacy & Security → Open Anyway** approval that every unsigned download needs.
 
 ### Disk image (.dmg)
 
@@ -317,8 +330,9 @@ open dist/DynaWall.dmg          # drag DynaWall.app onto the Applications shortc
 packs the folder with the built-in `hdiutil` as a compressed read-only **UDZO** image — the standard macOS
 drag-and-drop install, with no third-party tooling. It ad-hoc signs the image as well as the app inside, so a
 copied DMG is not reported as damaged; because the release is not notarized, the first launch after
-downloading still needs **right-click → Open** once. The image carries the app built for the Mac that ran the
-script — Apple silicon on the release runner.
+downloading still needs **right-click → Open** once (macOS 15 Sequoia: **System Settings → Privacy &
+Security → Open Anyway**). The image carries the same Universal 2 app the script just built, so the CI runner's
+own architecture no longer decides who can run it.
 
 ### How it works
 
@@ -526,6 +540,7 @@ shortcuts, and can register it to start when you sign in.
 | Rendering | One borderless WebView2 window per display, loading `web/index.html` from the `https://dynawall.local/` virtual host |
 | Desktop interaction | The windows are `WS_EX_NOACTIVATE` children of the wallpaper layer, below the icon view — clicks, rubber-band selection and the desktop context menu keep working, and nothing appears in Alt+Tab |
 | Widgets | The page reports its clickable rectangles with `chrome.webview.postMessage({ type: 'dynawall:interactivity' })`; a `WH_MOUSE_LL` watch (`DesktopClicks.cs`, observe-only — every event goes straight to `CallNextHookEx`) replays a click that lands on the desktop layer and inside one of them with `window.DynaWall.clickAt(x, y)`. Links arrive as `dynawall:open-url` and are shell-executed to the default browser; only `https` is accepted |
+| High-DPI clicks | The host is `PerMonitorV2`, so `Screen.Bounds` and the hook are in **physical** pixels while the page reports **CSS** pixels. A click is therefore divided by `window.DeviceScale` (`DeviceDpi / 96`) before it is compared with a reported rectangle — the same factor WebView2 uses to rasterise the page — which is what keeps the satellites clickable at 125 / 150 / 175 / 200% scaling |
 | Photos | The twelve curated wallpapers are served from `web/images/`; **Change…** maps `https://dynawall-photos.local/` to that folder, keeping each filename in the URL so `script.js` can match it to the time of day (and **Reveal** opens that folder, or `web/images/` when the bundled set is in use) |
 | Multi-monitor | One window per `Screen.AllScreens`, rebuilt when `SystemEvents.DisplaySettingsChanged` fires |
 | Sleep/wake | `PowerModes.Suspend/Resume` and session lock/unlock park the page and re-push settings and photos on resume |
@@ -639,26 +654,30 @@ from Wallpaper Engine's `"r g b"` floats to hex automatically.
 
 | Trigger | Release | Stable URLs |
 | --- | --- | --- |
-| Push to `main`, or a manual run | `nightly` pre-release, refreshed in place | `/releases/download/nightly/DynaWall.dmg` · `…/DynaWall-Setup.exe` · `…/DynaWall-Windows-Portable.zip` |
-| Push a `v*` tag | stable release; `/releases/latest` points at it | `/releases/latest/download/…` for the same three files |
+| Push to `main`, or a manual run | `nightly` pre-release, refreshed in place | `/releases/download/nightly/DynaWall.dmg` · `…/DynaWall-Setup.exe` · `…/DynaWall-Windows-Portable.zip` · `…/SHA256SUMS.txt` |
+| Push a `v*` tag | stable release; `/releases/latest` points at it | `/releases/latest/download/…` for the same four files |
 
 ```bash
 git tag v1.0.0
-git push origin v1.0.0        # builds and attaches the DMG, setup and portable zip
+git push origin v1.0.0        # builds and attaches the DMG, setup, portable zip and checksums
 ```
 
 | Job | Runner | Produces |
 | --- | --- | --- |
-| macOS DMG | `macos-latest` | `DynaWall.dmg` (Apple silicon, macOS 12+) |
+| macOS DMG | `macos-latest` | `DynaWall.dmg` (Universal 2 — `arm64` + `x86_64`, macOS 12+) |
 | Windows | `windows-latest` | `DynaWall-Setup.exe`, `DynaWall-Windows-Portable.zip` |
-| Publish | `ubuntu-latest` | uploads all three to the tag release, or refreshes `nightly` |
+| Publish | `ubuntu-latest` | `SHA256SUMS.txt`, then all four files on the tag release or `nightly` |
 
 Both build jobs run `node tests/verify.cjs` first, so a release can never ship a wallpaper that fails the
-suite. The macOS job then runs `build-dmg.sh` and checks the image with `hdiutil verify`, `codesign --verify`
-and `lipo -archs`; the Windows job installs Inno Setup and runs `windows/build-release.ps1`. The publish job
-uses `gh release create` / `gh release upload --clobber`, so re-running a tag replaces the files instead of
-failing, while the `nightly` tag and its asset names never change. Runs are serialised per ref, so two pushes
-to `main` cannot clobber each other's nightly build, and the run page's summary repeats the download links.
+suite. The macOS job then runs `build-dmg.sh`, checks the image with `hdiutil verify` and `codesign
+--verify`, and **fails unless `lipo -archs` reports both `arm64` and `x86_64`** — the gate that keeps an
+Apple-silicon-only DMG from ever being published again. The Windows job installs Inno Setup and runs
+`windows/build-release.ps1`. The publish job writes `SHA256SUMS.txt` for whatever installers actually built
+(one `sha256sum` line per file, the format `shasum -a 256 --check` and `sha256sum --check` both accept)
+before it uploads, then `gh release create` / `gh release upload --clobber`, so re-running a tag replaces the
+files instead of failing, while the `nightly` tag and its asset names never change. Runs are serialised per
+ref, so two pushes to `main` cannot clobber each other's nightly build, and the run page's summary repeats the
+download links and the checksum instructions.
 
 ## Configuration priority
 
@@ -802,6 +821,15 @@ WorkerW desktop layering, the shared `livelyPropertyListener` / seed bridge, the
 photo-list parity for `windows/DynaWall.csproj`, and the release workflow — including the rolling nightly
 release and the README links that point at it.
 
+The production-hardening checks are the ones that would otherwise only fail on someone else's machine: the
+Content Security Policy in `index.html` (default-src `none`, script-src limited to the bundled file, connect-src
+exactly `self` + the declared Open-Meteo hosts, image sources read back from the macOS scheme and the two
+WebView2 virtual hosts so they cannot drift, no wildcard, no `unsafe-eval`, no plaintext `http`), the Windows
+click mapping (`PerMonitorV2`, `DeviceScale = DeviceDpi / 96`, the division in `OnDesktopClick`, and a guard
+against the raw-pixel subtraction coming back), the Universal 2 build (`arm64 x86_64` as the default `-target`
+pair, `lipo -create`, the post-merge `lipo -archs` assertion), and the release integrity path (the workflow
+gates on both slices and writes `SHA256SUMS.txt` before the upload).
+
 The efficiency guards are checked the same way, because none of them is visible in a screenshot: the clock is
 a one-shot timer armed on each of the six daily boundaries (midnight wrap included, computed from local date
 components) with no `setInterval` left anywhere; suspension clears both timers, pauses the drift in CSS and is
@@ -816,7 +844,8 @@ and builds its popover lazily; and `build-macos.sh` copies exactly `GOLDEN_GATE_
 For the native macOS app:
 
 ```bash
-./build-macos.sh                                      # compiles, assembles and signs the bundle
+./build-macos.sh                                      # compiles both slices, assembles and signs the bundle
+lipo -archs dist/DynaWall.app/Contents/MacOS/DynaWall  # x86_64 arm64 — Universal 2, not the runner's arch
 codesign --verify --verbose=2 dist/DynaWall.app       # ad-hoc signature is valid
 open -n --env DYNAWALL_LOG=/tmp/dynawall.log dist/DynaWall.app
 sleep 5 && grep 'rendered greeting' /tmp/dynawall.log # the page really rendered inside the app

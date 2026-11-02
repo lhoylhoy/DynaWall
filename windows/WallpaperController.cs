@@ -67,13 +67,19 @@ internal sealed class WallpaperController : IDisposable
         }
         catch (WebView2RuntimeNotFoundException)
         {
+            // The runtime is an evergreen Windows component that cannot be bundled, so
+            // this is the one failure the app cannot fix by itself. Offer Microsoft's
+            // bootstrapper page instead of leaving the user with a dead tray icon.
             Log.Write("the WebView2 runtime is not installed");
-            MessageBox.Show(
+            var answer = MessageBox.Show(
                 "DynaWall draws the wallpaper with Microsoft Edge WebView2, which is not installed on this PC.\n\n" +
-                "Install the Evergreen WebView2 Runtime from Microsoft, then start DynaWall again.",
+                "Open Microsoft's download page for the Evergreen WebView2 Runtime now? " +
+                "Install it, then start DynaWall again.",
                 "DynaWall",
-                MessageBoxButtons.OK,
+                MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning);
+
+            if (answer == DialogResult.Yes) OpenWebView2DownloadPage();
         }
         catch (Exception ex)
         {
@@ -301,13 +307,38 @@ internal sealed class WallpaperController : IDisposable
         {
             if (window.IsDisposed || !window.ScreenBounds.Contains(point)) continue;
 
-            // CSS pixels are screen pixels here: the page is never zoomed and the window
-            // covers its display at native scale.
-            var local = new PointF(point.X - window.ScreenBounds.X, point.Y - window.ScreenBounds.Y);
+            // The hook reports physical screen pixels; the page reports its hit areas
+            // in CSS pixels. WebView2 rasterises at the display's DPI (the process is
+            // PerMonitorV2), so a 150% display is 1.5 physical pixels per CSS pixel —
+            // subtracting the origin alone would miss every widget there.
+            var scale = window.DeviceScale;
+            var local = new PointF(
+                (point.X - window.ScreenBounds.X) / scale,
+                (point.Y - window.ScreenBounds.Y) / scale);
             if (!window.HitArea.Contains(local.X, local.Y)) continue;
 
             window.ReplayClick(local);
             return;
+        }
+    }
+
+    /// <summary>
+    /// Hand the user to Microsoft's Evergreen WebView2 download page. The runtime
+    /// cannot ship inside the installer (it is an evergreen Windows component), so a
+    /// missing runtime is the one failure this app has to delegate to the OS vendor.
+    /// </summary>
+    private static void OpenWebView2DownloadPage()
+    {
+        const string url = "https://go.microsoft.com/fwlink/p/?LinkId=2124703";
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(
+                new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+            Log.Write("opened the WebView2 runtime download page");
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"could not open the WebView2 download page: {ex.Message}");
         }
     }
 

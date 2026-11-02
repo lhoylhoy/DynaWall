@@ -129,11 +129,14 @@ close up instead of leaving a hole, and a card belonging to a satellite you just
 switch writes `html.is-widgets-off`, which removes the whole orbit and reports no rectangles at all. Either way the
 change is live: no reload, no relaunch, and switching one back on deals it a fresh spot.
 
-**The mouse is enough.** The native desktop deliberately never gives the page the keyboard — the wallpaper
-window cannot become key, which is what keeps every keystroke going to the app you are actually using — so no
-card depends on typing: the weather card lists six cities (London, New York, San Francisco, São Paulo, Tokyo,
-Sydney) to click, and the two search fields are there for the browser, Lively and Wallpaper Engine, where the
-page does take focus. Once a city is chosen it is remembered, forecast and all.
+**Typing works while a card is open.** The desktop keeps every keystroke for the app you are actually in — the
+wallpaper window cannot become key — until a card is opened. For as long as a card is on screen that display
+becomes a real, focusable window: mouse events, `.floating` above the Finder icons, key, its `WKWebView` the
+first responder. So the two search fields can be clicked into and typed in, `Enter` runs the search, `Esc` closes
+the card and `⌘V` works. Close the card — or switch to another app — and the window drops straight back to
+desktop level, click-through and unfocused, with the keyboard where it was. Typing is never required either: the
+weather card lists six cities (London, New York, San Francisco, São Paulo, Tokyo, Sydney) to click, and once a
+city is chosen it is remembered, forecast and all.
 
 **Opening a card on the desktop.** Both native hosts keep the wallpaper click-through — that is what preserves
 Finder drag-select, the desktop context menu, icons and Mission Control on macOS, and rubber-band selection on
@@ -142,7 +145,10 @@ Windows. So the page never sees the mouse. Instead it reports the rectangles it 
 system-wide, passes every click on untouched, and replays only the ones that land inside those rectangles with
 `window.DynaWall.clickAt(x, y)`. A click on an app window, the Dock, the tray or the settings panel is never
 seen by the page, and a card takes the whole viewport while it is open so that a click outside it closes it.
-In a browser, Lively or Wallpaper Engine the page gets real mouse events and none of this is involved.
+That same report is what unlocks the keyboard on macOS: a card reported open stops the window being
+click-through and makes it key, and the host closes the card and puts the window back to sleep the moment another
+app comes forward, a link leaves for the browser, or the wallpaper is paused. In a browser, Lively or Wallpaper
+Engine the page gets real mouse events and none of this is involved.
 
 ## Time-aware palettes
 
@@ -319,7 +325,8 @@ script — Apple silicon on the release runner.
 | Concern | Implementation |
 | --- | --- |
 | Layering | One borderless `NSWindow` per display at `CGWindowLevelForKey(.desktopWindow)` — above the desktop picture, below the Finder icons |
-| Click-through | `ignoresMouseEvents = true`, plus a `DesktopLevelWindow` that can never become key or main, so Finder icons, drag-select and Mission Control keep working |
+| Click-through | `ignoresMouseEvents = true` and a `DesktopLevelWindow` that can only become key while a card is open, so Finder icons, drag-select and Mission Control keep working |
+| Card focus | A card reported open flips `DesktopLevelWindow.isInteractive`, lifts the window to `.floating`, un-ignores the mouse, makes it key and its `WKWebView` first responder (typing, `⌘V`, `Esc`); closing it — or another app coming forward, a link, or Pause — drops it back to desktop level and click-through, and hands activation back with `NSApp.deactivate()` |
 | Widgets | The page reports its clickable rectangles over `dynawallInteractivity`; a global `NSEvent` mouse monitor (observe-only, never consuming) replays a click that lands inside one with `window.DynaWall.clickAt(x, y)`, and skips anything in front of the desktop by asking `CGWindowListCopyWindowInfo` for layer-0 windows. Links come back over `dynawallOpenURL` and open in the default browser — only `https` is accepted |
 | Spaces & full screens | `collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]` |
 | Rendering | A `WKWebView` per display loading the bundled `index.html`, `style.css` and `script.js` |

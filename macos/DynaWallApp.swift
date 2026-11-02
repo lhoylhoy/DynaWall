@@ -4,7 +4,8 @@
 //
 //  The app is a menu bar utility (no Dock icon) that renders the bundled DynaWall
 //  web wallpaper (index.html + style.css + script.js) inside a borderless,
-//  click-through window pinned at desktop level, one window per display.
+//  click-through window pinned at desktop level, one window per display. The window
+//  only takes the mouse and the keyboard while a widget card is open on it.
 //
 //  Settings live in a native menu bar popover and are persisted to UserDefaults.
 //  Every change is pushed straight into the page through the same
@@ -1115,13 +1116,16 @@ final class PhotoEventLogger: NSObject, WKScriptMessageHandler {
 
 /// The rectangles, in viewport CSS pixels, the page is willing to take a click in.
 ///
-/// The wallpaper window never takes mouse events (the desktop keeps its drag-select,
-/// right-click and icons), so the page has no cursor to react to and cannot know
-/// where a satellite is. It reports the rectangles instead, and the host decides
-/// which clicks belong to a card.
+/// While no card is up the wallpaper window is click-through (the desktop keeps its
+/// drag-select, right-click and icons), so the page has no cursor to react to and cannot
+/// know where a satellite is. It reports the rectangles instead, and the host decides
+/// which clicks belong to a card. A card that *is* up is a panel the user works in, so
+/// the host stops being a wallpaper for as long as it is on screen and hands that
+/// display the mouse and the keyboard.
 struct WidgetHitArea {
     /// Whether a card is on screen. While one is, the whole viewport is a target:
-    /// the backdrop closes the card.
+    /// the backdrop closes the card — and the host makes the window a real, focusable
+    /// one, so the card can be typed into instead of only clicked.
     let isOpen: Bool
     let regions: [CGRect]
 
@@ -1987,14 +1991,24 @@ final class WallpaperPreferences: ObservableObject {
 
 // MARK: - Desktop window
 
-/// Borderless window that can never take focus from the user's apps.
+/// Borderless window that sits below every app window, and takes focus only while a
+/// widget card is open on it.
 final class DesktopLevelWindow: NSWindow {
     /// One step below every normal window: right above the wallpaper picture and
     /// right below the Finder desktop icons.
     static let desktopLevel = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.desktopWindow)))
 
-    override var canBecomeKey: Bool { false }
-    override var canBecomeMain: Bool { false }
+    /// `true` while a widget card on this display is up and being worked in.
+    ///
+    /// A wallpaper window that can become key would take the keyboard from the app the
+    /// user is actually using every time the desktop is clicked, which is the one thing
+    /// a live wallpaper must never do. A card is the single exception — it has a field
+    /// to type in — so `DesktopWindowController` flips this on for exactly as long as
+    /// the card is on screen and flips it back the moment it closes.
+    var isInteractive = false
+
+    override var canBecomeKey: Bool { isInteractive }
+    override var canBecomeMain: Bool { isInteractive }
 }
 
 // MARK: - Desktop window controller
@@ -2065,6 +2079,8 @@ final class DesktopWindowController: NSObject, ObservableObject {
     private var scheduledPreset: ThemePreset?
     private var themeObservers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
+    /// Another app came forward: a card left standing would be holding its keyboard.
+    private var resignActiveObserver: NSObjectProtocol?
     /// Displays asleep or session locked: every page stands still until they are not.
     private var systemSuspended = false
     /// Photos the wallpaper rotates through. The standard `~/Pictures/DynaWall`
@@ -2135,6 +2151,7 @@ final class DesktopWindowController: NSObject, ObservableObject {
         // web view identifies which one reported.
         widgetBridge.onRegions = { [weak self] webView, area in
             guard let self, let entry = self.entry(for: webView) else { return }
+            let wasOpen = entry.hitArea.isOpen
             entry.hitArea = area
             // One line per display the first time the page reports its satellites: it
             // is the only honest proof that the cards came up at all.
@@ -2142,11 +2159,19 @@ final class DesktopWindowController: NSObject, ObservableObject {
                 entry.loggedWidgets = true
                 dynaLog("widgets: \(area.regions.count) clickable region(s) reported")
             }
+            // A card being up is the only thing that may make the wallpaper take the
+            // mouse and the keyboard, so the flip is applied here and nowhere else.
+            if area.isOpen != wasOpen {
+                self.updateInteractivity(for: entry, isOpen: area.isOpen)
+            }
         }
-        widgetBridge.onOpenURL = { target in
+        widgetBridge.onOpenURL = { [weak self] target in
             guard let url = URL(string: target) else { return }
             dynaLog("opening \(url.host ?? "link") in the default browser")
             NSWorkspace.shared.open(url)
+            // The card was a door out to the browser; once the browser takes over, the
+            // desktop has to be a wallpaper again instead of a modal left standing.
+            self?.dismissOpenWidgets(reason: "link left for the browser")
         }
     }
 
@@ -2181,6 +2206,10 @@ final class DesktopWindowController: NSObject, ObservableObject {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
         workspaceObservers.removeAll()
+        if let resignActiveObserver {
+            NotificationCenter.default.removeObserver(resignActiveObserver)
+        }
+        resignActiveObserver = nil
         tearDown()
     }
 
@@ -2221,6 +2250,20 @@ final class DesktopWindowController: NSObject, ObservableObject {
                         if !event.1 { self.resync() }
                     }
                 )
+            }
+        }
+
+        // A card is a modal for a desktop nobody is looking at any more the moment
+        // another app comes forward. Dismissing it then means the wallpaper is already
+        // back in its resting state — passive, unfocused, at desktop level — before it
+        // is seen again, instead of holding the keyboard for a card nobody is reading.
+        if resignActiveObserver == nil {
+            resignActiveObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didResignActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.dismissOpenWidgets(reason: "another app came forward")
             }
         }
     }
@@ -2309,6 +2352,11 @@ final class DesktopWindowController: NSObject, ObservableObject {
     private func tearDown() {
         pendingPush?.cancel()
         pendingPush = nil
+        // A display that was holding a card's keyboard must not keep the app active once
+        // its window is gone.
+        let wasInteractive = windows.contains {
+            ($0.window as? DesktopLevelWindow)?.isInteractive == true
+        }
         for entry in windows {
             // Occlusion observers are registered against the window that is about to
             // go away; a stale one would keep the controller (and the window) alive.
@@ -2329,22 +2377,29 @@ final class DesktopWindowController: NSObject, ObservableObject {
             entry.window.contentView = nil
         }
         windows.removeAll()
+        if wasInteractive {
+            returnActivation()
+        }
     }
 
     // MARK: Widget clicks
 
     /// Watch the mouse so a click can reach a card without the desktop giving up its own.
     ///
-    /// The desktop-level window keeps `ignoresMouseEvents = true`: that is what leaves
-    /// Finder drag-select, right-click, `⌃`-click, the icons, Mission Control and
-    /// hot corners exactly as they were. The page, in turn, never sees a pointer, so
-    /// the host has to notice the click itself and replay it in the page. Three rules
-    /// keep that from stealing anything:
+    /// While no card is up the desktop-level window keeps `ignoresMouseEvents = true`:
+    /// that is what leaves Finder drag-select, right-click, `⌃`-click, the icons, Mission
+    /// Control and hot corners exactly as they were. The page, in turn, never sees a
+    /// pointer, so the host has to notice the click itself and replay it in the page.
+    /// Three rules keep that from stealing anything:
     ///
     /// - the event is only observed, never consumed — the desktop still gets every click;
     /// - a click on another app's window, the Dock, or our own popover is ignored;
     /// - a click outside the rectangles the page reported is ignored, so empty
     ///   wallpaper behaves precisely as it did before widgets existed.
+    ///
+    /// An open card is the exception: the window takes real mouse events and the app is
+    /// active, so `NSApp.isActive` below keeps this monitor out of the way and WebKit
+    /// gets the click, the caret and the keystrokes directly.
     ///
     /// Mouse monitors need no accessibility grant. If the system ever withholds one,
     /// `clickMonitor` stays `nil` and the wallpaper is simply decorative again.
@@ -2388,6 +2443,108 @@ final class DesktopWindowController: NSObject, ObservableObject {
                 }
             }
             return
+        }
+    }
+
+    // MARK: Widget interactivity
+
+    /// Turn a display into a real, focusable window for as long as a card is up, and put
+    /// it back under the icons the moment the card closes.
+    ///
+    /// Everything the wallpaper does rests on staying click-through: no cursor, no key
+    /// window, no focus taken from the user's app. That is also why nothing could ever be
+    /// typed into a card — the keystrokes went to whatever app was frontmost while the
+    /// card was on screen. A card is the one moment the wallpaper is not a wallpaper but
+    /// a panel being worked in, so for exactly that moment the display is handed the
+    /// mouse and the keyboard:
+    ///
+    /// - the click-through flag comes off, so a field can be pointed at and a caret
+    ///   placed with the pointer;
+    /// - the level rises above the Finder's icons (`.floating`), so the card is never
+    ///   sliced by them, while staying below the menu bar and the Dock;
+    /// - the window becomes key and the web view its first responder, so `keyDown`
+    ///   (typing, `⌘V`, `Tab`, `Esc`) reaches the page;
+    /// - `acceptsMouseMovedEvents` comes back on, so the card's `:hover` states live.
+    ///
+    /// Closing reverses every one of them, and that is what hands the desktop back its
+    /// drag-select, its context menu and its icons.
+    private func updateInteractivity(for entry: WallpaperWindow, isOpen: Bool) {
+        guard let window = entry.window as? DesktopLevelWindow else { return }
+        // The page republishes its regions on every resize and every deal; only a real
+        // flip of the card's state may move the window.
+        guard window.isInteractive != isOpen else { return }
+
+        // Set first: `canBecomeKey` is read by `makeKeyAndOrderFront` below.
+        window.isInteractive = isOpen
+        window.ignoresMouseEvents = !isOpen
+        window.acceptsMouseMovedEvents = isOpen
+
+        guard isOpen else {
+            window.level = DesktopLevelWindow.desktopLevel
+            // `orderFrontRegardless` rather than `orderBack`: the Finder's own desktop
+            // picture sits at this very level, and the wallpaper has to stay in front of
+            // it or the live photo would vanish behind the static one.
+            window.orderFrontRegardless()
+            returnActivation(unlessHeldBy: window)
+            dynaLog("card closed — desktop is a wallpaper again")
+            return
+        }
+
+        // Above the Finder's icons, below the menu bar: the card is the frontmost thing on
+        // screen and the desktop behind it is still visibly the user's wallpaper.
+        window.level = .floating
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(entry.webView)
+
+        // Activation can settle a run-loop turn after the call above, so the window is
+        // keyed once more then: the card's field is never left without a caret.
+        let webView = entry.webView
+        DispatchQueue.main.async { [weak window] in
+            guard let window, window.isVisible, window.isInteractive else { return }
+            window.makeKeyAndOrderFront(nil)
+            window.makeFirstResponder(webView)
+        }
+        dynaLog("card open — desktop takes the keyboard")
+    }
+
+    /// Hand the keyboard back once nothing of ours is using it.
+    ///
+    /// An `.accessory` app that stays active with no key window swallows every keystroke:
+    /// the card is gone but the user's next `⌘Tab`, `⌘W` or letter lands nowhere. A panel
+    /// of ours that is still up (the settings popover) keeps the app active on purpose, so
+    /// activation is only let go of when the card was the last thing on screen.
+    private func returnActivation(unlessHeldBy window: NSWindow? = nil) {
+        guard NSApp.isActive else { return }
+        if let key = NSApp.keyWindow, key !== window { return }
+        // Another display still has a card open: the app is still the one being used.
+        let stillInUse = windows.contains {
+            $0.window !== window && ($0.window as? DesktopLevelWindow)?.isInteractive == true
+        }
+        if stillInUse { return }
+        NSApp.deactivate()
+    }
+
+    /// Dismiss every card that is on screen: the host is leaving the desktop (another app
+    /// came forward, a link went to the browser, the wallpaper was paused).
+    ///
+    /// The page is asked first, because a closed card is the page's own state; the window
+    /// is put back to sleep in the same turn regardless, so nothing on the page's side can
+    /// leave a display holding the mouse and the keyboard.
+    private func dismissOpenWidgets(reason: String) {
+        for entry in windows {
+            if entry.hitArea.isOpen {
+                dynaLog("closing the open card — \(reason)")
+                entry.webView.evaluateJavaScript("window.DynaWall && window.DynaWall.closeWidget();") { _, error in
+                    if let error {
+                        dynaLog("widget close failed: \(error.localizedDescription)")
+                    }
+                }
+                entry.hitArea = .closed
+            }
+            // A window that is still focusable for any reason goes back to sleep as well,
+            // so the desktop is never left holding the mouse or the keyboard.
+            updateInteractivity(for: entry, isOpen: false)
         }
     }
 
@@ -2794,6 +2951,12 @@ final class DesktopWindowController: NSObject, ObservableObject {
         isPaused = paused
         // A flip, not a move: `.levelChange` is the pattern macOS uses for a switch.
         DynaHaptics.tap(.levelChange)
+
+        // A wallpaper that is leaving the desktop cannot keep a card, or the keyboard, on
+        // it — the windows below go out of sight until the user resumes.
+        if paused {
+            dismissOpenWidgets(reason: "wallpaper paused")
+        }
 
         for entry in windows {
             if paused {

@@ -1212,7 +1212,10 @@ html.is-suspended .widget-btn {
   font-size: 0.82rem;
   line-height: 1.3;
   /* `body` turns selection off so a drag on the wallpaper never paints blue over
-     the greeting; a text field the user is meant to type in has to opt back in. */
+     the greeting; a text field the user is meant to type in has to opt back in —
+     and say so with the caret cursor, now that the desktop hands the field a real
+     click and the typing that follows. */
+  cursor: text;
   user-select: text;
   -webkit-user-select: text;
 }

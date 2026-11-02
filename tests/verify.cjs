@@ -3315,6 +3315,63 @@ test('the macOS host forwards desktop clicks into a card without taking any', ()
   assert.match(swift, /NSEvent\.removeMonitor\(clickMonitor\)/);
 });
 
+test('a card takes the keyboard while it is open and gives it straight back', () => {
+  const swift = hostSwift();
+
+  // The window can only become key while a card is up: `canBecomeKey` follows the flag the
+  // controller flips from the page's own report, so a passive desktop can never take a
+  // keystroke away from the app the user is actually in.
+  assert.match(swift, /var isInteractive = false/);
+  assert.match(swift, /override var canBecomeKey: Bool \{ isInteractive \}/);
+  assert.match(swift, /override var canBecomeMain: Bool \{ isInteractive \}/);
+  assert.match(swift, /if area\.isOpen != wasOpen \{/, 'only a real flip moves the window');
+  assert.match(swift, /self\.updateInteractivity\(for: entry, isOpen: area\.isOpen\)/);
+
+  // Open: real mouse events, above the Finder icons, key, web view first responder — the
+  // four things a search field needs before a caret can be put in it.
+  assert.match(swift, /window\.ignoresMouseEvents = !isOpen/);
+  assert.match(swift, /window\.level = \.floating/, 'above the icons, below the menu bar');
+  assert.match(swift, /window\.makeKeyAndOrderFront\(nil\)/);
+  assert.match(swift, /window\.makeFirstResponder\(entry\.webView\)/);
+
+  // Closed: click-through again, back at desktop level, and the app lets go of the keyboard
+  // instead of sitting there active with no key window to send it to.
+  assert.match(swift, /window\.level = DesktopLevelWindow\.desktopLevel/);
+  assert.match(swift, /window\.orderFrontRegardless\(\)/, 'the live photo stays in front of the static one');
+  assert.match(swift, /NSApp\.deactivate\(\)/);
+
+  // Nothing of ours may keep a card — or the keyboard — once the app loses focus, and a link
+  // leaves for the browser with the wallpaper already back at rest.
+  assert.match(swift, /NSApplication\.didResignActiveNotification/);
+  assert.match(swift, /window\.DynaWall && window\.DynaWall\.closeWidget\(\)/);
+  assert.match(swift, /dismissOpenWidgets\(reason: "another app came forward"\)/);
+  assert.match(swift, /dismissOpenWidgets\(reason: "link left for the browser"\)/);
+  assert.match(swift, /dismissOpenWidgets\(reason: "wallpaper paused"\)/);
+});
+
+test('both search fields answer a replayed click, not only a form submit', () => {
+  const script = readText('script.js');
+
+  // A replayed click is synthetic, and a synthetic click on a submit button does not
+  // reliably submit its form: each card runs its search from the button itself.
+  assert.match(script, /const submit = el\('button', 'widget-submit', 'Search'\);/);
+  assert.match(script, /const submit = el\('button', 'widget-submit', 'Find'\);/);
+  assert.equal(
+    (script.match(/submit\.addEventListener\('click'/g) || []).length,
+    2,
+    'both cards answer a click on their own button'
+  );
+
+  // The host's replay asks the owning button for a real click, which is what runs the
+  // activation behaviour (a form submission included) a dispatched MouseEvent never does.
+  assert.match(script, /function buttonAt\(node\)/);
+  assert.match(script, /const control = buttonAt\(node\);/);
+  assert.match(script, /control\.click\(\);/);
+
+  // The door the host uses when it has to leave the desktop on the page's behalf.
+  assert.match(script, /closeWidget: function \(\) \{/);
+});
+
 test('the Windows host forwards desktop clicks into a card without taking any', () => {
   const clicks = fs.readFileSync(path.join(ROOT, 'windows/DesktopClicks.cs'), 'utf8');
   const host = fs.readFileSync(path.join(ROOT, 'windows/DesktopHost.cs'), 'utf8');

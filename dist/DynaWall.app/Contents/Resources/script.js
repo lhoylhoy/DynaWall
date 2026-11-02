@@ -3013,17 +3013,20 @@
     /**
      * Tell the host where the page is willing to take a click.
      *
-     * The wallpaper window ignores the mouse entirely (`ignoresMouseEvents` on
-     * macOS, a click-through desktop layer on Windows), which is what keeps Finder
-     * drag-select, right-click, desktop icons and Mission Control working. That also
-     * means the page never sees the cursor, so it cannot notice a hover by itself:
-     * the host watches the pointer and only needs the rectangles that should
-     * intercept a click. They travel as viewport CSS pixels, inflated by
-     * `HIT_PADDING` so the rim of a button — and its 0.3 rem drift — does not
-     * flicker in and out.
+     * While no card is up the wallpaper window ignores the mouse entirely
+     * (`ignoresMouseEvents` on macOS, a click-through desktop layer on Windows), which is
+     * what keeps Finder drag-select, right-click, desktop icons and Mission Control
+     * working. That also means the page never sees the cursor, so it cannot notice a
+     * hover by itself: the host watches the pointer and only needs the rectangles that
+     * should intercept a click. They travel as viewport CSS pixels, inflated by
+     * `HIT_PADDING` so the rim of a button — and its 0.3 rem drift — does not flicker in
+     * and out.
      *
      * While a card is open the whole viewport is reported, because the backdrop is
-     * itself a click target: clicking anywhere outside the card closes it.
+     * itself a click target: clicking anywhere outside the card closes it. That report is
+     * also what hands the display its mouse and keyboard on macOS — the host stops being
+     * click-through for as long as a card is up, so the field under the pointer takes a
+     * caret and the typing (and `Esc`, and `⌘V`) reaches the page.
      *
      * With the satellites switched off nothing is reported at all: the host then keeps
      * every click for the desktop, which is exactly what "no widgets" should mean.
@@ -3082,10 +3085,10 @@
     /**
      * Replay a click the host caught on our behalf.
      *
-     * The desktop layer stays click-through, so the page never receives a real
-     * pointer event; the host watches the mouse, keeps every click that belongs to
-     * the desktop, and hands back the ones that land on a reported rectangle. The
-     * point arrives in CSS pixels from the top-left of the viewport.
+     * With no card up the desktop layer stays click-through, so the page never receives
+     * a real pointer event; the host watches the mouse, keeps every click that belongs to
+     * the desktop, and hands back the ones that land on a reported rectangle. The point
+     * arrives in CSS pixels from the top-left of the viewport.
      */
     function clickAt(x, y) {
       const px = Number(x);
@@ -3107,6 +3110,17 @@
         }
       }
 
+      // The point lands on the deepest element under it, which is rarely the control
+      // itself: a row's title is a `<span>` inside its `<button>`. Ask the owning button
+      // for a real click — `click()` runs the activation behaviour (submitting a form
+      // included) that a dispatched `MouseEvent` never does, which is what makes
+      // "Search" and "Find" work when a click arrives this way.
+      const control = buttonAt(node);
+      if (control) {
+        control.click();
+        return true;
+      }
+
       const init = { bubbles: true, cancelable: true, clientX: px, clientY: py, view: win };
       let event;
       if (typeof win.MouseEvent === 'function') {
@@ -3119,6 +3133,15 @@
       }
       node.dispatchEvent(event);
       return true;
+    }
+
+    /** The button a replayed click belongs to: the node itself, or the one it sits in. */
+    function buttonAt(node) {
+      if (!node) return null;
+      if (node.tagName === 'BUTTON' && typeof node.click === 'function') return node;
+      if (typeof node.closest !== 'function') return null;
+      const button = node.closest('button');
+      return button && typeof button.click === 'function' ? button : null;
     }
 
     function scheduleHitRegions() {
@@ -3333,16 +3356,28 @@
       const submit = el('button', 'widget-submit', 'Search');
       submit.type = 'submit';
 
-      form.appendChild(input);
-      form.appendChild(submit);
-      form.addEventListener('submit', function (event) {
-        event.preventDefault();
+      function submitSearch() {
         const term = clipText(input.value, MAX_WIDGET_TEXT);
         if (!term) {
           input.focus();
           return;
         }
         openExternal(win, buildYouTubeSearchUrl(term));
+      }
+
+      form.appendChild(input);
+      form.appendChild(submit);
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        submitSearch();
+      });
+      // A click the host replays into the page is synthetic, and a synthetic click on a
+      // submit button does not reliably submit its form. The button runs the search
+      // itself, so "Search" behaves the same for a real pointer, for `Enter` in the
+      // field and for a click that arrived through `clickAt()`.
+      submit.addEventListener('click', function (event) {
+        event.preventDefault();
+        submitSearch();
       });
       return form;
     }
@@ -3415,8 +3450,9 @@
       }
 
       wrapper.appendChild(weather.status === 'choosing' ? placeChoices() : weatherSearchForm());
-      // A place has to be pickable without a keyboard: the native desktop never lets
-      // the page take focus, so nothing can be typed into the field above.
+      // A place can also be picked with one click: the field above is only typeable where
+      // the page has the keyboard (a card the host has focused, or a plain browser), and a
+      // desktop without one still has to reach a forecast.
       if (!weather.place && weather.status !== 'choosing') {
         wrapper.appendChild(section('Popular cities', placeRowList(WEATHER_CITIES)));
       }
@@ -3578,11 +3614,21 @@
       const submit = el('button', 'widget-submit', 'Find');
       submit.type = 'submit';
 
+      function submitPlace() {
+        searchPlaces(input.value);
+      }
+
       form.appendChild(input);
       form.appendChild(submit);
       form.addEventListener('submit', function (event) {
         event.preventDefault();
-        searchPlaces(input.value);
+        submitPlace();
+      });
+      // Same as the YouTube card: a replayed click is synthetic, so the button answers it
+      // itself instead of relying on an implicit form submission that never comes.
+      submit.addEventListener('click', function (event) {
+        event.preventDefault();
+        submitPlace();
       });
       return form;
     }

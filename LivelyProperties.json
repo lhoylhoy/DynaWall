@@ -1,0 +1,65 @@
+{
+  "__HEADER_GREETING__": {
+    "type": "label",
+    "value": "Greeting"
+  },
+  "firstName": {
+    "text": "First name",
+    "type": "textbox",
+    "value": "Developer"
+  },
+  "subtitleText": {
+    "text": "Subtitle",
+    "type": "textbox",
+    "value": "What are we building today?"
+  },
+  "__HEADER_APPEARANCE__": {
+    "type": "label",
+    "value": "Appearance"
+  },
+  "theme": {
+    "text": "Theme",
+    "type": "dropdown",
+    "value": 0,
+    "items": [
+      "Auto (time of day)",
+      "Dawn (05–09)",
+      "Day (09–17)",
+      "Dusk (17–21)",
+      "Night (21–05)",
+      "Custom color"
+    ]
+  },
+  "bgColor": {
+    "text": "Background color (custom theme)",
+    "type": "color",
+    "value": "#0d1117"
+  },
+  "__HEADER_PHOTOS__": {
+    "type": "label",
+    "value": "Photos"
+  },
+  "slideshow": {
+    "text": "Photo slideshow",
+    "type": "checkbox",
+    "value": false
+  },
+  "slideshowInterval": {
+    "text": "Rotate every (minutes)",
+    "type": "slider",
+    "value": 15,
+    "min": 1,
+    "max": 120,
+    "step": 1
+  },
+  "slideshowShuffle": {
+    "text": "Shuffle order",
+    "type": "checkbox",
+    "value": true
+  },
+  "kenBurns": {
+    "text": "Slow zoom",
+    "type": "checkbox",
+    "value": true
+  }
+}

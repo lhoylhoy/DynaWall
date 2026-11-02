@@ -1,0 +1,412 @@
+/* ---------------------------------------------------------------------------
+   DynaWall — minimalist live wallpaper styling
+   Every value below can be tuned from the host application (Lively Wallpaper /
+   Wallpaper Engine) or the URL; --bg-primary is rewritten at runtime.
+   --------------------------------------------------------------------------- */
+
+/* ---------------------------------------------------------------------------
+   Typography — Outfit (Google Fonts, SIL OFL 1.1)
+   The latin-subset variable WOFF2 file is vendored in assets/fonts, so the
+   wallpaper looks identical offline, at login and inside every host: no CDN
+   link, no network request and no flash of a fallback face. The license lives
+   next to the font (OFL-Outfit.txt).
+   The `unicode-range` is Google's latin range: glyphs outside it skip this file
+   entirely and fall through to the system stack instead of rendering a
+   half-loaded face.
+   --------------------------------------------------------------------------- */
+
+@font-face {
+  font-family: "Outfit";
+  src: url("assets/fonts/outfit-latin.woff2") format("woff2");
+  font-weight: 100 900; /* variable axis — every weight below is real, not synthesised */
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC,
+    U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215,
+    U+FEFF, U+FFFD;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Theme — the baseline is the daylight (day) palette, so the very first paint
+     before script.js runs already looks right. The time-aware blocks below
+     override these four times a day; `custom` reuses this baseline and only
+     rewrites --bg-primary (inline, from the configured colour). */
+  --bg-primary: #0d1117;
+  --bg-radial-accent: rgba(56, 139, 253, 0.04);
+  --bg-vignette: rgba(1, 4, 9, 0.45);
+  --text-primary: #f0f6fc;
+  --text-secondary: #8b949e;
+  --greeting-glow: rgba(240, 246, 252, 0.06);
+  --photo-filter: none;
+
+  /* Typography — Outfit first; a geometric fallback chain covers everything the
+     vendored latin subset cannot (Avenir Next/Futura ship with macOS, Century
+     Gothic with Windows), and the system face closes the list. */
+  --font-sans: "Outfit", "Avenir Next", "Century Gothic", "Futura", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* Display scale — Outfit is a wide geometric face: the greeting is tracked in
+     (-3%) and sized so a typical greeting stays on one line up to 5K. Every
+     value below is a token so the scale can be retuned without touching rules. */
+  --greeting-size: clamp(2.6rem, 4.7vw, 7rem);
+  --greeting-weight: 600;
+  --greeting-tracking: -0.03em;
+  --greeting-leading: 1.06;
+  --subtitle-size: clamp(1.05rem, 1.32vw, 1.8rem);
+  --subtitle-weight: 400;
+  --subtitle-tracking: 0.012em;
+  --subtitle-leading: 1.5;
+  --subtitle-measure: 46ch;
+
+  /* Rhythm */
+  --content-gap: clamp(0.8rem, 1.6vh, 1.3rem);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --fade-duration: 900ms;
+  --text-fade-duration: 320ms;
+  --photo-fade-duration: 1200ms;
+  /* Slow on purpose: a palette change is a change of light, not a UI event. */
+  --theme-fade-duration: 2400ms;
+}
+
+/* ---------------------------------------------------------------------------
+   Time-aware palettes — dawn · day · dusk · night
+   script.js re-reads the clock every 30 s and swaps [data-theme] on <html>; the
+   tokens below decide what that looks like. All four bands stay dark and
+   legible: only the hue of the ink, the accent glow, the text tones and the
+   photo grade move, so the layout never shifts.
+
+   Keep the hours (05 / 09 / 17 / 21) in sync with getThemeSlot() in script.js
+   and ThemeSlot in macos/DynaWallApp.swift, and the backgrounds with
+   ThemeSlot.hex — a test asserts the two agree.
+   --------------------------------------------------------------------------- */
+
+/* 05:00–08:59 — first light: violet ink, rose accent, photos barely warmed. */
+[data-theme="dawn"] {
+  --bg-primary: #121020;
+  --bg-radial-accent: rgba(255, 148, 170, 0.055);
+  --bg-vignette: rgba(6, 4, 14, 0.5);
+  --text-primary: #f8f3fb;
+  --text-secondary: #a89fb9;
+  --greeting-glow: rgba(255, 190, 205, 0.08);
+  --photo-filter: saturate(1.04) brightness(0.97);
+}
+
+/* 09:00–16:59 — daylight neutral; identical to the :root baseline. */
+[data-theme="day"],
+[data-theme="custom"] {
+  --bg-primary: #0d1117;
+  --bg-radial-accent: rgba(56, 139, 253, 0.04);
+  --bg-vignette: rgba(1, 4, 9, 0.45);
+  --text-primary: #f0f6fc;
+  --text-secondary: #8b949e;
+  --greeting-glow: rgba(240, 246, 252, 0.06);
+  --photo-filter: none;
+}
+
+/* 17:00–20:59 — amber dusk. */
+[data-theme="dusk"] {
+  --bg-primary: #180f0e;
+  --bg-radial-accent: rgba(255, 146, 80, 0.06);
+  --bg-vignette: rgba(10, 3, 2, 0.52);
+  --text-primary: #fdf1e8;
+  --text-secondary: #b19b8f;
+  --greeting-glow: rgba(255, 182, 128, 0.09);
+  --photo-filter: sepia(0.08) saturate(1.06) brightness(0.98);
+}
+
+/* 21:00–04:59 — deepest ink, cool accent, dimmer type and dimmed photos. */
+[data-theme="night"] {
+  --bg-primary: #070a11;
+  --bg-radial-accent: rgba(72, 110, 255, 0.045);
+  --bg-vignette: rgba(0, 2, 6, 0.6);
+  --text-primary: #e7eefb;
+  --text-secondary: #7f8a9c;
+  --greeting-glow: rgba(160, 190, 255, 0.05);
+  --photo-filter: brightness(0.9) saturate(0.94);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.4;
+  /* Real kerning and ligatures from the variable face; `none` stops the browser
+     from faking weights or an italic Outfit never shipped. */
+  font-kerning: normal;
+  font-variant-ligatures: common-ligatures contextual;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Palette changes cross-fade — but only once the wallpaper has settled (script.js
+   adds `is-theme-ready` after the entrance), so a cold start lands on the right
+   band instantly instead of fading in from the band the last launch used. */
+html.is-theme-ready body {
+  transition: background-color var(--theme-fade-duration) var(--ease-out);
+}
+
+/* ---------------------------------------------------------------------------
+   Layout
+   --------------------------------------------------------------------------- */
+
+.wallpaper-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  isolation: isolate;
+}
+
+/* Ambient depth: a barely-there radial accent plus a soft edge vignette. */
+.wallpaper-container::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(circle at 50% 38%, var(--bg-radial-accent) 0%, transparent 62%),
+    radial-gradient(circle at 50% 50%, transparent 58%, var(--bg-vignette) 100%);
+}
+
+.wallpaper-content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--content-gap);
+  max-width: min(90vw, 86rem);
+  text-align: center;
+  opacity: 0;
+  transform: translate3d(0, 12px, 0) scale(0.995);
+  transition:
+    opacity var(--fade-duration) var(--ease-out),
+    transform var(--fade-duration) var(--ease-out);
+  will-change: opacity, transform;
+}
+
+.wallpaper-content.is-loaded {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+/* ---------------------------------------------------------------------------
+   Photo slideshow
+   Two stacked <img> layers cross-fade into each other; the scrim keeps the
+   greeting readable no matter what the photos look like.
+   --------------------------------------------------------------------------- */
+
+.photo-stack {
+  position: absolute;
+  inset: 0;
+  z-index: -3;
+  overflow: hidden;
+  pointer-events: none;
+  background-color: var(--bg-primary);
+}
+
+.photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+  /* Each band grades the photos: barely warmed at dawn, amber at dusk, dimmed and
+     desaturated at night, untouched at midday. */
+  filter: var(--photo-filter);
+  opacity: 0;
+  visibility: hidden;
+  transform: scale(1.02);
+  transform-origin: center;
+  transition:
+    opacity var(--photo-fade-duration) var(--ease-out),
+    filter var(--theme-fade-duration) var(--ease-out),
+    visibility 0s linear var(--photo-fade-duration);
+  will-change: opacity, transform;
+  backface-visibility: hidden;
+}
+
+.photo.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity var(--photo-fade-duration) var(--ease-out),
+    filter var(--theme-fade-duration) var(--ease-out),
+    visibility 0s linear 0s;
+}
+
+/* Slow drift for as long as the photo is on screen; script.js sets the duration. */
+.photo.is-ken-burns {
+  animation: ken-burns var(--photo-duration, 60s) linear both;
+}
+
+@keyframes ken-burns {
+  from {
+    transform: scale(1.02) translate3d(0, 0, 0);
+  }
+  to {
+    transform: scale(1.14) translate3d(-1.4%, -1.8%, 0);
+  }
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 700ms var(--ease-out);
+  background-image:
+    radial-gradient(ellipse at 50% 46%, rgba(1, 4, 9, 0.1) 0%, rgba(1, 4, 9, 0.45) 100%),
+    linear-gradient(rgba(1, 4, 9, 0.22), rgba(1, 4, 9, 0.22));
+}
+
+body.has-photo .scrim {
+  opacity: 1;
+}
+
+body.has-photo .greeting {
+  text-shadow: 0 2px 60px rgba(1, 4, 9, 0.8);
+}
+
+body.has-photo .subtitle {
+  /* A busy photo needs a brighter secondary tone to stay legible; taking the
+     band's own primary ink and holding it back to 74% keeps that true in every
+     palette instead of hard-coding a daylight white. */
+  color: var(--text-primary);
+  opacity: 0.74;
+  text-shadow: 0 1px 30px rgba(1, 4, 9, 0.75);
+}
+
+/* ---------------------------------------------------------------------------
+   Greeting & subtitle
+   --------------------------------------------------------------------------- */
+
+.greeting {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--greeting-size);
+  font-weight: var(--greeting-weight);
+  line-height: var(--greeting-leading);
+  letter-spacing: var(--greeting-tracking);
+  color: var(--text-primary);
+  /* Balance the line breaks if a long name wraps; `hyphens: none` keeps names
+     whole instead of splitting them at a dash. */
+  text-wrap: balance;
+  overflow-wrap: break-word;
+  hyphens: none;
+  text-shadow: 0 1px 40px var(--greeting-glow);
+  transition:
+    color var(--theme-fade-duration) var(--ease-out),
+    opacity var(--text-fade-duration) var(--ease-out),
+    transform var(--text-fade-duration) var(--ease-out);
+}
+
+/* Applied for the cross-fade while the greeting string is swapped. */
+.greeting.is-transitioning {
+  opacity: 0;
+  transform: translate3d(0, -0.4rem, 0);
+}
+
+.subtitle {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--subtitle-size);
+  font-weight: var(--subtitle-weight);
+  line-height: var(--subtitle-leading);
+  letter-spacing: var(--subtitle-tracking);
+  color: var(--text-secondary);
+  /* Small text reads better with a measure cap than with an edge-to-edge line. */
+  max-width: min(86vw, var(--subtitle-measure));
+  margin-inline: auto;
+  text-wrap: pretty;
+  /* Colour and opacity both follow the palette (photos lift it in .has-photo). */
+  transition:
+    color var(--theme-fade-duration) var(--ease-out),
+    opacity var(--theme-fade-duration) var(--ease-out);
+}
+
+/* Let an intentionally cleared subtitle collapse instead of leaving a gap. */
+.subtitle:empty {
+  display: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Responsive & accessibility
+   --------------------------------------------------------------------------- */
+
+@media (max-width: 480px) {
+  :root {
+    /* Narrow screens: smaller display size, tracking eased off so it does not
+       cramp, and a slightly looser leading for the multi-line case. */
+    --greeting-size: clamp(1.85rem, 8.4vw, 3rem);
+    --greeting-tracking: -0.02em;
+    --greeting-leading: 1.1;
+    --subtitle-size: clamp(0.95rem, 3.8vw, 1.2rem);
+    --content-gap: 0.7rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The palette transition lives on `html.is-theme-ready body` (higher
+     specificity), so it has to be switched off by name here as well. */
+  html.is-theme-ready body,
+  body,
+  .wallpaper-content,
+  .greeting,
+  .subtitle,
+  .photo,
+  .scrim {
+    transition-duration: 1ms;
+    transition-delay: 0s;
+  }
+
+  .wallpaper-content,
+  .wallpaper-content.is-loaded {
+    transform: none;
+  }
+
+  .greeting.is-transitioning {
+    transform: none;
+  }
+
+  .photo.is-ken-burns {
+    animation: none;
+  }
+}

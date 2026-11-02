@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0d1117" />
+    <meta
+      name="description"
+      content="DynaWall — a minimalist, time-aware live wallpaper for Lively Wallpaper and Wallpaper Engine."
+    />
+    <title>DynaWall</title>
+    <link rel="stylesheet" href="style.css" />
+    <script src="script.js" defer></script>
+  </head>
+  <body>
+    <main class="wallpaper-container" aria-label="DynaWall live wallpaper">
+      <!-- Background photos: two layers cross-fade so slides never flash -->
+      <div class="photo-stack" id="photos" aria-hidden="true">
+        <img class="photo" id="photo-a" alt="" decoding="async" />
+        <img class="photo" id="photo-b" alt="" decoding="async" />
+      </div>
+
+      <!-- Darkens the photo just enough for the greeting to stay readable -->
+      <div class="scrim" aria-hidden="true"></div>
+
+      <div class="wallpaper-content" id="content">
+        <!-- Fallback copy is swapped for the time-aware greeting on load -->
+        <h1 class="greeting" id="greeting">Good day, Developer.</h1>
+
+        <p class="subtitle" id="subtitle">What are we building today?</p>
+      </div>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,76 @@
+{
+  "contentrating": "Everyone",
+  "description": "A minimalist, time-aware greeting for your desktop: Good morning/afternoon/evening with a rotating photo slideshow.",
+  "file": "index.html",
+  "general": {
+    "properties": {
+      "firstname": {
+        "order": 1,
+        "text": "First name",
+        "type": "textinput",
+        "value": "Developer"
+      },
+      "subtitle": {
+        "order": 2,
+        "text": "Subtitle",
+        "type": "textinput",
+        "value": "What are we building today?"
+      },
+      "theme": {
+        "order": 3,
+        "text": "Theme",
+        "type": "combo",
+        "value": "auto",
+        "options": [
+          { "label": "Auto (time of day)", "value": "auto" },
+          { "label": "Dawn (05–09)", "value": "dawn" },
+          { "label": "Day (09–17)", "value": "day" },
+          { "label": "Dusk (17–21)", "value": "dusk" },
+          { "label": "Night (21–05)", "value": "night" },
+          { "label": "Custom color", "value": "custom" }
+        ]
+      },
+      "bgcolor": {
+        "order": 4,
+        "text": "Background color (custom theme)",
+        "type": "color",
+        "value": "0.050980 0.066667 0.090196"
+      },
+      "slideshow": {
+        "order": 5,
+        "text": "Photo slideshow",
+        "type": "bool",
+        "value": false
+      },
+      "slideshowinterval": {
+        "order": 6,
+        "text": "Rotate every (minutes)",
+        "type": "slider",
+        "value": 15,
+        "min": 1,
+        "max": 120,
+        "step": 1
+      },
+      "slideshowshuffle": {
+        "order": 7,
+        "text": "Shuffle order",
+        "type": "bool",
+        "value": true
+      },
+      "kenburns": {
+        "order": 8,
+        "text": "Slow zoom",
+        "type": "bool",
+        "value": true
+      }
+    }
+  },
+  "preview": "thumbnail.png",
+  "tags": [
+    "Minimalist",
+    "Abstract"
+  ],
+  "title": "DynaWall",
+  "type": "web",
+  "version": 1
+}

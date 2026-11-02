@@ -1297,6 +1297,13 @@ final class WallpaperPreferences: ObservableObject {
         static let photoFolder = "photoFolderPath"
         static let photoCollection = "photoCollection"
         static let photoSync = "photoSyncTimeOfDay"
+        /// Whether the four desktop satellites (music, news, YouTube, weather) show.
+        static let widgets = "desktopWidgets"
+        /// …and one flag per satellite, so each can be taken off the desktop alone.
+        static let widgetMusic = "desktopWidgetMusic"
+        static let widgetNews = "desktopWidgetNews"
+        static let widgetYouTube = "desktopWidgetYouTube"
+        static let widgetWeather = "desktopWidgetWeather"
         static let launchAtLogin = "launchAtLogin"
         /// Greeting/subtitle family: an installed name or the imported file's family.
         static let fontFamily = "fontFamily"
@@ -1426,6 +1433,34 @@ final class WallpaperPreferences: ObservableObject {
     /// Keep the wallpaper's photo in step with the clock's palette band.
     @Published var photoSync: Bool {
         didSet { persist(photoSync, Key.photoSync) }
+    }
+
+    /// The four desktop satellites: music, news, YouTube and weather.
+    ///
+    /// On by default, and off is a real setting rather than a broken wallpaper: the
+    /// page hides the satellite, stops placing it and reports no click rectangle for it,
+    /// so that corner of the desktop is the Finder's again. `widgets` is the master
+    /// switch — it hides all four without forgetting which ones were picked — and the
+    /// four flags below take them one at a time. Every change is pushed to the page like
+    /// every other setting, which is what makes them live: no reload, no relaunch.
+    @Published var widgets: Bool {
+        didSet { persist(widgets, Key.widgets) }
+    }
+
+    @Published var widgetMusic: Bool {
+        didSet { persist(widgetMusic, Key.widgetMusic) }
+    }
+
+    @Published var widgetNews: Bool {
+        didSet { persist(widgetNews, Key.widgetNews) }
+    }
+
+    @Published var widgetYouTube: Bool {
+        didSet { persist(widgetYouTube, Key.widgetYouTube) }
+    }
+
+    @Published var widgetWeather: Bool {
+        didSet { persist(widgetWeather, Key.widgetWeather) }
     }
 
     /// The family the greeting and subtitle are set in. `Outfit` is the vendored
@@ -1701,6 +1736,11 @@ final class WallpaperPreferences: ObservableObject {
         photoFolderPath = ""
         photoCount = 0
         photoSync = true
+        widgets = true
+        widgetMusic = true
+        widgetNews = true
+        widgetYouTube = true
+        widgetWeather = true
         fontFamily = WallpaperFont.defaultFamily
         customFontPath = ""
     }
@@ -1722,6 +1762,11 @@ final class WallpaperPreferences: ObservableObject {
             Key.photoFolder: "",
             Key.photoCollection: PhotoCollection.custom.rawValue,
             Key.photoSync: true,
+            Key.widgets: true,
+            Key.widgetMusic: true,
+            Key.widgetNews: true,
+            Key.widgetYouTube: true,
+            Key.widgetWeather: true,
             Key.launchAtLogin: false,
             Key.fontFamily: WallpaperFont.defaultFamily,
             Key.customFontPath: ""
@@ -1744,6 +1789,11 @@ final class WallpaperPreferences: ObservableObject {
         photoCollection = .custom
         defaults.set(PhotoCollection.custom.rawValue, forKey: Key.photoCollection)
         photoSync = defaults.bool(forKey: Key.photoSync)
+        widgets = defaults.bool(forKey: Key.widgets)
+        widgetMusic = defaults.bool(forKey: Key.widgetMusic)
+        widgetNews = defaults.bool(forKey: Key.widgetNews)
+        widgetYouTube = defaults.bool(forKey: Key.widgetYouTube)
+        widgetWeather = defaults.bool(forKey: Key.widgetWeather)
         launchAtLogin = LaunchAtLogin.isEnabled
         // Bundled families are hidden from the dropdown; an old pick that pointed at
         // one of them lands back on Outfit rather than at an invisible selection.
@@ -1804,6 +1854,11 @@ final class WallpaperPreferences: ObservableObject {
           window.livelyPropertyListener("slideshowInterval", \(slideshowIntervalMinutes));
           window.livelyPropertyListener("slideshowShuffle", \(slideshowShuffle ? "true" : "false"));
           window.livelyPropertyListener("kenBurns", \(kenBurns ? "true" : "false"));
+          window.livelyPropertyListener("widgets", \(widgets ? "true" : "false"));
+          window.livelyPropertyListener("widgetMusic", \(widgetMusic ? "true" : "false"));
+          window.livelyPropertyListener("widgetNews", \(widgetNews ? "true" : "false"));
+          window.livelyPropertyListener("widgetYouTube", \(widgetYouTube ? "true" : "false"));
+          window.livelyPropertyListener("widgetWeather", \(widgetWeather ? "true" : "false"));
           window.livelyPropertyListener("fontFamily", \(Self.jsLiteral(WallpaperFont.normalizedFamily(fontFamily))));
           return true;
         })();
@@ -1858,6 +1913,11 @@ final class WallpaperPreferences: ObservableObject {
         fields.append("\"slideshowInterval\": \(slideshowIntervalMinutes)")
         fields.append("\"slideshowShuffle\": \(slideshowShuffle ? "true" : "false")")
         fields.append("\"kenBurns\": \(kenBurns ? "true" : "false")")
+        fields.append("\"widgets\": \(widgets ? "true" : "false")")
+        fields.append("\"widgetMusic\": \(widgetMusic ? "true" : "false")")
+        fields.append("\"widgetNews\": \(widgetNews ? "true" : "false")")
+        fields.append("\"widgetYouTube\": \(widgetYouTube ? "true" : "false")")
+        fields.append("\"widgetWeather\": \(widgetWeather ? "true" : "false")")
         fields.append("\"fontFamily\": \(Self.jsLiteral(WallpaperFont.normalizedFamily(fontFamily)))")
         // The imported face rides along so the first frame is already set in it; it
         // is re-read from disk here rather than stored, so a replaced file wins.
@@ -2902,8 +2962,28 @@ struct SettingsPopoverView: View {
     /// Fixed design width; the height is measured from the content.
     static let popoverWidth: CGFloat = 340
 
+    /// One radius for the section cards and one for the controls inside them, so
+    /// the panel reads as a single surface instead of a pile of near-misses.
+    private static let cardCornerRadius: CGFloat = 12
+    private static let controlCornerRadius: CGFloat = 8
+
+    /// The card headers' glyph slot. SF Symbols differ in width, so the frame —
+    /// not the symbol — is what puts every section title on the same guide line.
+    private static let headerIconSize: CGFloat = 14
+
+    /// The two-column slot every switch rides in, so the four satellites and the
+    /// slideshow options below them line up row after row.
+    private static let toggleColumnSpacing: CGFloat = 10
+
     @ObservedObject var preferences: WallpaperPreferences
     @ObservedObject var controller: DesktopWindowController
+    /// The panel hosting this view. Weak, because that panel owns the hosting
+    /// controller that owns this view; the folder picker closes it for the dialog
+    /// and re-presents it afterwards.
+    weak var popover: NSPopover?
+    /// Re-anchors and reopens the panel, for the folder picker: the settings panel
+    /// steps aside for the modal dialog and has to come back when it closes.
+    var onReopenPopover: (() -> Void)?
     /// Called with the ideal content height whenever the layout changes.
     var onContentHeightChange: ((CGFloat) -> Void)?
 
@@ -2911,11 +2991,12 @@ struct SettingsPopoverView: View {
     @StateObject private var dropTarget = FolderDropTarget()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
+        VStack(alignment: .leading, spacing: 12) {
             previewCard
             greetingCard
             typographyCard
             photosCard
+            widgetsCard
             startupCard
             footer
         }
@@ -3072,6 +3153,7 @@ struct SettingsPopoverView: View {
         .padding(.horizontal, 7)
         .padding(.vertical, 3)
         .background(Capsule().fill(Color.white.opacity(0.16)))
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.16), lineWidth: 0.5))
     }
 
     private var badgeSymbol: String {
@@ -3137,22 +3219,35 @@ struct SettingsPopoverView: View {
 
     private var greetingCard: some View {
         card(systemImage: "textformat", title: "Greeting") {
+            // A plain field drawn on the card's own chrome, so the subtitle control
+            // is the same 11 pt, same-radius plate as the font menu below it instead
+            // of a second, native one. The trailing inset keeps typed text out from
+            // under the clear button that lives inside the field's trailing edge.
             TextField("What are we building today? (empty hides)", text: $preferences.subtitleText)
-                .textFieldStyle(.roundedBorder)
-                // The clear button lives *inside* the field's trailing edge, so the
-                // subtitle keeps its full width and does not jump when the button
-                // appears or disappears.
+                .textFieldStyle(.plain)
+                .font(.system(size: 11))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .padding(.trailing, 14)
+                .background(
+                    RoundedRectangle(cornerRadius: Self.controlCornerRadius, style: .continuous)
+                        .fill(Color.primary.opacity(0.05))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: Self.controlCornerRadius, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                )
                 .overlay(alignment: .trailing) {
                     if !preferences.subtitleText.isEmpty {
                         Button {
                             preferences.subtitleText = ""
                         } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 12))
+                                .font(.system(size: 11.5))
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .padding(.trailing, 5)
+                        .padding(.trailing, 6)
                         .help("Hide the subtitle")
                         .accessibilityLabel("Clear subtitle")
                     }
@@ -3223,10 +3318,18 @@ struct SettingsPopoverView: View {
                     }
                     .foregroundColor(.primary)
                     .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 5)
+                    // Full width, like the subtitle field and the folder row: the
+                    // chevrons stay on the control's right edge and the plate ends
+                    // on the same line as every other control in the panel.
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        RoundedRectangle(cornerRadius: Self.controlCornerRadius, style: .continuous)
                             .fill(Color.primary.opacity(0.05))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Self.controlCornerRadius, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
                     )
                 }
                 .menuStyle(.borderlessButton)
@@ -3239,16 +3342,22 @@ struct SettingsPopoverView: View {
     // MARK: Section chrome
 
     /// One labelled section: an icon + title, then the controls, on a soft card.
+    ///
+    /// The header glyph gets a fixed slot so `GREETING`, `TYPOGRAPHY`, `PHOTOS`,
+    /// `DESKTOP WIDGETS` and `STARTUP` all start on the same vertical guide, and the
+    /// card's padding and radius come from one place so every section is the same
+    /// weight on the panel.
     private func card<Content: View>(
         systemImage: String,
         title: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
         VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: systemImage)
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundColor(.secondary)
+                    .frame(width: Self.headerIconSize, height: Self.headerIconSize, alignment: .center)
                 Text(title.uppercased())
                     .font(.system(size: 9.5, weight: .semibold))
                     .kerning(0.6)
@@ -3260,11 +3369,11 @@ struct SettingsPopoverView: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.cardCornerRadius, style: .continuous)
                 .fill(Color.primary.opacity(0.055))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.cardCornerRadius, style: .continuous)
                 .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
         )
     }
@@ -3281,8 +3390,11 @@ struct SettingsPopoverView: View {
             .lineLimit(1)
             .truncationMode(.middle)
             .padding(.horizontal, 7)
-            .padding(.vertical, 2)
+            // Same 3 pt vertical padding as the preview card's band badge, so every
+            // capsule in the panel is the same height.
+            .padding(.vertical, 3)
             .background(Capsule().fill(Color.primary.opacity(0.07)))
+            .overlay(Capsule().strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5))
     }
 
     private var photosCard: some View {
@@ -3329,10 +3441,11 @@ struct SettingsPopoverView: View {
                             statusBadge(preferences.photoCollectionHint)
                         }
 
-                        HStack(spacing: 8) {
+                        HStack(alignment: .center, spacing: 8) {
                             Text("Rotate every")
                                 .font(.system(size: 11))
-                            Spacer(minLength: 0)
+                                .fixedSize()
+                            Spacer(minLength: 8)
                             Picker("Rotate every", selection: $preferences.slideshowIntervalMinutes) {
                                 ForEach(intervalChoices, id: \.self) { minutes in
                                     Text(intervalLabel(minutes)).tag(minutes)
@@ -3341,16 +3454,24 @@ struct SettingsPopoverView: View {
                             .pickerStyle(.segmented)
                             .labelsHidden()
                             .controlSize(.small)
+                            // A minimum width keeps the segmented control on a stable
+                            // footprint for the five standard choices, while letting
+                            // it grow if a hand-written interval adds a sixth.
+                            .frame(minWidth: 172, alignment: .trailing)
                         }
 
-                        HStack(spacing: 16) {
+                        // Shuffle and Slow zoom ride the same two equal columns as
+                        // the widget switches below them: label on the column's left
+                        // edge, switch on its right, so the panel reads as a grid.
+                        HStack(alignment: .center, spacing: Self.toggleColumnSpacing) {
                             Toggle("Shuffle", isOn: $preferences.slideshowShuffle)
                                 .toggleStyle(.switch)
                                 .controlSize(.small)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             Toggle("Slow zoom", isOn: $preferences.kenBurns)
                                 .toggleStyle(.switch)
                                 .controlSize(.small)
-                            Spacer(minLength: 0)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
                 }
@@ -3364,10 +3485,14 @@ struct SettingsPopoverView: View {
     /// folder picker and hands the folder to Finder. Dragging a folder anywhere on the
     /// row has the same effect as clicking Change Folder….
     private var folderRow: some View {
-        HStack(spacing: 8) {
+        HStack(alignment: .center, spacing: 8) {
             Image(systemName: dropTarget.isTargeted ? "square.and.arrow.down.fill" : "photo.stack.fill")
-                .font(.system(size: 14))
+                .font(.system(size: 13))
                 .foregroundColor(dropTarget.isTargeted ? .accentColor : .secondary)
+                // The glyph and the reveal button share one 18 pt slot, so the folder
+                // name always starts and ends on the same lines however the row
+                // redraws around a drop.
+                .frame(width: 18, height: 18, alignment: .center)
             VStack(alignment: .leading, spacing: 1) {
                 Text(preferences.photoFolderLabel)
                     .font(.system(size: 11, weight: .medium))
@@ -3378,16 +3503,28 @@ struct SettingsPopoverView: View {
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }
-            Spacer(minLength: 0)
+            Spacer(minLength: 6)
             // Reveal in Finder: one click from the panel to the folder the wallpaper
-            // is rotating through, which is where a wallpaper is actually added.
+            // is rotating through, which is where a wallpaper is actually added. It
+            // wears the same plate as the picker beside it rather than floating as a
+            // bare glyph next to a bordered button.
             Button {
                 revealPhotoFolder()
             } label: {
                 Image(systemName: "arrow.up.forward.app")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .frame(width: 24, height: 20, alignment: .center)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .fill(Color.primary.opacity(0.06))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
             .controlSize(.small)
             .help("Reveal \(preferences.photoFolderLabel) in Finder")
             .accessibilityLabel("Reveal wallpaper folder in Finder")
@@ -3397,15 +3534,15 @@ struct SettingsPopoverView: View {
             .controlSize(.small)
         }
         .padding(.horizontal, 9)
-        .padding(.vertical, 8)
+        .padding(.vertical, 7)
         .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.controlCornerRadius, style: .continuous)
                 .fill(dropTarget.isTargeted
                       ? Color.accentColor.opacity(0.20)
                       : Color.primary.opacity(0.06))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: Self.controlCornerRadius, style: .continuous)
                 .strokeBorder(dropTarget.isTargeted
                               ? Color.accentColor
                               : Color.primary.opacity(0.12),
@@ -3476,6 +3613,74 @@ struct SettingsPopoverView: View {
         return true
     }
 
+    // MARK: Widgets
+
+    /// The four desktop satellites: one master switch, then one switch each.
+    ///
+    /// `widgets` is the wallpaper's master setting — off takes all four glyphs off the
+    /// desktop and their click rectangles with them — while the four below take them one
+    /// at a time without forgetting the others. The popover is sized from its measured
+    /// content, so they ride two to a row, and they only appear while the master switch
+    /// is on: the same progressive disclosure the slideshow's options use.
+    private var widgetsCard: some View {
+        card(systemImage: "circle.grid.2x2", title: "Desktop widgets") {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 8) {
+                    Toggle("On the desktop", isOn: $preferences.widgets)
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                    Spacer(minLength: 0)
+                    statusBadge(widgetSummary)
+                }
+
+                if preferences.widgets {
+                    Divider()
+                    // Two equal columns, two rows: the switch of each satellite sits
+                    // on its column's right edge and its label on the left, so the
+                    // four read as one grid rather than four switches drifting with
+                    // the width of their words.
+                    HStack(alignment: .center, spacing: Self.toggleColumnSpacing) {
+                        Toggle("Music", isOn: $preferences.widgetMusic)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Toggle("News", isOn: $preferences.widgetNews)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    HStack(alignment: .center, spacing: Self.toggleColumnSpacing) {
+                        Toggle("YouTube", isOn: $preferences.widgetYouTube)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Toggle("Weather", isOn: $preferences.widgetWeather)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.18), value: preferences.widgets)
+    }
+
+    /// What the four satellite switches add up to, for the card's badge.
+    private var widgetSummary: String {
+        guard preferences.widgets else { return "Hidden" }
+        let shown = [
+            preferences.widgetMusic,
+            preferences.widgetNews,
+            preferences.widgetYouTube,
+            preferences.widgetWeather
+        ].filter { $0 }.count
+        switch shown {
+        case 4: return "All four"
+        case 0: return "None"
+        default: return "\(shown) of 4"
+        }
+    }
+
     // MARK: Startup
 
     private var startupCard: some View {
@@ -3485,13 +3690,15 @@ struct SettingsPopoverView: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                 if preferences.launchAtLoginRequiresApproval {
-                    HStack(spacing: 6) {
+                    HStack(alignment: .center, spacing: 6) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 10))
                             .foregroundColor(.orange)
+                            .frame(width: Self.headerIconSize, height: Self.headerIconSize, alignment: .center)
                         Text("Permission needed in System Settings → Login Items.")
                             .font(.system(size: 9.5))
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                         Spacer(minLength: 0)
                         Button("Open Settings") {
                             LaunchAtLogin.openSystemSettings()
@@ -3507,26 +3714,36 @@ struct SettingsPopoverView: View {
     // MARK: Footer
 
     private var footer: some View {
-        HStack(spacing: 8) {
-            Button {
-                preferences.resetToDefaults()
-                DynaHaptics.tap(.levelChange)
-            } label: {
-                Label("Reset", systemImage: "arrow.counterclockwise")
-                    .font(.system(size: 10.5))
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .help("Restore the default subtitle, palette and slideshow")
+        VStack(alignment: .leading, spacing: 9) {
+            // A hairline closes the stack of cards: the footer is a different kind of
+            // action (restore / leave) and should not read as one more section.
+            Divider()
+                .opacity(0.6)
+            HStack(alignment: .center, spacing: 8) {
+                Button {
+                    preferences.resetToDefaults()
+                    DynaHaptics.tap(.levelChange)
+                } label: {
+                    Label("Reset", systemImage: "arrow.counterclockwise")
+                        .font(.system(size: 10.5))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+                .frame(height: 20)
+                .help("Restore the default subtitle, palette and slideshow")
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
 
-            // Pause/Resume lives in the preview card's pill; a second button here
-            // was the same action twice in one panel.
-            Button("Quit") {
-                NSApp.terminate(nil)
+                // Pause/Resume lives in the preview card's pill; a second button here
+                // was the same action twice in one panel.
+                Button("Quit") {
+                    NSApp.terminate(nil)
+                }
+                .controlSize(.small)
+                // Both ends of the row sit on the same 20 pt line, so Reset's text and
+                // Quit's plate share one centre even though their styles differ.
+                .frame(height: 20)
             }
-            .controlSize(.small)
         }
     }
 
@@ -3553,6 +3770,12 @@ struct SettingsPopoverView: View {
         return values
     }
 
+    /// Choose the folder the wallpaper rotates through.
+    ///
+    /// The picker is a modal panel, so the settings panel gets out of its way: it is
+    /// closed before the dialog opens, then re-presented under the menu bar icon once
+    /// the user picks a folder or dismisses the dialog. The panel comes back exactly
+    /// where it was, already showing the folder that was just chosen.
     private func choosePhotoFolder() {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
@@ -3565,8 +3788,24 @@ struct SettingsPopoverView: View {
         if !path.isEmpty {
             panel.directoryURL = URL(fileURLWithPath: path, isDirectory: true)
         }
+
+        // Step aside for the dialog instead of hovering behind it. AppKit would dismiss
+        // a `.transient` popover anyway once the panel takes the key window, so the
+        // dismissal is made explicit here and the reopening is owned by this method.
+        popover?.close()
+
         NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        let response = panel.runModal()
+
+        // The dialog is gone — cancelled or answered: the panel returns to the icon
+        // right away, and once more on the next run loop turn, after AppKit has
+        // finished tearing the modal down.
+        onReopenPopover?()
+        DispatchQueue.main.async {
+            onReopenPopover?()
+        }
+
+        guard response == .OK, let url = panel.url else { return }
         preferences.photoFolderPath =
             url.path == WallpaperPreferences.standardPhotoFolderPath ? "" : url.path
     }
@@ -3842,6 +4081,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let root = SettingsPopoverView(
             preferences: controller.preferences,
             controller: controller,
+            popover: popover,
+            onReopenPopover: { [weak self] in self?.presentPopover() },
             onContentHeightChange: { [weak popover] height in
                 guard let popover, height > 0 else { return }
                 let target = NSSize(width: SettingsPopoverView.popoverWidth, height: ceil(height))
@@ -3866,6 +4107,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return popover
     }
 
+    /// Put the settings panel on screen, anchored under the menu bar icon.
+    ///
+    /// Used by the icon itself and by the folder picker: the panel closes for the
+    /// modal dialog and is shown again from the same anchor once it goes away. When
+    /// the panel is already up this only re-keys it, which makes it safe to call
+    /// twice in a row.
+    private func presentPopover() {
+        guard let button = statusItem?.button else { return }
+        if popover == nil {
+            popover = makePopover()
+        }
+        guard let popover else { return }
+
+        NSApp.activate(ignoringOtherApps: true)
+        if !popover.isShown {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+        popover.contentViewController?.view.window?.makeKey()
+    }
+
     @objc private func togglePopover(_ sender: Any?) {
         guard let button = statusItem?.button else { return }
 
@@ -3888,9 +4149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        NSApp.activate(ignoringOtherApps: true)
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
+        presentPopover()
     }
 
     // MARK: System events

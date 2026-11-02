@@ -59,6 +59,22 @@ internal sealed class Preferences
     public bool KenBurns { get; set; } = true;
     public bool PhotoSync { get; set; } = true;
 
+    /// <summary>
+    /// Whether the four desktop satellites (music, news, YouTube, weather) are on the
+    /// wallpaper. On by default; off hides them in the page, stops them drifting and
+    /// leaves no click rectangles behind, so the desktop is the Finder's/Explorer's again.
+    /// The four below take one satellite off on its own.
+    /// </summary>
+    public bool Widgets { get; set; } = true;
+
+    public bool WidgetMusic { get; set; } = true;
+
+    public bool WidgetNews { get; set; } = true;
+
+    public bool WidgetYouTube { get; set; } = true;
+
+    public bool WidgetWeather { get; set; } = true;
+
     /// <summary>Empty means the twelve wallpapers that ship in <c>web/images</c>.</summary>
     public string PhotoFolder { get; set; } = string.Empty;
 
@@ -169,6 +185,11 @@ internal sealed class Preferences
         SlideshowShuffle = true;
         KenBurns = true;
         PhotoSync = true;
+        Widgets = true;
+        WidgetMusic = true;
+        WidgetNews = true;
+        WidgetYouTube = true;
+        WidgetWeather = true;
         FontFamily = DefaultFontFamily;
         CustomFontPath = string.Empty;
     }
@@ -258,6 +279,13 @@ internal sealed class Preferences
         values.Add(("slideshowInterval", SlideshowInterval));
         values.Add(("slideshowShuffle", SlideshowShuffle));
         values.Add(("kenBurns", KenBurns));
+        // The satellites: one master switch plus one flag each, all plain booleans that
+        // script.js honours live.
+        values.Add(("widgets", Widgets));
+        values.Add(("widgetMusic", WidgetMusic));
+        values.Add(("widgetNews", WidgetNews));
+        values.Add(("widgetYouTube", WidgetYouTube));
+        values.Add(("widgetWeather", WidgetWeather));
         // The family only; the imported bytes ride in their own push (BuildFontScript),
         // because a data URL of a few megabytes has no business in a settings payload
         // that is re-sent on every keystroke.
@@ -341,6 +369,11 @@ internal sealed class Preferences
             ["slideshowInterval"] = SlideshowInterval,
             ["slideshowShuffle"] = SlideshowShuffle,
             ["kenBurns"] = KenBurns,
+            ["widgets"] = Widgets,
+            ["widgetMusic"] = WidgetMusic,
+            ["widgetNews"] = WidgetNews,
+            ["widgetYouTube"] = WidgetYouTube,
+            ["widgetWeather"] = WidgetWeather,
             // The family only: the imported bytes are pushed once the page is ready.
             ["fontFamily"] = FontFamily
         };

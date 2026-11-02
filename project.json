@@ -74,6 +74,36 @@
         "text": "Slow zoom",
         "type": "bool",
         "value": true
+      },
+      "widgets": {
+        "order": 11,
+        "text": "Desktop widgets (all four)",
+        "type": "bool",
+        "value": true
+      },
+      "widgetmusic": {
+        "order": 12,
+        "text": "Music widget",
+        "type": "bool",
+        "value": true
+      },
+      "widgetnews": {
+        "order": 13,
+        "text": "News widget",
+        "type": "bool",
+        "value": true
+      },
+      "widgetyoutube": {
+        "order": 14,
+        "text": "YouTube widget",
+        "type": "bool",
+        "value": true
+      },
+      "widgetweather": {
+        "order": 15,
+        "text": "Weather widget",
+        "type": "bool",
+        "value": true
       }
     }
   },

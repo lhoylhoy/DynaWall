@@ -221,6 +221,11 @@ test('defaults win when every layer is empty', () => {
     slideshowShuffle: true,
     kenBurns: true,
     photoSync: true,
+    widgets: true,
+    widgetMusic: true,
+    widgetNews: true,
+    widgetYouTube: true,
+    widgetWeather: true,
     photos: [],
     fontFamily: 'Outfit',
     customFont: ''
@@ -244,6 +249,11 @@ test('layers resolve independently per field', () => {
     slideshowShuffle: true,
     kenBurns: false,
     photoSync: true,
+    widgets: true,
+    widgetMusic: true,
+    widgetNews: true,
+    widgetYouTube: true,
+    widgetWeather: true,
     photos: [],
     fontFamily: 'Outfit',
     customFont: ''
@@ -1133,6 +1143,60 @@ test('the popover accepts a folder drop and sizes itself to its content', () => 
   assert.ok(!swift.includes('NSSize(width: 324'), 'the fixed 324×534 panel is gone');
 });
 
+test('the folder picker dismisses the settings popover and brings it back', () => {
+  const swift = hostSwift();
+  const popover = swift.slice(swift.indexOf('struct SettingsPopoverView'));
+
+  // The view needs the panel it lives in so the picker can close it for the dialog
+  // and re-present it afterwards.
+  assert.match(popover, /weak var popover: NSPopover\?/);
+  assert.match(swift, /popover: popover,/, 'makePopover() must hand the panel to the view');
+  assert.match(
+    swift,
+    /onReopenPopover: \{ \[weak self\] in self\?\.presentPopover\(\) \}/,
+    'the picker must be able to put the panel back'
+  );
+
+  const choose = memberBody(swift, 'private func choosePhotoFolder()');
+  assert.match(choose, /popover\?\.close\(\)/, 'the panel steps aside for the dialog');
+  // The dialog opens on a clean screen: the popover is dismissed outright rather
+  // than pinned open behind the modal panel.
+  assert.ok(!choose.includes('.applicationDefined'), 'the panel is closed, not pinned open');
+  assert.ok(!choose.includes('previousBehavior'), 'there is no behavior left to restore');
+
+  // Order is the whole interaction: out of the way before the dialog opens, back
+  // once it returns, and once more after AppKit has finished tearing the modal down.
+  const dismissed = choose.indexOf('popover?.close()');
+  const modal = choose.indexOf('let response = panel.runModal()');
+  const reopen = choose.indexOf('onReopenPopover?()');
+  const asyncTurn = choose.indexOf('DispatchQueue.main.async {');
+  assert.ok(
+    dismissed !== -1 && modal !== -1 && reopen !== -1 && asyncTurn !== -1,
+    'the picker lifecycle is incomplete'
+  );
+  assert.ok(dismissed < modal, 'the panel must be dismissed before the dialog opens');
+  assert.ok(modal < reopen, 'the panel is brought back once the dialog closes');
+  assert.ok(reopen < asyncTurn, 'and once more after AppKit has torn the modal down');
+
+  // The panel is re-anchored under the menu bar icon rather than reopened wherever
+  // AppKit last remembered it, and re-showing is skipped while it is already up, so
+  // calling it twice in a row is safe.
+  const present = memberBody(swift, 'private func presentPopover()');
+  assert.match(present, /if !popover\.isShown \{/);
+  assert.match(
+    present,
+    /popover\.show\(relativeTo: button\.bounds, of: button, preferredEdge: \.minY\)/
+  );
+  assert.match(present, /popover\.contentViewController\?\.view\.window\?\.makeKey\(\)/);
+
+  // The icon keeps using the same path, so both entry points agree.
+  const toggle = memberBody(swift, 'private func togglePopover(_ sender: Any?)');
+  assert.match(toggle, /presentPopover\(\)/, 'the icon reuses the anchoring path');
+
+  // Outside-click dismissal is still AppKit's, as the panel opens transient.
+  assert.match(swift, /popover\.behavior = \.transient/);
+});
+
 test('the host publishes the photo the page put on screen', () => {
   const swift = hostSwift();
   assert.match(swift, /@Published private\(set\) var currentPhotoName = ""/);
@@ -1228,6 +1292,114 @@ test('the subtitle clear button lives inside a full-width field', () => {
   assert.ok(
     !/HStack\(spacing: 6\) \{\s*TextField\("What are we building today\?/.test(greeting),
     'the clear button must not sit beside the subtitle field'
+  );
+});
+
+test('the popover aligns its cards, switches and controls on one grid', () => {
+  const swift = hostSwift();
+
+  // One glyph slot for every card header: the fixed frame — not the SF Symbol —
+  // is what puts GREETING, TYPOGRAPHY, PHOTOS, DESKTOP WIDGETS and STARTUP on the
+  // same vertical guide line.
+  assert.match(swift, /private static let headerIconSize: CGFloat = 14/);
+  const cardChrome = memberBody(swift, 'private func card<Content: View>(');
+  assert.match(
+    cardChrome,
+    /\.frame\(width: Self\.headerIconSize, height: Self\.headerIconSize, alignment: \.center\)/,
+    'the section glyphs must share one slot'
+  );
+
+  // One radius for the cards and one for the controls inside them, so no section
+  // (or control) can quietly drift a point or two off the others.
+  assert.match(swift, /private static let cardCornerRadius: CGFloat = 12/);
+  assert.match(swift, /private static let controlCornerRadius: CGFloat = 8/);
+  assert.equal(
+    (cardChrome.match(/cornerRadius: Self\.cardCornerRadius/g) || []).length,
+    2,
+    'the card fill and its border must use the shared radius'
+  );
+
+  // The four satellites are two equal columns on two rows, so the labels and the
+  // switches line up instead of drifting with the length of the words.
+  const widgets = memberBody(swift, 'private var widgetsCard: some View');
+  assert.equal(
+    (widgets.match(/\.frame\(maxWidth: \.infinity, alignment: \.leading\)/g) || []).length,
+    4,
+    'each satellite takes exactly one column'
+  );
+  assert.equal(
+    (widgets.match(/HStack\(alignment: \.center, spacing: Self\.toggleColumnSpacing\)/g) || []).length,
+    2,
+    'the satellites ride two rows of equal columns'
+  );
+  ['Music', 'News', 'YouTube', 'Weather'].forEach((name) => {
+    assert.match(widgets, new RegExp(`Toggle\\("${name}", isOn: \\$preferences\\.widget`));
+  });
+
+  // The slideshow options ride the same two-column grid as the widgets above them.
+  const photos = memberBody(swift, 'private var photosCard: some View');
+  assert.match(
+    photos,
+    /Toggle\("Shuffle", isOn: \$preferences\.slideshowShuffle\)\s*\n\s*\.toggleStyle\(\.switch\)\s*\n\s*\.controlSize\(\.small\)\s*\n\s*\.frame\(maxWidth: \.infinity, alignment: \.leading\)/,
+    'Shuffle must take the first column'
+  );
+  assert.match(
+    photos,
+    /Toggle\("Slow zoom", isOn: \$preferences\.kenBurns\)\s*\n\s*\.toggleStyle\(\.switch\)\s*\n\s*\.controlSize\(\.small\)\s*\n\s*\.frame\(maxWidth: \.infinity, alignment: \.leading\)/,
+    'Slow zoom must take the second column'
+  );
+  // The interval picker and its label share one centre line, and the segmented bar
+  // keeps a stable footprint so the row never reflows.
+  assert.match(
+    photos,
+    /HStack\(alignment: \.center, spacing: 8\) \{\s*\n\s*Text\("Rotate every"\)/
+  );
+  assert.match(
+    photos,
+    /\.frame\(minWidth: 172, alignment: \.trailing\)/,
+    'the segmented bar keeps its footprint'
+  );
+
+  // The subtitle field is set like the other controls (11 pt on the shared plate),
+  // and its trailing inset keeps typed text out from under the clear button.
+  const greeting = memberBody(swift, 'private var greetingCard: some View');
+  assert.match(greeting, /\.font\(\.system\(size: 11\)\)/);
+  assert.match(greeting, /\.padding\(\.trailing, 14\)/, 'typed text must stop before the button');
+  assert.match(
+    greeting,
+    /cornerRadius: Self\.controlCornerRadius/,
+    'the field shares the control radius'
+  );
+
+  // The folder glyph gets a fixed slot and the reveal button wears a plate, so the
+  // row's two buttons sit on one line instead of a bare glyph beside a bordered one.
+  const row = memberBody(swift, 'private var folderRow: some View');
+  assert.match(row, /\.frame\(width: 18, height: 18, alignment: \.center\)/);
+  assert.match(row, /\.frame\(width: 24, height: 20, alignment: \.center\)/);
+  assert.match(row, /cornerRadius: Self\.controlCornerRadius/);
+
+  // The typography menu label carries the same border as every other control, and
+  // spans the card like the subtitle field and the folder row do.
+  const typography = memberBody(swift, 'private var typographyCard: some View');
+  assert.match(
+    typography,
+    /\.strokeBorder\(Color\.primary\.opacity\(0\.08\), lineWidth: 1\)/,
+    'the font menu must wear the control border'
+  );
+  assert.match(
+    typography,
+    /\.frame\(maxWidth: \.infinity, alignment: \.leading\)/,
+    'the font menu plate must span the card'
+  );
+
+  // The footer is set apart from the cards and its two actions share one centre line.
+  const footer = memberBody(swift, 'private var footer: some View');
+  assert.match(footer, /Divider\(\)/, 'the footer needs a hairline above it');
+  assert.match(footer, /HStack\(alignment: \.center, spacing: 8\)/);
+  assert.equal(
+    (footer.match(/\.frame\(height: 20\)/g) || []).length,
+    2,
+    'Reset and Quit must sit on the same line'
   );
 });
 
@@ -2391,15 +2563,268 @@ test('the popup is inert until a satellite opens it', () => {
   );
 });
 
-test('the satellites are paper-white on every band', () => {
+test('the satellites are bare white glyphs, not glass buttons', () => {
   const css = readText('style.css');
   assert.match(css, /--widget-ink:\s*#ffffff/, 'the glyphs are white, not band-tinted');
   assert.match(css, /\.widget-btn\s*\{[^}]*color:\s*var\(--widget-ink\)/);
   assert.match(css, /\.widget-btn\s*\{[^}]*pointer-events:\s*auto/);
   assert.match(css, /\.widget-orbit\s*\{[^}]*pointer-events:\s*none/, 'only the buttons are targets');
+
+  // No chrome around the glyph: no disc, no plate, no ring, no frosted puck. Every rule
+  // that styles a satellite is checked, not just the base one, so a hover or an open
+  // card cannot quietly bring the circle back.
+  Array.from(css.matchAll(/([^{}]+)\{([^{}]*)\}/g)).forEach(([, selector, body]) => {
+    if (!/\.widget-btn\b/.test(selector)) return;
+    // `background: none` is the reset that gets rid of the browser's button plate, so it
+    // is the one background a satellite is allowed to name.
+    const shape = body.replace(/background:\s*none\s*;/g, '');
+    assert.ok(
+      !/(border-radius|background|backdrop-filter|box-shadow)/.test(shape),
+      `the satellite rule "${selector.trim()}" still draws a shape around the glyph`
+    );
+  });
+  assert.match(css, /\.widget-icon\s*\{[^}]*width:\s*100%/, 'the glyph fills its button');
+  assert.match(css, /\.widget-icon\s*\{[^}]*stroke:\s*currentColor/);
+  assert.match(css, /--widget-size:\s*clamp\(2\.4rem/, 'the bare glyph has to be big enough to be one');
+
+  // The glyphs lost their puck; the card keeps its glass.
   assert.match(css, /backdrop-filter:\s*blur\(var\(--glass-blur\)\)/, 'the card is frosted');
   assert.match(css, /\.widget-modal\s*\{[^}]*border-radius:\s*var\(--glass-radius\)/);
 });
+test('the satellites ring the greeting, scattered rather than evenly placed', () => {
+  const viewport = {
+    width: 1920,
+    height: 1080,
+    size: 44,
+    count: 4,
+    margin: 40,
+    gap: 24,
+    clearance: 48,
+    reach: 128
+  };
+  const greeting = { x: 510, y: 470, width: 900, height: 96 };
+  const subtitle = { x: 810, y: 600, width: 300, height: 28 };
+  const options = Object.assign({ avoid: [greeting, subtitle], seed: 20260115 }, viewport);
+  // The block they orbit is the text box; the ring is that box grown by the clearance,
+  // then by the distance a satellite may travel outwards, and finally by the satellite
+  // itself. Nothing may leave it: a satellite parked in an empty corner stops reading as
+  // part of the composition.
+  const block = { left: 510, top: 470, right: 1410, bottom: 628 };
+  const centreX = (block.left + block.right) / 2;
+  const centreY = (block.top + block.bottom) / 2;
+  const grow = viewport.clearance + viewport.reach + viewport.size;
+  const ring = {
+    left: block.left - grow,
+    top: block.top - grow,
+    right: block.right + grow,
+    bottom: block.bottom + grow
+  };
+
+  const points = DynaWall.scatterWidgets(options);
+  assert.equal(points.length, DynaWall.WIDGETS.length, 'one satellite per widget');
+  assert.deepEqual(DynaWall.scatterWidgets(options), points, 'the same seed deals the same hand');
+
+  const quadrants = new Set();
+  points.forEach((point) => {
+    const at = `${Math.round(point.x)},${Math.round(point.y)}`;
+    assert.ok(Number.isFinite(point.x) && Number.isFinite(point.y), 'a real position');
+    assert.ok(point.x >= viewport.margin && point.y >= viewport.margin, `inside the margins: ${at}`);
+    assert.ok(
+      point.x + viewport.size <= viewport.width - viewport.margin &&
+        point.y + viewport.size <= viewport.height - viewport.margin,
+      `inside the viewport: ${at}`
+    );
+    assert.ok(
+      point.x >= ring.left &&
+        point.y >= ring.top &&
+        point.x + viewport.size <= ring.right &&
+        point.y + viewport.size <= ring.bottom,
+      `the satellite at ${at} has wandered out of the ring`
+    );
+    [greeting, subtitle].forEach((box) => {
+      const clear =
+        point.x >= box.x + box.width + viewport.clearance ||
+        point.x + viewport.size <= box.x - viewport.clearance ||
+        point.y >= box.y + box.height + viewport.clearance ||
+        point.y + viewport.size <= box.y - viewport.clearance;
+      assert.ok(clear, `the satellite at ${at} sits on the greeting`);
+    });
+    quadrants.add(
+      `${point.x + viewport.size / 2 < centreX ? 'left' : 'right'}-${
+        point.y + viewport.size / 2 < centreY ? 'top' : 'bottom'
+      }`
+    );
+  });
+  assert.ok(quadrants.size > 1, 'the satellites are not all on one side of the greeting');
+
+  for (let first = 0; first < points.length; first += 1) {
+    for (let second = first + 1; second < points.length; second += 1) {
+      const apart =
+        points[first].x + viewport.size + viewport.gap <= points[second].x ||
+        points[second].x + viewport.size + viewport.gap <= points[first].x ||
+        points[first].y + viewport.size + viewport.gap <= points[second].y ||
+        points[second].y + viewport.size + viewport.gap <= points[first].y;
+      assert.ok(apart, 'satellites keep their distance from each other');
+    }
+  }
+
+  // Scattered, not "the corners with jitter": a fresh page load moves them.
+  const other = DynaWall.scatterWidgets(Object.assign({}, options, { seed: 777 }));
+  assert.notDeepEqual(other, points, 'a new page load deals a new hand');
+  const spots = points.map((point) => `${Math.round(point.x)}:${Math.round(point.y)}`);
+  assert.equal(new Set(spots).size, spots.length, 'and no two land on the same spot');
+
+  // The rules have to hold for every hand, not for the one seed the test happens to
+  // start from: forty page loads, all of them near the greeting, clear of it and out of
+  // each other's way.
+  for (let seed = 1; seed <= 40; seed += 1) {
+    const hand = DynaWall.scatterWidgets(Object.assign({}, options, { seed }));
+    const quarters = [0, 0, 0, 0];
+    hand.forEach((point) => {
+      quarters[
+        (point.x + viewport.size / 2 < centreX ? 0 : 1) +
+          (point.y + viewport.size / 2 < centreY ? 0 : 2)
+      ] += 1;
+      assert.ok(
+        point.x >= ring.left &&
+          point.y >= ring.top &&
+          point.x + viewport.size <= ring.right &&
+          point.y + viewport.size <= ring.bottom,
+        `seed ${seed} threw a satellite out of the ring`
+      );
+      [greeting, subtitle].forEach((box) => {
+        const clear =
+          point.x >= box.x + box.width + viewport.clearance ||
+          point.x + viewport.size <= box.x - viewport.clearance ||
+          point.y >= box.y + box.height + viewport.clearance ||
+          point.y + viewport.size <= box.y - viewport.clearance;
+        assert.ok(clear, `seed ${seed} laid a satellite over the greeting`);
+      });
+    });
+    assert.ok(
+      Math.max.apply(null, quarters) <= 2,
+      `seed ${seed} piled the satellites onto one side of the greeting`
+    );
+  }
+});
+
+
+test('the bottom edge keeps clear of the Dock and the taskbar', () => {
+  const dockHeight = 104;
+  const hand = DynaWall.scatterWidgets({
+    width: 1920,
+    height: 1080,
+    size: 44,
+    count: 4,
+    margin: 40,
+    inset: { top: 40, right: 40, bottom: dockHeight, left: 40 },
+    gap: 24,
+    clearance: 72,
+    avoid: [{ x: 410, y: 452, width: 1100, height: 130 }],
+    seed: 9
+  });
+  hand.forEach((point) => {
+    assert.ok(point.y + 44 <= 1080 - dockHeight + 1e-9, 'no satellite is parked behind the Dock');
+  });
+
+  // An edge the caller does not name falls back to `margin`.
+  const plain = DynaWall.scatterWidgets({
+    width: 1920,
+    height: 1080,
+    size: 44,
+    count: 4,
+    margin: 40,
+    inset: { bottom: 200 },
+    seed: 9
+  });
+  plain.forEach((point) => {
+    assert.ok(point.x >= 40 && point.y >= 40, 'the unnamed edges still use the margin');
+    assert.ok(point.y + 44 <= 880 + 1e-9, 'and the named one is honoured');
+  });
+});
+
+
+test('a crowded or degenerate wallpaper still lays every satellite out', () => {
+
+  const crowded = DynaWall.scatterWidgets({
+    width: 420,
+    height: 300,
+    size: 44,
+    count: 4,
+    margin: 24,
+    gap: 10,
+    clearance: 16,
+    avoid: [{ x: 0, y: 0, width: 420, height: 300 }],
+    seed: 5
+  });
+  assert.equal(crowded.length, 4, 'a greeting that fills the screen still gets four satellites');
+  crowded.forEach((point) => {
+    assert.ok(Number.isFinite(point.x) && Number.isFinite(point.y), 'no NaN coordinates');
+    assert.ok(point.x >= 24 && point.x + 44 <= 420 - 24 + 1e-9, 'still on the wallpaper');
+    assert.ok(point.y >= 24 && point.y + 44 <= 300 - 24 + 1e-9);
+  });
+
+  assert.deepEqual(DynaWall.scatterWidgets({ width: 0, height: 0, size: 44, count: 0 }), []);
+  assert.equal(DynaWall.scatterWidgets({}).length, 0, 'no options, no satellites');
+
+  const random = DynaWall.createRandom(1);
+  const draws = [random(), random(), random()];
+  draws.forEach((value) => assert.ok(value >= 0 && value < 1, 'the PRNG stays in [0, 1)'));
+  assert.equal(new Set(draws).size, 3, 'and it is not a constant');
+  assert.equal(DynaWall.createRandom(1)(), draws[0], 'the same seed replays the same draws');
+});
+
+test('the scatter, the stylesheet and the markup agree on where the satellites go', () => {
+  const css = readText('style.css');
+  const script = readText('script.js');
+  const markup = readText('index.html');
+
+  // The breakpoint is written twice — where it is applied and where it is honoured —
+  // so it has to be the same number.
+  assert.equal(
+    DynaWall.WIDGET_NARROW_QUERY,
+    '(max-width: 720px)',
+    'the scatter knows the width at which the row takes over'
+  );
+  assert.match(css, /@media \(max-width: 720px\)/, 'and so does the stylesheet');
+
+  // Placement is `left`/`top` from custom properties. `transform` belongs to the
+  // drift and `translate` to nothing at all, so a hover can never cancel the motion.
+  assert.match(css, /\.widget-btn\s*\{[^}]*left:\s*var\(--widget-x/, 'the scatter writes left');
+  assert.match(css, /\.widget-btn\s*\{[^}]*top:\s*var\(--widget-y/, 'and top');
+  assert.match(css, /@keyframes widget-drift\s*\{[^}]*translate3d/, 'the drift is a transform');
+  assert.match(script, /setProperty\('--widget-x'/, 'script.js writes the position it drew');
+  assert.match(script, /classList\.add\('is-placed'\)/, 'the orbit is placed before it is shown');
+  assert.ok(
+    !/\.widget-btn\[data-widget="[a-z]+"\]\s*\{[^}]*\b(right|bottom):/.test(css),
+    'no satellite is anchored to a corner any more'
+  );
+
+  // `.wallpaper-content` fades in with a transform, and a transformed ancestor is the
+  // containing block of everything positioned inside it: nested there, a scattered
+  // satellite would be measured against the greeting instead of the screen.
+  const voids = new Set(['img', 'br', 'hr', 'meta', 'link', 'input', 'source', 'path', 'circle']);
+  const stack = [];
+  let chain = null;
+  const tags = markup.replace(/<!--[\s\S]*?-->/g, '').matchAll(/<(\/?)([a-zA-Z][\w:-]*)([^>]*)>/g);
+  for (const token of tags) {
+    const [, closing, rawName, rest] = token;
+    const name = rawName.toLowerCase();
+    if (closing) {
+      stack.pop();
+      continue;
+    }
+    if (name === 'nav' && /\bid="widget-bar"/.test(rest)) chain = stack.slice();
+    if (voids.has(name) || /\/$/.test(rest.trim())) continue;
+    const id = /\bid="([^"]+)"/.exec(rest);
+    stack.push(id ? `#${id[1]}` : name);
+  }
+  assert.ok(chain, 'index.html must contain the widget bar');
+  assert.ok(!chain.includes('#content'), 'the satellites live outside the text block');
+  assert.ok(chain.includes('main'), 'and directly on the wallpaper');
+});
+
+
 
 test('widget motion stops with the wallpaper and under reduced motion', () => {
   const css = readText('style.css');
@@ -2425,6 +2850,225 @@ test('a click on the wallpaper is not a click on a widget', () => {
   assert.match(script, /dynawall:open-url/, 'so does the WebView2 host');
   assert.match(script, /clickAt: function/, 'the host replays a click through the API');
 });
+
+test('the satellites are a setting, on by default and resolvable from every layer', () => {
+  assert.equal(DynaWall.DEFAULT_CONFIG.widgets, true, 'the widgets ship turned on');
+  assert.equal(DynaWall.STORAGE_KEYS.widgets, 'dynawall.widgets');
+
+  // The same boolean every other setting accepts: host IPC, URL, cache and seed.
+  assert.deepEqual(DynaWall.mapLivelyProperty('widgets', 'false'), {
+    field: 'widgets',
+    value: false
+  });
+  assert.deepEqual(DynaWall.mapLivelyProperty('widgets', true), { field: 'widgets', value: true });
+  assert.equal(DynaWall.mapLivelyProperty('widgets', 'sometimes'), null);
+  assert.deepEqual(DynaWall.mapWallpaperEngineProperties({ widgets: { value: false } }), [
+    { field: 'widgets', value: false }
+  ]);
+  assert.deepEqual(DynaWall.parseQueryParams('?widgets=false'), { widgets: false });
+  assert.equal(DynaWall.parseQueryParams('?satellites=off').widgets, false, 'satellites is an alias');
+  assert.deepEqual(DynaWall.readStoredConfig(fakeStorage({ 'dynawall.widgets': 'false' })), {
+    widgets: false
+  });
+  assert.deepEqual(DynaWall.readSeed({ __dynawallSeed: { widgets: false } }), { widgets: false });
+
+  const config = DynaWall.resolveConfig({
+    ipc: { widgets: false },
+    url: { widgets: true },
+    storage: { widgets: true },
+    defaults: DynaWall.DEFAULT_CONFIG
+  });
+  assert.equal(config.widgets, false, 'a live host switch outranks the URL and the cache');
+});
+
+test('each satellite has a switch of its own, in every config layer', () => {
+  // One setting per satellite, all defaulting on and all named after the catalogue id.
+  const ids = DynaWall.WIDGETS.map((widget) => widget.id);
+  assert.deepEqual(ids, ['music', 'news', 'youtube', 'weather']);
+  assert.deepEqual(Object.keys(DynaWall.WIDGET_FIELDS).sort(), ids.slice().sort());
+  assert.deepEqual(DynaWall.WIDGET_SETTING_FIELDS, [
+    'widgets',
+    'widgetMusic',
+    'widgetNews',
+    'widgetYouTube',
+    'widgetWeather'
+  ]);
+
+  ids.forEach((id) => {
+    const field = DynaWall.WIDGET_FIELDS[id];
+    assert.equal(
+      DynaWall.DEFAULT_CONFIG[field],
+      true,
+      `${id} is on by default, like the master switch`
+    );
+    assert.equal(DynaWall.STORAGE_KEYS[field], `dynawall.${field}`, `${id} is cached on its own`);
+    // Lively and Wallpaper Engine hand the same field over: one checkbox each.
+    assert.deepEqual(DynaWall.mapLivelyProperty(field, 'false'), { field: field, value: false });
+    assert.deepEqual(
+      DynaWall.mapWallpaperEngineProperties({ [field.toLowerCase()]: { value: false } }),
+      [{ field: field, value: false }]
+    );
+  });
+
+  // `?music=false` for one satellite, in both spellings.
+  assert.equal(DynaWall.parseQueryParams('?music=false').widgetMusic, false);
+  assert.equal(DynaWall.parseQueryParams('?widgetyoutube=false').widgetYouTube, false);
+  assert.equal(DynaWall.parseQueryParams('?weather=0').widgetWeather, false);
+  assert.equal(DynaWall.parseQueryParams('?news=on').widgetNews, true);
+
+  // …and one cache entry per satellite.
+  assert.deepEqual(
+    DynaWall.readStoredConfig(
+      fakeStorage({ 'dynawall.widgetMusic': 'false', 'dynawall.widgetWeather': 'false' })
+    ),
+    { widgetMusic: false, widgetWeather: false }
+  );
+
+  // Hiding one satellite leaves the other three as they were: the layers resolve field by
+  // field, so a host pushing one flag cannot reset its neighbours.
+  const config = DynaWall.resolveConfig({
+    ipc: { widgetYouTube: false },
+    storage: { widgetMusic: false },
+    url: { widgetNews: false },
+    defaults: DynaWall.DEFAULT_CONFIG
+  });
+  assert.deepEqual(
+    {
+      widgets: config.widgets,
+      music: config.widgetMusic,
+      news: config.widgetNews,
+      youtube: config.widgetYouTube,
+      weather: config.widgetWeather
+    },
+    { widgets: true, music: false, news: false, youtube: false, weather: true }
+  );
+});
+
+test('a hidden satellite is hidden for real: unplaced, unclickable, and its card closes', () => {
+  const css = readText('style.css');
+  // Removed rather than faded: a hidden orbit cannot drift, be measured or be clicked.
+  assert.match(css, /html\.is-widgets-off \.widget-orbit\s*\{[^}]*display:\s*none/);
+  // Same for one satellite at a time: `.widget-btn` sets `display: grid`, so the state is
+  // spelled out rather than left to the browser's own `[hidden]` rule.
+  assert.match(css, /\.widget-btn\[hidden\]\s*\{[^}]*display:\s*none/);
+
+  const script = readText('script.js');
+  // The page starts in the state the configuration asked for, before the first deal.
+  assert.match(script, /createWidgets\(window, document, \{ config: app\.state\.config \}\)/);
+  assert.match(script, /classList\.add\('is-widgets-off'\)/);
+  assert.match(script, /function applyConfig\(next\)/, 'the switches are live, not a reload');
+  assert.match(script, /button\.hidden = !visible/, 'a hidden satellite leaves the layout');
+  assert.match(script, /if \(!visible && state\.activeId === id\) closeWidget\(\)/, 'and its card');
+  assert.match(script, /function scatter\(\) \{\n\s+if \(!state\.enabled\) return;/, 'nothing is placed while off');
+  assert.match(script, /const active = visibleButtons\(\);/, 'only the visible ones are dealt');
+  assert.match(script, /count: active\.length/, 'and the ring is sized for them');
+  // No rectangles at all: the desktop belongs to the Finder when the widgets are off, and
+  // a hidden satellite reports nothing either way.
+  assert.match(script, /const open = state\.enabled && Boolean\(state\.activeId\)/);
+  assert.match(script, /\} else if \(state\.enabled\) \{/, 'button rectangles need the switch too');
+  // A live change reaches the controller, and the console can drive it as well.
+  assert.match(
+    script,
+    /WIDGET_SETTING_FIELDS\.some\(function \(field\) \{ return touched\[field\]; \}\)/,
+    'every widget field reaches the controller'
+  );
+  assert.match(script, /widgetsRef\.applyConfig\(next\)/);
+  assert.match(script, /setWidgetsEnabled: function/);
+  assert.match(script, /setWidgetEnabled: function/);
+});
+
+test('every host owns the Desktop widgets switch', () => {
+  const lively = readJson('LivelyProperties.json');
+  assert.equal(lively.widgets.type, 'checkbox');
+  assert.equal(lively.widgets.value, DynaWall.DEFAULT_CONFIG.widgets);
+  assert.equal(
+    lively.__HEADER_WIDGETS__.value,
+    'Widgets',
+    'the property sits under its own header in Lively'
+  );
+
+  const project = readJson('project.json');
+  assert.equal(project.general.properties.widgets.type, 'bool');
+  assert.equal(project.general.properties.widgets.value, DynaWall.DEFAULT_CONFIG.widgets);
+
+  const swift = fs.readFileSync(path.join(ROOT, 'macos/DynaWallApp.swift'), 'utf8');
+  assert.match(swift, /@Published var widgets: Bool/, 'the popover needs a stored setting');
+  assert.match(swift, /static let widgets = "desktopWidgets"/, 'and a UserDefaults key');
+  assert.match(
+    swift,
+    /Toggle\("On the desktop", isOn: \$preferences\.widgets\)/,
+    'the master switch is in the popover'
+  );
+  assert.match(swift, /livelyPropertyListener\("widgets", \\\(widgets/, 'and is pushed live');
+  assert.match(swift, /\\"widgets\\": \\\(widgets/, 'the seed carries it, so the first frame is right');
+
+  const prefs = fs.readFileSync(path.join(ROOT, 'windows/Preferences.cs'), 'utf8');
+  assert.match(prefs, /public bool Widgets \{ get; set; \} = true;/);
+  assert.match(prefs, /values\.Add\(\("widgets", Widgets\)\)/, 'pushed to the page like the rest');
+  assert.match(prefs, /\["widgets"\] = Widgets/, 'and seeded at document start');
+
+  const form = fs.readFileSync(path.join(ROOT, 'windows/SettingsForm.cs'), 'utf8');
+  assert.match(form, /private readonly ToggleSwitch widgetsBox = new\(\);/);
+  assert.match(
+    form,
+    /AddCard\(root, "Widgets", widgetsBox, widgetOptions\)/,
+    'the switch is visible in the window'
+  );
+  assert.match(form, /Preferences\.Widgets = widgetsBox\.Checked/);
+});
+test('every host owns a switch for each satellite', () => {
+  const lively = readJson('LivelyProperties.json');
+  const project = readJson('project.json');
+  const swift = fs.readFileSync(path.join(ROOT, 'macos/DynaWallApp.swift'), 'utf8');
+  const prefs = fs.readFileSync(path.join(ROOT, 'windows/Preferences.cs'), 'utf8');
+  const form = fs.readFileSync(path.join(ROOT, 'windows/SettingsForm.cs'), 'utf8');
+
+  // One switch per satellite, named off the same catalogue the page uses, in all four
+  // hosts: Lively's checkbox, Wallpaper Engine's bool, the popover's Toggle and the
+  // Windows window's ToggleSwitch.
+  const labels = { music: 'Music', news: 'News', youtube: 'YouTube', weather: 'Weather' };
+
+  DynaWall.WIDGETS.forEach((widget) => {
+    const { id } = widget;
+    // The field the page reads, the C# property that carries it, the window's box.
+    const field = DynaWall.WIDGET_FIELDS[id];
+    const prop = field.charAt(0).toUpperCase() + field.slice(1);
+    const box = `${field}Box`;
+    const weKey = field.toLowerCase();
+    const push = `livelyPropertyListener("${field}", \\(${field} ? "true" : "false"));`;
+    const seed = `\\"${field}\\": \\(${field} ? "true" : "false")`;
+
+    assert.equal(lively[field].type, 'checkbox', `Lively has a ${field} checkbox`);
+    assert.equal(lively[field].value, true);
+    assert.equal(project.general.properties[weKey].type, 'bool', `Wallpaper Engine has ${weKey}`);
+    assert.equal(project.general.properties[weKey].value, true);
+
+    // macOS: stored, keyed, seeded, pushed live and shown in the popover.
+    assert.ok(swift.includes(`@Published var ${field}: Bool`), `macOS stores ${field}`);
+    assert.ok(
+      swift.includes(`static let ${field} = "desktop${prop}"`),
+      `macOS keys ${field} in UserDefaults`
+    );
+    assert.ok(swift.includes(push), `macOS pushes ${field} live`);
+    assert.ok(swift.includes(seed), `the seed carries ${field}, so the first frame is right`);
+    assert.ok(
+      swift.includes(`Toggle("${labels[id]}", isOn: $preferences.${field})`),
+      `the popover shows a ${id} switch`
+    );
+
+    // Windows: stored, seeded, pushed live and shown in the window.
+    assert.ok(prefs.includes(`public bool ${prop} { get; set; } = true;`), `stores ${prop}`);
+    assert.ok(prefs.includes(`values.Add(("${field}", ${prop}))`), 'pushed like the rest');
+    assert.ok(prefs.includes(`["${field}"] = ${prop}`), 'and seeded at document start');
+    assert.ok(form.includes(`private readonly ToggleSwitch ${box} = new();`));
+    assert.ok(form.includes(`StyleToggle(${box}, "${labels[id]}");`), `a ${id} switch is shown`);
+    assert.ok(form.includes(`Preferences.${prop} = ${box}.Checked`), 'and saves it');
+    assert.ok(form.includes(`${box}.Checked = Preferences.${prop};`), 'and reloads it');
+  });
+
+});
+
+
 
 test('the widget URLs are built and encoded, not pasted', () => {
   assert.equal(

@@ -116,27 +116,19 @@
   /* Slow on purpose: a palette change is a change of light, not a UI event. */
   --theme-fade-duration: 2400ms;
 
-  /* Widgets — the white satellites orbiting the greeting and the frosted card
-     they open.
+  /* Widgets — the bare white glyphs orbiting the greeting and the frosted card they
+     open.
 
      These stay deliberately neutral instead of following the band: the icons are
-     paper-white on every palette (that contrast is the whole point), and the card
-     is a smoked-glass surface with one white ink, so a photo behind it can never
-     tint the text. Only the shadow is band-independent, and only because a
-     desktop widget has to read as a separate surface rather than as part of the
-     wallpaper. */
-  --widget-size: clamp(2.3rem, 2.5vw, 2.75rem);
-  --widget-out-x: clamp(1.5rem, 3.2vw, 3.25rem);
-  --widget-out-y: clamp(1.35rem, 3vw, 2.9rem);
-  --widget-face: rgba(255, 255, 255, 0.055);
-  --widget-face-hover: rgba(255, 255, 255, 0.125);
-  --widget-face-active: rgba(255, 255, 255, 0.18);
-  --widget-border: rgba(255, 255, 255, 0.14);
-  --widget-border-hover: rgba(255, 255, 255, 0.3);
+     paper-white on every palette (that contrast is the whole point), and the card is a
+     smoked-glass surface with one white ink, so a photo behind it can never tint the
+     text. The glyphs carry no plate, no ring and no shadow of their own: a soft ink
+     shadow and a light under the pointer are all the chrome they get, because a row of
+     little circles would read as buttons stuck onto the wallpaper. */
+  --widget-size: clamp(2.4rem, 2.9vw, 3.2rem);
   --widget-ink: #ffffff;
-  --widget-shadow:
-    0 1px 2px rgba(1, 4, 9, 0.35),
-    0 10px 30px rgba(1, 4, 9, 0.26);
+  --widget-ink-shadow: rgba(1, 4, 9, 0.45);
+  --widget-glow: rgba(255, 255, 255, 0.34);
   /* The frosted sheet: 26 px of blur over a 72% dark tint, so a bright photo
      behind the card still reads as a backdrop and not as content. */
   --glass-tint: rgba(13, 17, 23, 0.72);
@@ -547,17 +539,20 @@ body.has-photo .subtitle {
 
 /* ---------------------------------------------------------------------------
    Widget satellites
-   Four white glyphs floating around the greeting: music at the top left, news at
-   the top right, YouTube bottom left, weather bottom right. They are absolutely
-   positioned inside `.wallpaper-content` (which is `position: relative`), so they
-   never take part in the greeting's column layout and can sit just outside the
-   text block without ever overlapping it — the offsets are measured from the
-   corners of the text itself, not from the viewport.
+   Four white glyphs floating in a loose ring around the greeting. Where exactly is
+   script.js's business: on every load it throws each one out from the text block at a
+   random angle and a random distance — always clear of the type, never far from it,
+   never on top of another — and writes that position into `--widget-x`/`--widget-y`.
+   The percentages below are only the fallback a page without the script gets: one
+   satellite near each corner.
 
-   The orbit is pointer-transparent and only the buttons opt back in. That matters
-   for the native hosts: script.js reports each button's rectangle to macOS, which
-   keeps the rest of the desktop click-through, so the wallpaper never steals a
-   Finder drag-select just because a widget happens to be nearby.
+   They are positioned against the wallpaper, not against the text block, so the
+   scatter has the whole screen to work with and never depends on how wide the
+   greeting turns out. The orbit is pointer-transparent and only the buttons opt
+   back in. That matters for the native hosts: script.js reports each button's
+   rectangle to macOS, which keeps the rest of the desktop click-through, so the
+   wallpaper never steals a Finder drag-select just because a widget happens to be
+   nearby.
    --------------------------------------------------------------------------- */
 
 .widget-orbit {
@@ -565,88 +560,111 @@ body.has-photo .subtitle {
   inset: 0;
   z-index: 2;
   pointer-events: none;
+  /* Placed before it is shown: script.js adds `is-placed` once the satellites have
+     their coordinates, so they fade in where they land instead of sliding from the
+     middle of the screen. */
+  opacity: 0;
+  transition: opacity var(--fade-duration) var(--ease-out);
+}
+
+.widget-orbit.is-placed {
+  opacity: 1;
+}
+
+/* Switched off in the host's settings (`widgets`, default on): the satellites are not
+   faded out but removed, so the orbit stops drifting, nothing is left to click, and
+   `publishHitRegions()` reports an empty list — the desktop underneath is the Finder's
+   again. `display: none` rather than `opacity: 0` so a hidden satellite cannot be
+   measured either: re-enabling re-deals it (see `applyConfig` in script.js). */
+html.is-widgets-off .widget-orbit {
+  display: none;
+}
+
+/* One satellite switched off on its own (`widgetMusic`, `widgetNews`, `widgetYouTube`,
+   `widgetWeather`): same treatment, one glyph at a time. `.widget-btn` sets
+   `display: grid`, which would beat the browser's own `[hidden]` rule, so the state is
+   spelled out here; the rest of the ring is re-dealt around the gap. */
+.widget-btn[hidden] {
+  display: none;
 }
 
 .widget-btn {
   position: absolute;
+  left: var(--widget-x, 50%);
+  top: var(--widget-y, 50%);
   display: grid;
   place-items: center;
   width: var(--widget-size);
   height: var(--widget-size);
   padding: 0;
   margin: 0;
-  border: 1px solid var(--widget-border);
-  border-radius: 50%;
-  background-color: var(--widget-face);
+  border: 0;
+  background: none;
   color: var(--widget-ink);
-  box-shadow: var(--widget-shadow);
-  /* The blur is what makes the satellites sit *on* the wallpaper instead of being
-     pasted over it: a bright photo behind the button softens into the glass. */
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
-  backdrop-filter: blur(18px) saturate(150%);
   pointer-events: auto;
   cursor: pointer;
-  opacity: 0.8;
-  /* Three independent properties so nothing has to fight: `translate` places the
-     button, `scale` answers the pointer and `transform` carries the ambient
-     drift. A single `transform` would let the hover transition cancel the loop. */
+  /* No plate, no ring, no disc: the glyph is the whole button. It keeps a soft ink
+     shadow — white line art disappears over a bright sky without one — and lights up
+     under the pointer, which is all the affordance a wallpaper needs. */
+  filter: drop-shadow(0 1px 5px var(--widget-ink-shadow));
+  opacity: 0.95;
+  /* Three independent properties so nothing has to fight: `left`/`top` place the
+     button, `scale` answers both the pointer and the open card, and `transform`
+     carries the ambient drift. A single `transform` would let the hover transition
+     cancel the drift loop, and a `translate` placement would collide with it outright. */
   transition:
     opacity 220ms var(--ease-out),
     scale 220ms var(--ease-out),
-    background-color 220ms var(--ease-out),
-    border-color 220ms var(--ease-out),
-    box-shadow 220ms var(--ease-out);
+    filter 220ms var(--ease-out);
   animation: widget-drift var(--widget-drift-duration, 13s) ease-in-out infinite alternate;
   animation-delay: var(--widget-drift-delay, 0s);
   -webkit-tap-highlight-color: transparent;
 }
 
 .widget-icon {
-  /* The glyph is stroked, not filled: one hairline weight reads as "icon" at 20 px
-     and stays crisp on a Retina display without a second asset. */
-  width: 46%;
-  height: 46%;
+  /* The glyph fills the button now that there is no circle behind it. Stroked, not
+     filled: one hairline weight reads as an icon at any size, and `non-scaling-stroke`
+     keeps that weight from thickening as the glyph grows — crisp on a Retina display
+     without a second asset. */
+  width: 100%;
+  height: 100%;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.7;
+  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
 }
 
-/* The four corners. Each button is placed at its corner of the text block and then
-   pushed outwards, so the satellites hug the greeting whatever the greeting's
-   width turns out to be. */
+/* Fallback corners, used only until script.js has scattered the satellites (or when
+   it never runs at all). Each satellite also keeps its own drift phase here, so the
+   four of them breathe out of step with each other. */
 .widget-btn[data-widget="music"] {
-  top: 0;
-  left: 0;
-  translate: calc(-1 * var(--widget-out-x)) calc(-1 * var(--widget-out-y));
+  --widget-x: 5%;
+  --widget-y: 8%;
   --widget-drift-x: 0.16rem;
   --widget-drift-y: -0.3rem;
 }
 
 .widget-btn[data-widget="news"] {
-  top: 0;
-  right: 0;
-  translate: var(--widget-out-x) calc(-1 * var(--widget-out-y));
+  --widget-x: 89%;
+  --widget-y: 8%;
   --widget-drift-x: -0.14rem;
   --widget-drift-y: -0.34rem;
   --widget-drift-delay: -3.6s;
 }
 
 .widget-btn[data-widget="youtube"] {
-  bottom: 0;
-  left: 0;
-  translate: calc(-1 * var(--widget-out-x)) var(--widget-out-y);
+  --widget-x: 5%;
+  --widget-y: 84%;
   --widget-drift-x: 0.15rem;
   --widget-drift-y: 0.28rem;
   --widget-drift-delay: -7.1s;
 }
 
 .widget-btn[data-widget="weather"] {
-  bottom: 0;
-  right: 0;
-  translate: var(--widget-out-x) var(--widget-out-y);
+  --widget-x: 89%;
+  --widget-y: 84%;
   --widget-drift-x: -0.16rem;
   --widget-drift-y: 0.32rem;
   --widget-drift-delay: -10.4s;
@@ -665,33 +683,31 @@ body.has-photo .subtitle {
 
 .widget-btn:hover {
   opacity: 1;
-  scale: 1.08;
-  background-color: var(--widget-face-hover);
-  border-color: var(--widget-border-hover);
-  box-shadow:
-    var(--widget-shadow),
-    0 0 0 4px rgba(255, 255, 255, 0.05),
-    0 0 22px rgba(255, 255, 255, 0.12);
+  scale: 1.06;
+  filter:
+    drop-shadow(0 1px 5px var(--widget-ink-shadow)),
+    drop-shadow(0 0 16px var(--widget-glow));
 }
 
 .widget-btn:active {
-  scale: 0.96;
-  background-color: var(--widget-face-active);
+  opacity: 1;
+  scale: 0.94;
 }
 
 .widget-btn:focus-visible {
   opacity: 1;
   outline: 2px solid rgba(255, 255, 255, 0.72);
-  outline-offset: 3px;
+  outline-offset: 6px;
 }
 
-/* The satellite whose card is open: lit like a hover, so the icon bar and the
-   popup always read as one thing. */
+/* The satellite whose card is open: lit like a hover, so the glyph and the popup
+   always read as one thing. */
 .widget-btn[aria-expanded="true"] {
   opacity: 1;
-  scale: 1.06;
-  background-color: var(--widget-face-hover);
-  border-color: var(--widget-border-hover);
+  scale: 1.03;
+  filter:
+    drop-shadow(0 1px 5px var(--widget-ink-shadow)),
+    drop-shadow(0 0 16px var(--widget-glow));
 }
 
 /* A covered desktop, a sleeping display or the menu bar's Pause: the drift stops
@@ -1277,22 +1293,25 @@ html.is-suspended .widget-btn {
   color: var(--text-secondary);
 }
 
-/* Below this width there is no room beside the greeting for four satellites: they
-   would either overlap the text or leave the viewport. The constellation collapses
-   into one centred row under the subtitle, which is also the layout a phone gets. */
+/* Below this width there is no room to scatter four satellites: every quadrant is
+   smaller than the greeting itself. They collapse into one centred row near the
+   bottom of the screen, which is also the layout a phone gets — the bar stops being
+   an orbit and becomes a dock. */
 @media (max-width: 720px) {
   .widget-orbit {
-    position: static;
-    inset: auto;
+    position: absolute;
+    inset: auto 0 auto 0;
+    top: auto;
+    bottom: clamp(1rem, 6vh, 2.5rem);
     display: flex;
     justify-content: center;
-    gap: 0.7rem;
-    margin-top: 0.5rem;
+    gap: 1.1rem;
   }
 
   .widget-btn {
     position: static;
-    translate: none;
+    left: auto;
+    top: auto;
     transform: none;
     animation: none;
   }
@@ -1322,6 +1341,7 @@ html.is-suspended .widget-btn {
   html.is-theme-ready .photo-stack,
   body,
   .wallpaper-content,
+  .widget-orbit,
   .greeting,
   .subtitle,
   .photo,

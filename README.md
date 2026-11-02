@@ -56,7 +56,7 @@ SmartScreen (**More info → Run anyway**). The DMG is built on the Apple silico
 | Next photo | A **Next** button in the macOS popover and a **Next photo** tray item in the Windows app (and `livelyPropertyListener('nextPhoto', true)` / `window.DynaWall.nextPhoto()`) skip to the next photo immediately and restart the timer |
 | Typography | **Outfit** by default (variable, 600 for the greeting) — optically tracked at display size, so the greeting is ~90 px on a 1080p screen and ~112 px on a 1440p/5K desktop. Three more families ship with it: **Google Sans Flex**, **Space Grotesk** and **Geist** |
 | Motion | One-shot entrance fade plus a 320 ms cross-fade whenever the greeting text changes; photos cross-fade over 1.2 s |
-| Widgets | Four white satellites in the top-right corner — **Music**, **News**, **YouTube**, **Weather** — each opening one frosted card over a dimmed desktop. Nothing is fetched until a card asks for it, and every card that leaves the wallpaper (a YouTube Music search, a Google News desk, a trending feed) opens your browser instead of navigating the wallpaper |
+| Widgets | Four white satellites in a loose ring around the greeting — **Music**, **News**, **YouTube**, **Weather** — each opening one frosted card over a dimmed desktop. Nothing is fetched until a card asks for it, and every card that leaves the wallpaper (a YouTube Music search, a Google News desk, a trending feed) opens your browser instead of navigating the wallpaper |
 | Dependencies | No frameworks and no CDN links: every byte of chrome — the four vendored faces (Outfit, Google Sans Flex, Space Grotesk, Geist; ~132 KB of latin-subset WOFF2 each, SIL OFL 1.1, plus static TTFs for the native preview cards) and the twelve wallpapers in `images/` — ships with the app. The only network call in the project is the weather card's keyless Open-Meteo forecast, made the moment you open it and never on a timer |
 
 ## Files
@@ -90,8 +90,13 @@ SmartScreen (**More info → Run anyway**). The DMG is built on the Apple silico
 
 ## Desktop widgets
 
-Four satellites sit in the top-right corner of the wallpaper — paper-white glyphs, drawn as inline SVG so they
-weigh nothing and need no network. Each opens one card, and a card is a frosted pane over a dimmed desktop:
+Four satellites float in a loose ring around the greeting — paper-white line glyphs, drawn as inline SVG so they
+weigh nothing and need no network. There is no circle, plate or glass puck behind them: the glyph *is* the button,
+which is why it can afford to be big, and the pointer lights it up instead of outlining it. They are thrown out at
+random angles and random distances on every launch: `script.js` deals each one a spot that is three rem clear of the
+type and never more than eleven rem out from it, never on top of another, so the arrangement changes each time the
+wallpaper starts even though it always hugs the type. Each opens one card, and a card is a frosted pane over a
+dimmed desktop:
 
 | Satellite | Card | Leaves the wallpaper for |
 | --- | --- | --- |
@@ -109,6 +114,20 @@ wallpaper that navigates away from itself is a wallpaper nobody sees again.
 Keyboard first: `Esc` closes, `←`/`↑`/`→`/`↓`/`Home`/`End` walk the rows, focus returns to the satellite you
 came from, and the card is a real `role="dialog"` with `aria-modal`. It all degrades: no satellites, no widgets,
 and the greeting is unaffected.
+
+**The widgets are optional — each one of them.** All four are on by default, and they are switched in the place you
+already change everything else: **Desktop widgets** in the macOS popover (one master switch, then a switch per
+satellite), **Widgets** in the Windows settings window, and the same five checkboxes in Lively and Wallpaper Engine —
+`widgets` for all four, `widgetMusic`, `widgetNews`, `widgetYouTube`, `widgetWeather` for one at a time. For a quick
+look there is `index.html?widgets=false` (`?satellites=false` works too) or `?music=false` / `?weather=false` for a
+single one, and from the console `DynaWall.setWidgetsEnabled(false)` or `DynaWall.setWidgetEnabled('youtube', false)`.
+
+A satellite that is off is *hidden*, not faded: `hidden` removes it from the layout, so it is never placed, never
+measured and never reported to the native host as a click rectangle — that is what hands its corner of the desktop
+back to Finder drag-select and icons. The ring is re-dealt around the gap from the same seed, so the surviving three
+close up instead of leaving a hole, and a card belonging to a satellite you just switched off is dismissed. The master
+switch writes `html.is-widgets-off`, which removes the whole orbit and reports no rectangles at all. Either way the
+change is live: no reload, no relaunch, and switching one back on deals it a fresh spot.
 
 **The mouse is enough.** The native desktop deliberately never gives the page the keyboard — the wallpaper
 window cannot become key, which is what keeps every keystroke going to the app you are actually using — so no
@@ -239,6 +258,11 @@ URL parameters (all optional, handy for quick experiments):
 | `interval` | minutes between photos (1–1440) | `?interval=5` |
 | `shuffle` | `true` / `false` — random order instead of sequential | `?shuffle=false` |
 | `kenBurns` | `true` / `false` — slow zoom | `?kenburns=false` |
+| `widgets` | `true` / `false` — the four desktop satellites (`satellites` also works) | `?widgets=false` |
+| `music` | `true` / `false` — the music satellite alone (`widgetmusic` also works) | `?music=false` |
+| `news` | `true` / `false` — the news satellite alone (`widgetnews` also works) | `?news=false` |
+| `youtube` | `true` / `false` — the YouTube satellite alone (`widgetyoutube` also works) | `?youtube=false` |
+| `weather` | `true` / `false` — the weather satellite alone (`widgetweather` also works) | `?weather=false` |
 | `photos` | comma separated list of image URLs | `?photos=images/03-deep-ocean.jpg` |
 | `font` | family name (`fontfamily` also works) | `?font=Georgia` |
 | `fonturl` | relative path or `data:` URL of a font file (`customfont` also works) | `?fonturl=assets/fonts/outfit-latin.woff2` |
@@ -354,6 +378,10 @@ Inside the popover:
 - **Progressive disclosure.** The slideshow controls (time-of-day matching, interval, shuffle, slow zoom) only
   appear while **Photo slideshow** is on; dropping a folder turns it on for you, and the controls that would
   otherwise be greyed out are simply not shown.
+- **Desktop widgets.** One master switch for the four satellites plus a switch each (Music, News, YouTube, Weather),
+  all on by default. A satellite that is off is removed rather than faded — the page hides it, stops reporting a
+  click rectangle for it and re-deals the ring around the gap — and its card closes; the master switch takes all four
+  off the desktop at once. Either way it is live, and Finder drag-select is untouched.
 - **Standard folder.** On first launch DynaWall creates `~/Pictures/DynaWall` and copies the twelve bundled
   wallpapers into it. The Photos card reads that folder by default, so adding or removing images in Finder
   changes what rotates without opening Settings; **Change Folder…** points the wallpaper at any other folder,
@@ -376,7 +404,7 @@ Inside the popover:
   because the popover is sized from its measured content — a second line would grow the panel and shift
   every card below it under the pointer.
 - **Startup.** A native **Launch at login** switch registers DynaWall with macOS (`SMAppService`) so it starts automatically when you log in, without having to open System Settings manually.
-- **Reset** in the footer restores the default subtitle, palette, slideshow and sync settings in one
+- **Reset** in the footer restores the default subtitle, palette, slideshow, sync and widget settings in one
   click, and returns the photo source to `~/Pictures/DynaWall`.
 
 | Control | Key | Effect |
@@ -398,8 +426,9 @@ Inside the popover:
 | Font | `fontFamily` | Typography chips (**Outfit**, **Google Sans Flex**, **Space Grotesk**, **Geist** — the bundled faces), a **System font…** menu listing every family in Font Book, and **Add Font…** for a downloaded file |
 | Add Font… | `customFont` | Copies the picked `.ttf`/`.otf`/`.ttc`/`.woff`/`.woff2` (up to 4 MB) into Application Support, applies its family and pushes the bytes to the page as a `data:` URL |
 | Pause / Resume | — | Detaches the wallpaper from the desktop (the menu bar icon dims) |
+| Desktop widgets | `desktopWidgets` | **On** by default: the four satellites (music, news, YouTube, weather) scattered around the greeting. Off removes them — and their click rectangles — so the desktop is the wallpaper alone. The four switches in the 2×2 grid under it (`desktopWidgetMusic`, `desktopWidgetNews`, `desktopWidgetYouTube`, `desktopWidgetWeather`) take one satellite off on its own |
 | Launch at login | `launchAtLogin` | Starts DynaWall automatically on login (registered with macOS via `SMAppService`) |
-| Reset | — | Restores the default subtitle, palette (`Auto`), slideshow, interval, shuffle and slow zoom, and returns the photo folder to `~/Pictures/DynaWall` |
+| Reset | — | Restores the default subtitle, palette (`Auto`), slideshow, interval, shuffle, slow zoom and all five desktop-widget switches, and returns the photo folder to `~/Pictures/DynaWall` |
 | Quit | — | Stops the app |
 
 ### Diagnostics
@@ -514,8 +543,10 @@ re-scans the folder if the photo source changed. The window is the same panel th
 miniature of the desktop on top (the band's background and glow, the greeting the page is painting, what the
 photos are doing, and a **Pause**/**Resume** pill), then one rounded card per topic. The photo options — the
 **Rotate every** pills (1m, 5m, 15m, 30m, 1h), shuffle, slow zoom and time-of-day matching — only appear while
-the slideshow runs, so the card stays short when it is off. **Reset** restores the shipped subtitle, palette,
-slideshow and sync settings but keeps your folder. The **Typography** card lists the quick picks (**Outfit**, **Google Sans
+the slideshow runs, so the card stays short when it is off. A **Widgets** card holds the master switch for the
+four desktop satellites and, while it is on, one switch each (**Music**, **News**, **YouTube**, **Weather**).
+**Reset** restores the shipped subtitle, palette,
+slideshow, sync and widget settings but keeps your folder. The **Typography** card lists the quick picks (**Outfit**, **Google Sans
 Flex**, **Space Grotesk**, **Geist** — the bundled faces) plus every family installed in Windows, and **Add
 font…** copies a downloaded `.ttf`/`.otf`/`.ttc`/`.woff`/`.woff2` (up to 4 MB) into
 `%LOCALAPPDATA%\DynaWall\Fonts` and sends its bytes to the page as a `data:` URL — the file stays put even if you
@@ -558,6 +589,11 @@ Logs go to `%LOCALAPPDATA%\DynaWall\dynawall.log` (one 512 KB generation is kept
 | `slideshowInterval` | slider | Minutes between photos (1–120, default 15) |
 | `slideshowShuffle` | checkbox | Random order |
 | `kenBurns` | checkbox | Slow zoom on each photo |
+| `widgets` | checkbox | All four desktop satellites (music, news, YouTube, weather); on by default, off leaves the wallpaper alone |
+| `widgetMusic` | checkbox | The music satellite alone |
+| `widgetNews` | checkbox | The news satellite alone |
+| `widgetYouTube` | checkbox | The YouTube satellite alone |
+| `widgetWeather` | checkbox | The weather satellite alone |
 | `fontFamily` | textbox | Family for the greeting and subtitle — `Outfit` (default), `Google Sans Flex`, `Space Grotesk`, `Geist`, an installed family, or a family the native hosts imported; clearing the field puts it back in `Outfit` |
 
 Lively talks to the page through `window.livelyPropertyListener(name, value)`: every change is applied
@@ -580,6 +616,11 @@ so `theme` arrives as `0…5` — the page maps it back to the band name.
 | `slideshowinterval` | slider | Minutes between photos (1–120, default 15) |
 | `slideshowshuffle` | checkbox | Random order |
 | `kenburns` | checkbox | Slow zoom on each photo |
+| `widgets` | bool | All four desktop satellites (music, news, YouTube, weather); on by default, off leaves the wallpaper alone |
+| `widgetmusic` | bool | The music satellite alone |
+| `widgetnews` | bool | The news satellite alone |
+| `widgetyoutube` | bool | The YouTube satellite alone |
+| `widgetweather` | bool | The weather satellite alone |
 | `fontfamily` | text input | Family for the greeting and subtitle (default `Outfit`; `Google Sans Flex`, `Space Grotesk` and `Geist` ship with the wallpaper); empty resets to `Outfit` |
 
 Values arrive through `window.wallpaperPropertyListener.applyUserProperties(...)`; colors are converted
@@ -621,10 +662,11 @@ to `main` cannot clobber each other's nightly build, and the run page's summary 
 3. **URL query parameters**
 4. **`localStorage` cache** — `dynawall.firstName`, `dynawall.subtitle`, `dynawall.bgColor`,
    `dynawall.theme`, `dynawall.slideshow`, `dynawall.slideshowInterval`, `dynawall.slideshowShuffle`,
-   `dynawall.kenBurns`, `dynawall.photoSync`, `dynawall.fontFamily` (the family only — an imported font file is
-   never cached, the host re-reads it and re-sends it as a `data:` URL on every load)
+   `dynawall.kenBurns`, `dynawall.photoSync`, `dynawall.widgets`, `dynawall.widgetMusic`,
+   `dynawall.widgetNews`, `dynawall.widgetYouTube`, `dynawall.widgetWeather`, `dynawall.fontFamily` (the family
+   only — an imported font file is never cached, the host re-reads it and re-sends it as a `data:` URL on every load)
 5. **Built-in defaults** — `Developer`, `What are we building today?`, `#0d1117`, palette on `auto`,
-   slideshow off, 15 minutes, shuffled, slow zoom on, photos matched to the time of day, `Outfit`
+   slideshow off, 15 minutes, shuffled, slow zoom on, photos matched to the time of day, all four widgets on
 
 The photo list is the one exception: `photos` is never cached, because the host resolves it fresh on every
 load (and the page falls back to `images/` when nobody sends one). `suspend` is not a setting at all — it is a
@@ -742,8 +784,10 @@ the CSS), the time-synced photo classification (Golden Gate and abstract filenam
 percent-encoded host URLs, untagged folders, adjacent-band fallback), `photoSync` resolution across IPC / URL /
 `localStorage` / both manifests, the band → photo-pool transition at each edge (the band is part of the
 slideshow signature, so a swap cross-fades instead of blinking), the `nextPhoto` action and pool stepping
-(wrap, shuffle, no repeat), that the clock controls are gone, and the consistency of the host manifests with
-`script.js`.
+(wrap, shuffle, no repeat), that the clock controls are gone, the widget settings (the master `widgets` switch and
+one flag per satellite — `widgetMusic`, `widgetNews`, `widgetYouTube`, `widgetWeather` — on by default and resolvable
+from IPC / URL / cache / seed / both manifests, with a hidden satellite removed from the layout, unreported as a click
+region and re-dealt around), and the consistency of the host manifests with `script.js`.
 
 The distribution checks cover the DMG pipeline (`build-dmg.sh`, UDZO, the `/Applications` symlink and the
 ad-hoc signature), the Windows project (net8.0-windows, single-file self-contained publish, WebView2), the
@@ -789,6 +833,10 @@ livelyPropertyListener('theme', 'auto');      // back to following the clock
 livelyPropertyListener('slideshow', true);    // photos fade in behind the greeting
 livelyPropertyListener('theme', 'dusk');      // …and time-of-day photos follow along: the dusk set
 livelyPropertyListener('photoSync', false);   // every photo again, clock or not
+livelyPropertyListener('widgets', false);     // take all four satellites off the desktop…
+livelyPropertyListener('widgets', true);      // …and deal them again, no reload
+livelyPropertyListener('widgetNews', false);  // one satellite off: the ring closes the gap…
+livelyPropertyListener('widgetNews', true);   // …and it comes back with the others
 livelyPropertyListener('nextPhoto', true);    // skip to the next photo right now
 livelyPropertyListener('suspend', true);      // park the timers + drift (the host owns this flag)
 livelyPropertyListener('suspend', false);     // and pick up exactly where it left off
@@ -798,5 +846,9 @@ window.DynaWall.msUntilNextClockBoundary();    // how long the one-shot clock ti
 window.DynaWall.classifyPhotos(photos);        // how the library splits across the four bands
 window.DynaWall.openWidget('weather');         // open a card from a console or a host script
 window.DynaWall.closeWidget();                 // …and dismiss it again
+window.DynaWall.setWidgetsEnabled(false);      // the master Desktop widgets switch, from a host or the console
+window.DynaWall.setWidgetEnabled('youtube', false); // one satellite off, live — and cached
+window.DynaWall.enabledWidgets();              // ['music', 'news', 'weather'] — what is on the desktop
 window.DynaWall.clickAt(120, 88);             // replay a desktop click at CSS pixels (what the hosts do)
+window.DynaWall.scatterWidgets({ width: 1920, height: 1080, size: 44, count: 4, margin: 40, gap: 24, clearance: 48, reach: 128, avoid: [], seed: 7 }); // where the satellites would sit
 ```

@@ -52,6 +52,14 @@
  * `theme` pins a single palette instead of following the clock, and a background
  * colour set by hand pins `custom` — unless the same source names a theme.
  *
+ * Desktop widgets: the four satellites (music, news, YouTube, weather) are settings like
+ * any other — `widgets` for all of them, on by default, plus one flag each
+ * (`widgetMusic`, `widgetNews`, `widgetYouTube`, `widgetWeather`) — so the macOS popover,
+ * the Windows window, Lively, Wallpaper Engine and `?widgets=false` / `?music=false` can
+ * take them, or any one of them, off the desktop. A satellite that is off is `hidden`:
+ * never placed, never measured, never reported as a click region and its card cannot be
+ * opened, which hands that part of the desktop back to the Finder.
+ *
  * Suspension: `setSuspended(true)` — from `livelyPropertyListener('suspend', …)`,
  * `DynaWall.setSuspended(...)` or `document.visibilitychange` — parks the clock and
  * slideshow timers and puts `html.is-suspended` on the document, which pauses the
@@ -79,6 +87,17 @@
     kenBurns: true,
     // Only show photos whose filename matches the active time-of-day band.
     photoSync: true,
+    // The four desktop satellites (music, news, YouTube, weather). On by default, and
+    // off is a real setting rather than a broken page: with a satellite off nothing is
+    // placed for it, nothing drifts and no click region is reported to the host, so the
+    // desktop underneath belongs to the Finder again. `widgets` is the master switch;
+    // the four below take one satellite off on its own, and the master restores exactly
+    // the set the user had picked.
+    widgets: true,
+    widgetMusic: true,
+    widgetNews: true,
+    widgetYouTube: true,
+    widgetWeather: true,
     // Sources injected by the macOS host (absolute scheme URLs). Empty means the
     // host has no photos; hosts that do not own the list keep the bundled fallback.
     photos: [],
@@ -100,6 +119,13 @@
     slideshowShuffle: 'dynawall.slideshowShuffle',
     kenBurns: 'dynawall.kenBurns',
     photoSync: 'dynawall.photoSync',
+    // Whether the four desktop satellites are on the wallpaper at all.
+    widgets: 'dynawall.widgets',
+    // …and which of them are: one flag per satellite.
+    widgetMusic: 'dynawall.widgetMusic',
+    widgetNews: 'dynawall.widgetNews',
+    widgetYouTube: 'dynawall.widgetYouTube',
+    widgetWeather: 'dynawall.widgetWeather',
     fontFamily: 'dynawall.fontFamily',
     // Widget state, cached locally because it is the user's choice and not a host
     // setting: the city they looked up and whether they read the card in °C or °F.
@@ -728,6 +754,11 @@
       case 'slideshowShuffle':
       case 'kenBurns':
       case 'photoSync':
+      case 'widgets':
+      case 'widgetMusic':
+      case 'widgetNews':
+      case 'widgetYouTube':
+      case 'widgetWeather':
         return parseBoolean(rawValue);
       case 'bgColor':
         return normalizeColor(rawValue);
@@ -794,6 +825,17 @@
     photosync: 'photoSync',
     timesync: 'photoSync',
     dynamicphotos: 'photoSync',
+    widgets: 'widgets',
+    satellites: 'widgets',
+    // One satellite at a time: `?music=false`, or the field name itself.
+    music: 'widgetMusic',
+    widgetmusic: 'widgetMusic',
+    news: 'widgetNews',
+    widgetnews: 'widgetNews',
+    youtube: 'widgetYouTube',
+    widgetyoutube: 'widgetYouTube',
+    weather: 'widgetWeather',
+    widgetweather: 'widgetWeather',
     font: 'fontFamily',
     fontfamily: 'fontFamily',
     fonturl: 'customFont',
@@ -811,6 +853,13 @@
     kenBurns: 'kenBurns',
     // Time-of-day photo bands; the macOS host's "Match time of day" toggle.
     photoSync: 'photoSync',
+    // The four desktop satellites: every host's "Desktop widgets" switch, and one
+    // checkbox per satellite beside it.
+    widgets: 'widgets',
+    widgetMusic: 'widgetMusic',
+    widgetNews: 'widgetNews',
+    widgetYouTube: 'widgetYouTube',
+    widgetWeather: 'widgetWeather',
     // Typography: an installed family name and, when the user imported a font
     // file, the `data:` URL of those bytes (sent by the native hosts).
     fontFamily: 'fontFamily',
@@ -830,7 +879,12 @@
     kenburns: 'kenBurns',
     photosync: 'photoSync',
     fontfamily: 'fontFamily',
-    customfont: 'customFont'
+    customfont: 'customFont',
+    widgets: 'widgets',
+    widgetmusic: 'widgetMusic',
+    widgetnews: 'widgetNews',
+    widgetyoutube: 'widgetYouTube',
+    widgetweather: 'widgetWeather'
   });
 
   function ownLookup(map, key) {
@@ -977,9 +1031,9 @@
    * ------------------------------------------------------------------------ */
 
   /**
-   * The four satellites around the greeting. `id` is the `data-widget` of the
-   * button in index.html and the key of a renderer below; `title`/`caption` are the
-   * card header. A test asserts the markup and this list agree.
+   * The four satellites on the wallpaper. `id` is the `data-widget` of the button in
+   * index.html and the key of a renderer below; `title`/`caption` are the card
+   * header. A test asserts the markup and this list agree.
    */
   const WIDGETS = Object.freeze([
     Object.freeze({ id: 'music', title: 'YouTube Music', caption: 'Stations and mixes' }),
@@ -987,6 +1041,33 @@
     Object.freeze({ id: 'youtube', title: 'YouTube', caption: 'Trending, or a search' }),
     Object.freeze({ id: 'weather', title: 'Weather', caption: 'Now, and the next hours' })
   ]);
+
+  /**
+   * Which configuration field shows or hides each satellite.
+   *
+   * A satellite is the user's to keep: the four switches in the macOS popover, the
+   * Windows window, Lively and Wallpaper Engine are four ordinary booleans, so hiding
+   * YouTube costs nothing in any host and survives a reload in `localStorage`. A test
+   * asserts every id in `WIDGETS` has a field, a storage key and both manifest entries.
+   */
+  const WIDGET_FIELDS = Object.freeze({
+    music: 'widgetMusic',
+    news: 'widgetNews',
+    youtube: 'widgetYouTube',
+    weather: 'widgetWeather'
+  });
+
+  /**
+   * The five configuration fields that decide what is on the desktop: the master switch
+   * and one flag per satellite. `applyUpdates()` watches exactly these.
+   */
+  const WIDGET_SETTING_FIELDS = Object.freeze(
+    ['widgets'].concat(
+      WIDGETS.map(function (widget) {
+        return WIDGET_FIELDS[widget.id];
+      })
+    )
+  );
 
   /**
    * Every remote host this page can name, and nothing else — split by what the
@@ -1029,6 +1110,234 @@
   const WEATHER_TIMEOUT_MS = 9000;
   /** Extra pixels around a satellite that still count as hovering it. */
   const HIT_PADDING = 6;
+
+  /**
+   * The width at which style.css stops scattering the satellites and docks them in
+   * one row along the bottom of the screen. The media query lives in style.css and
+   * this is the same number: script.js has to stop writing positions at exactly the
+   * width where the CSS stops honouring them.
+   */
+  const WIDGET_NARROW_QUERY = '(max-width: 720px)';
+
+  /**
+   * How the satellites sit around the greeting: `WIDGET_CLEARANCE_REM` of air between
+   * the type and the nearest satellite, and `WIDGET_REACH_REM` of room further out for
+   * them to drift into. Together those two bounds are the ring they are thrown around;
+   * the angle and the distance inside it are what is random. `WIDGET_REACH_RATIO` widens
+   * that room with the greeting itself — the rem alone would leave the satellites glued
+   * to the type on a 4K screen, where the greeting is most of the wallpaper wide.
+   */
+  const WIDGET_CLEARANCE_REM = 3;
+  const WIDGET_REACH_REM = 8;
+  const WIDGET_REACH_RATIO = 0.16;
+
+  /**
+   * A tiny deterministic PRNG (mulberry32).
+   *
+   * The scatter has to be repeatable — the same seed must deal the same arrangement —
+   * both so a window resize does not reshuffle the desktop and so the headless tests
+   * can hold the placement rules to account without a DOM.
+   */
+  function createRandom(seed) {
+    let state = Number(seed) >>> 0 || 0x9e3779b9;
+    return function random() {
+      state = (state + 0x6d2b79f5) >>> 0;
+      let value = state;
+      value = Math.imul(value ^ (value >>> 15), value | 1);
+      value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+      return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /** How far two rects overlap once each is padded by `padding`; `<= 0` means clear. */
+  function overlapDepth(first, second, padding) {
+    const pad = Number(padding) || 0;
+    return Math.min(
+      Math.min(first.right + pad - second.left, second.right + pad - first.left),
+      Math.min(first.bottom + pad - second.top, second.bottom + pad - first.top)
+    );
+  }
+
+  /**
+   * Scatter `count` satellites of `size` px around the greeting.
+   *
+   * The satellites belong to the greeting, not to the screen. Each one is thrown out
+   * from the text block along a random ray — a random angle, then a random distance
+   * between `clearance` px of air and `reach` px further out — so the four land in a
+   * loose ring around the type. That is what makes the wallpaper look dealt rather
+   * than laid out while keeping the four together: a satellite that wandered off into
+   * an empty corner stops reading as part of the composition.
+   *
+   * The block they orbit is the union of the `avoid` rects (the greeting and the
+   * subtitle, in viewport pixels) — the satellites have to keep off those anyway, so
+   * they are the same thing. Three rules keep a hand playable: no two satellites may
+   * come within `gap` px of each other, none may break the ring, and no quadrant of the
+   * ring may take more than half of them, so the greeting never ends up with every
+   * satellite piled on one side. Where a candidate cannot satisfy all of that, the one
+   * with the most air around it wins; a wallpaper with no room for a ring at all falls
+   * back to an even spread of the safe area.
+   *
+   * `margin` keeps the satellites off the screen edges; `inset`
+   * (`{ top, right, bottom, left }`) overrides an edge on its own, which the bottom
+   * one needs — the wallpaper runs behind the Dock and the Windows taskbar, and a
+   * satellite there would be invisible and unclickable.
+   *
+   * Returns `[{ x, y }]` — the top-left corner of each satellite, in order.
+   */
+  function scatterWidgets(options) {
+    const settings = options || {};
+    const width = Number(settings.width) || 0;
+    const height = Number(settings.height) || 0;
+    const size = Math.max(1, Number(settings.size) || 0);
+    const count = Math.max(0, Math.floor(Number(settings.count) || 0));
+    const margin = Math.max(0, Number(settings.margin) || 0);
+    const gap = Math.max(0, Number(settings.gap) || 0);
+    const clearance = Math.max(0, Number(settings.clearance) || 0);
+    const reach = Math.max(0, Number(settings.reach) || 0);
+    const random = createRandom(settings.seed);
+    const attempts = 60;
+    const cap = Math.max(2, Math.ceil(count / 2));
+
+    const inset = settings.inset || {};
+    const edge = function (value) {
+      const number = Number(value);
+      return Number.isFinite(number) && number >= 0 ? number : margin;
+    };
+
+    /** How far along a ray an axis reaches `bounds`; `Infinity` when it never does. */
+    const rayLimit = function (origin, bounds, ray) {
+      if (ray > 0) return (bounds.max - origin) / ray;
+      if (ray < 0) return (bounds.min - origin) / ray;
+      return Infinity;
+    };
+
+    // The halo the satellites must clear, and the block they orbit — the union of the
+    // text rects, which is the greeting plus its subtitle.
+    const avoid = [];
+    let block = null;
+    (settings.avoid || []).forEach(function (box) {
+      if (!box) return;
+      const boxWidth = Number(box.width) || 0;
+      const boxHeight = Number(box.height) || 0;
+      if (boxWidth <= 0 || boxHeight <= 0) return;
+      const x = Number(box.x) || 0;
+      const y = Number(box.y) || 0;
+      avoid.push({
+        left: x - clearance,
+        top: y - clearance,
+        right: x + boxWidth + clearance,
+        bottom: y + boxHeight + clearance
+      });
+      if (!block) {
+        block = { left: x, top: y, right: x + boxWidth, bottom: y + boxHeight };
+        return;
+      }
+      block.left = Math.min(block.left, x);
+      block.top = Math.min(block.top, y);
+      block.right = Math.max(block.right, x + boxWidth);
+      block.bottom = Math.max(block.bottom, y + boxHeight);
+    });
+
+    // Where a satellite's centre is allowed: the viewport inside the insets, minus half
+    // a satellite. With no greeting to orbit, its middle is the centre of the ring.
+    const xBounds = {
+      min: edge(inset.left) + size / 2,
+      max: Math.max(edge(inset.left) + size / 2, width - edge(inset.right) - size / 2)
+    };
+    const yBounds = {
+      min: edge(inset.top) + size / 2,
+      max: Math.max(edge(inset.top) + size / 2, height - edge(inset.bottom) - size / 2)
+    };
+    const centreX = block ? (block.left + block.right) / 2 : (xBounds.min + xBounds.max) / 2;
+    const centreY = block ? (block.top + block.bottom) / 2 : (yBounds.min + yBounds.max) / 2;
+    // The ring, measured to the satellite's own edge: half the text block, `clearance`
+    // of air and half a satellite — so a ray that stops at the ring leaves a rect that
+    // is exactly `clearance` from the type, and one that travels `reach` further is that
+    // much further out again.
+    const ringX = (block ? (block.right - block.left) / 2 : 0) + clearance + size / 2;
+    const ringY = (block ? (block.bottom - block.top) / 2 : 0) + clearance + size / 2;
+    // A ring needs its centre on screen: a text block larger than the wallpaper leaves
+    // nothing to orbit, and the plain spread takes over.
+    const orbits =
+      centreX >= xBounds.min &&
+      centreX <= xBounds.max &&
+      centreY >= yBounds.min &&
+      centreY <= yBounds.max;
+
+    const placed = [];
+    const counts = [0, 0, 0, 0];
+    const points = [];
+
+    for (let index = 0; index < count; index += 1) {
+      let best = null;
+      let bestDepth = Infinity;
+      let bestQuadrant = 0;
+
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        let satelliteX;
+        let satelliteY;
+
+        if (orbits) {
+          // Throw the satellite out along a random ray: it leaves the halo where the ray
+          // crosses it, then travels up to `reach` further out — or to the edge of the
+          // screen, whichever comes first.
+          const angle = random() * Math.PI * 2;
+          const rayX = Math.cos(angle);
+          const rayY = Math.sin(angle);
+          const haloDistance = Math.min(
+            rayX === 0 ? Infinity : ringX / Math.abs(rayX),
+            rayY === 0 ? Infinity : ringY / Math.abs(rayY)
+          );
+          const screenDistance = Math.min(
+            rayLimit(centreX, xBounds, rayX),
+            rayLimit(centreY, yBounds, rayY)
+          );
+          if (screenDistance <= haloDistance && attempt < attempts - 1) continue;
+
+          const travel = Math.max(0, Math.min(reach, screenDistance - haloDistance));
+          const distance = haloDistance + random() * travel;
+          satelliteX = centreX + rayX * distance;
+          satelliteY = centreY + rayY * distance;
+        } else {
+          satelliteX = xBounds.min + random() * (xBounds.max - xBounds.min);
+          satelliteY = yBounds.min + random() * (yBounds.max - yBounds.min);
+        }
+
+        // Floating point can leave the safe box by a hair; CSS pixels cannot.
+        satelliteX = Math.min(Math.max(satelliteX, xBounds.min), xBounds.max);
+        satelliteY = Math.min(Math.max(satelliteY, yBounds.min), yBounds.max);
+
+        const quadrant = (satelliteX < centreX ? 0 : 1) + (satelliteY < centreY ? 0 : 2);
+        if (counts[quadrant] >= cap && attempt < attempts - 1) continue;
+
+        const rect = {
+          left: satelliteX - size / 2,
+          top: satelliteY - size / 2,
+          right: satelliteX + size / 2,
+          bottom: satelliteY + size / 2
+        };
+        let depth = 0;
+        avoid.forEach(function (box) {
+          depth = Math.max(depth, overlapDepth(rect, box, 0));
+        });
+        placed.forEach(function (box) {
+          depth = Math.max(depth, overlapDepth(rect, box, gap));
+        });
+        if (depth < bestDepth) {
+          bestDepth = depth;
+          best = rect;
+          bestQuadrant = quadrant;
+        }
+        if (depth <= 0) break;
+      }
+
+      counts[bestQuadrant] += 1;
+      placed.push(best);
+      points.push({ x: best.left, y: best.top });
+    }
+
+    return points;
+  }
 
   /** Trim a value to something a card can print, or `''`. */
   function clipText(value, maxLength) {
@@ -2148,6 +2457,12 @@
       state.config = next;
       persistConfig(cache, storage);
       render({ animate: true });
+
+      // The satellites are not the greeting's to rebuild: hand the switches to the widget
+      // controller, which knows how to hide, unplace, dismiss and re-deal them.
+      if (widgetsRef && WIDGET_SETTING_FIELDS.some(function (field) { return touched[field]; })) {
+        widgetsRef.applyConfig(next);
+      }
     }
 
     function playEntrance() {
@@ -2414,11 +2729,15 @@
    * is open, who had focus, where the native host may take a click, Escape and
    * click-outside — are shared. The providers below only paint into the card body.
    *
+   * `options.config` is the resolved configuration: the master `widgets` switch and the
+   * four per-satellite flags decide what is on the desktop from the first frame, and
+   * `applyConfig()` keeps it in step with every later push.
+   *
    * Returns `null` when the page has no satellites at all (an older index.html, a
    * host page that stripped them): a wallpaper without widgets is still a
    * wallpaper, and the greeting must not fail because of a missing button.
    */
-  function createWidgets(win, doc) {
+  function createWidgets(win, doc, options) {
     const bar = doc.getElementById('widget-bar');
     const backdrop = doc.getElementById('widget-backdrop');
     const modal = doc.getElementById('widget-modal');
@@ -2433,10 +2752,22 @@
     if (buttons.length === 0) return null;
 
     const storage = getStorage(win);
+    const config = (options && options.config) || {};
     const state = {
+      // The satellites' master switch. Off means "not on this desktop": nothing is
+      // placed, nothing is reported as clickable and the page holds no card.
+      enabled: config.widgets !== false,
+      // Whether the first deal has happened yet: the initial `applyConfig()` call sets
+      // the per-satellite flags up before anything is measured, so it must not deal.
+      started: false,
       activeId: '',
       lastFocus: null,
       hitFrame: 0,
+      revealed: false,
+      textObserver: null,
+      // One arrangement per page load: the wallpaper is dealt a fresh constellation
+      // every time it starts, and keeps it until the desktop changes shape.
+      seed: Math.floor(Math.random() * 0xfffffffe) + 1,
       weather: {
         place: readWeatherPlace(storage),
         unit: readWeatherUnit(storage),
@@ -2456,6 +2787,20 @@
         if (WIDGETS[index].id === id) return WIDGETS[index];
       }
       return null;
+    }
+
+    function buttonById(id) {
+      for (let index = 0; index < buttons.length; index += 1) {
+        if (buttons[index].getAttribute('data-widget') === id) return buttons[index];
+      }
+      return null;
+    }
+
+    /** The satellites on the desktop right now; `hidden` is the settings' doing. */
+    function visibleButtons() {
+      return buttons.filter(function (button) {
+        return !button.hidden;
+      });
     }
 
     function el(tag, className, text) {
@@ -2512,6 +2857,157 @@
       return list;
     }
 
+    /* --- placement --------------------------------------------------------- */
+
+    /** The root font size, so the scatter's air scales with the wallpaper's type. */
+    function rem() {
+      const styles = win.getComputedStyle ? win.getComputedStyle(doc.documentElement) : null;
+      const size = styles ? parseFloat(styles.fontSize) : 0;
+      return size > 0 ? size : 16;
+    }
+
+    /** The greeting and the subtitle in viewport pixels: the satellites keep off them. */
+    function textRects() {
+      const rects = [];
+      ['greeting', 'subtitle'].forEach(function (id) {
+        const node = doc.getElementById(id);
+        if (!node) return;
+        const rect = node.getBoundingClientRect();
+        if (!rect || rect.width <= 0 || rect.height <= 0) return;
+        rects.push({ x: rect.left, y: rect.top, width: rect.width, height: rect.height });
+      });
+      return rects;
+    }
+
+    /** The satellites' footprint in CSS pixels; `0` until the browser has laid them out. */
+    function satelliteSize() {
+      for (let index = 0; index < buttons.length; index += 1) {
+        const size = buttons[index].offsetWidth;
+        if (size > 0) return size;
+      }
+      return 0;
+    }
+
+    function isNarrow() {
+      return typeof win.matchMedia === 'function' && win.matchMedia(WIDGET_NARROW_QUERY).matches;
+    }
+
+    /** Fade the orbit in once, after it has been placed. */
+    function reveal() {
+      if (state.revealed) return;
+      state.revealed = true;
+      const defer =
+        typeof win.requestAnimationFrame === 'function'
+          ? win.requestAnimationFrame
+          : function (callback) {
+              return win.setTimeout(callback, 16);
+            };
+      defer(function () {
+        bar.classList.add('is-placed');
+      });
+    }
+
+    /**
+     * Deal the satellites a hand.
+     *
+     * Once per page load, then again only when the wallpaper changes shape: a window
+     * resize re-deals from the same seed, so the new viewport gets an arrangement
+     * with the same character rather than a reshuffle. Below the breakpoint style.css
+     * docks them in a row, and no inline position is written at all — the properties
+     * are removed and the media query decides.
+     *
+     * Switched off there is nothing to place (and no fade-in to arm), so the deal
+     * waits until the master switch comes back on and `applyConfig()` calls it again.
+     *
+     * Only the satellites that are on the desktop are dealt: the ring is sized for the
+     * set actually on screen, so hiding YouTube closes a gap instead of leaving one.
+     */
+    function scatter() {
+      if (!state.enabled) return;
+
+      reveal();
+
+      const active = visibleButtons();
+      if (active.length === 0) {
+        scheduleHitRegions();
+        return;
+      }
+
+      if (isNarrow()) {
+        buttons.forEach(function (button) {
+          button.style.removeProperty('--widget-x');
+          button.style.removeProperty('--widget-y');
+        });
+        scheduleHitRegions();
+        return;
+      }
+
+      const width = win.innerWidth || 0;
+      const height = win.innerHeight || 0;
+      const size = satelliteSize();
+      if (width <= 0 || height <= 0 || size <= 0) return;
+
+      const unit = rem();
+      const rects = textRects();
+      // The ring widens with the greeting, not just with the rem.
+      const widest = rects.reduce(function (widestSoFar, rect) {
+        return Math.max(widestSoFar, rect.width);
+      }, 0);
+      const points = scatterWidgets({
+        width: width,
+        height: height,
+        size: size,
+        count: active.length,
+        margin: Math.round(unit * 2.5),
+        // The bottom edge has further to give: the wallpaper runs behind the Dock on
+        // macOS and the taskbar on Windows, and a satellite parked there would be
+        // hidden at best and covered by another window at worst.
+        inset: {
+          top: Math.round(unit * 2.5),
+          right: Math.round(unit * 2.5),
+          bottom: Math.round(unit * 6.5),
+          left: Math.round(unit * 2.5)
+        },
+        gap: Math.round(unit * 1.5),
+        clearance: Math.round(unit * WIDGET_CLEARANCE_REM),
+        reach: Math.round(Math.max(unit * WIDGET_REACH_REM, widest * WIDGET_REACH_RATIO)),
+        avoid: rects,
+        seed: state.seed
+      });
+
+      active.forEach(function (button, index) {
+        const point = points[index];
+        if (!point) return;
+        button.style.setProperty('--widget-x', Math.round(point.x) + 'px');
+        button.style.setProperty('--widget-y', Math.round(point.y) + 'px');
+      });
+      scheduleHitRegions();
+    }
+
+    /** `true` when a placed satellite has ended up inside the greeting's halo. */
+    function coversText() {
+      // A pixel of slack: the ring is allowed to touch its own edge, and the written
+      // positions are rounded to whole CSS pixels.
+      const clearance = Math.max(0, Math.round(rem() * WIDGET_CLEARANCE_REM) - 1);
+      const rects = textRects();
+      for (let index = 0; index < buttons.length; index += 1) {
+        const box = buttons[index].getBoundingClientRect();
+        if (!box || box.width <= 0) continue;
+        const satellite = { left: box.left, top: box.top, right: box.right, bottom: box.bottom };
+        for (let other = 0; other < rects.length; other += 1) {
+          const text = rects[other];
+          const padded = {
+            left: text.x - clearance,
+            top: text.y - clearance,
+            right: text.x + text.width + clearance,
+            bottom: text.y + text.height + clearance
+          };
+          if (overlapDepth(satellite, padded, 0) > 0) return true;
+        }
+      }
+      return false;
+    }
+
     /* --- native hit-testing ------------------------------------------------ */
 
     /**
@@ -2528,6 +3024,9 @@
      *
      * While a card is open the whole viewport is reported, because the backdrop is
      * itself a click target: clicking anywhere outside the card closes it.
+     *
+     * With the satellites switched off nothing is reported at all: the host then keeps
+     * every click for the desktop, which is exactly what "no widgets" should mean.
      */
     function publishHitRegions() {
       const handlers = win.webkit && win.webkit.messageHandlers;
@@ -2536,14 +3035,14 @@
       const webview2 = webview && typeof webview.postMessage === 'function';
       if (!webkit && !webview2) return;
 
-      const open = Boolean(state.activeId);
+      const open = state.enabled && Boolean(state.activeId);
       const width = win.innerWidth || 0;
       const height = win.innerHeight || 0;
       const regions = [];
 
       if (open) {
         regions.push([0, 0, width, height]);
-      } else {
+      } else if (state.enabled) {
         buttons.forEach(function (button) {
           const rect = button.getBoundingClientRect();
           if (!rect || rect.width <= 0 || rect.height <= 0) return;
@@ -2652,6 +3151,10 @@
     function openWidget(id) {
       const widget = widgetById(id);
       if (!widget) return false;
+      // A satellite that was switched off is not on the desktop, so there is nothing to
+      // open — a host script asking for it gets `false` instead of a card with no anchor.
+      const button = buttonById(id);
+      if (button && button.hidden) return false;
       if (state.activeId === id) return true;
 
       state.activeId = id;
@@ -3170,17 +3673,101 @@
     });
 
     doc.addEventListener('keydown', onKeyDown);
-    win.addEventListener('resize', scheduleHitRegions);
 
-    // The entrance slides and scales `.wallpaper-content` for 900 ms, so the
-    // satellite rectangles measured before it settled sit a few pixels off.
-    // Re-measure when that transition lands — once, not on every frame.
+    // Adopt the settings before the first deal, so the page opens with exactly the
+    // desktop the user picked — no flash of four satellites on their way out.
+    applyConfig(config);
+
+    // Deal the first hand, then hold it: `scatter()` measures the greeting and the
+    // viewport, so it has to run again when either changes shape. The resize is
+    // debounced — a live drag would otherwise re-deal on every frame — while the hit
+    // regions are refreshed immediately, so a click during the drag still lands.
+    state.started = true;
+    scatter();
+    let scatterTimer = 0;
+    win.addEventListener('resize', function () {
+      scheduleHitRegions();
+      if (scatterTimer) win.clearTimeout(scatterTimer);
+      scatterTimer = win.setTimeout(function () {
+        scatterTimer = 0;
+        scatter();
+      }, 140);
+    });
+
     const contentNode = doc.getElementById('content');
     if (contentNode) {
+      // The entrance slides and scales `.wallpaper-content` for 900 ms, so the
+      // satellite rectangles measured before it settled sit a few pixels off.
+      // Re-measure when that transition lands — once, not on every frame.
       contentNode.addEventListener('transitionend', function (event) {
         if (event.target === contentNode) scheduleHitRegions();
       });
+
+      // A longer name, a different greeting or the webfont finally arriving all
+      // change how wide the text block is, and can grow it over a satellite. Watch
+      // for that and deal again rather than letting the greeting collide.
+      if (typeof win.ResizeObserver === 'function') {
+        state.textObserver = new win.ResizeObserver(function () {
+          if (!isNarrow() && coversText()) scatter();
+        });
+        state.textObserver.observe(contentNode);
+      }
     }
+    /**
+     * The satellites' switches — the master `widgets` setting and one flag per satellite,
+     * live.
+     *
+     * Every host reaches this through the same configuration fields, so the five switches
+     * in the macOS popover, in the Windows window, in Lively and in Wallpaper Engine, plus
+     * `?widgets=false` / `?music=false` and `DynaWall.setWidgetsEnabled()` /
+     * `DynaWall.setWidgetEnabled()`, all land here. A satellite that is off is `hidden`:
+     * it is never placed, never measured, never reported as clickable and its card cannot
+     * be opened, which is what hands that corner of the desktop back to the Finder.
+     *
+     * The remaining satellites are dealt again whenever the set changes — the ring is
+     * sized for the set on screen, so a hidden one closes a gap instead of leaving one.
+     *
+     * Returns the master switch in force.
+     */
+    function applyConfig(next) {
+      const source = next || {};
+      const master = source.widgets !== false;
+      let changed = master !== state.enabled;
+      state.enabled = master;
+
+      const root = doc.documentElement;
+      if (root && root.classList) {
+        if (master) root.classList.remove('is-widgets-off');
+        else root.classList.add('is-widgets-off');
+      }
+
+      buttons.forEach(function (button) {
+        const id = button.getAttribute('data-widget') || '';
+        // A satellite this build has no setting for (a page that added one of its own)
+        // follows the master switch instead of disappearing for good.
+        const field = ownLookup(WIDGET_FIELDS, id);
+        const visible = master && (field ? source[field] !== false : true);
+        if (button.hidden !== !visible) {
+          button.hidden = !visible;
+          changed = true;
+        }
+        // A card whose satellite just left the desktop has nothing to go back to.
+        if (!visible && state.activeId === id) closeWidget();
+      });
+
+      // Before the first deal there is nothing to re-deal: creation scatters once at the
+      // end, with the visibility above already in place.
+      if (!changed || !state.started) return state.enabled;
+
+      if (master) {
+        scatter();
+      } else {
+        if (state.activeId) closeWidget();
+        scheduleHitRegions();
+      }
+      return state.enabled;
+    }
+
     scheduleHitRegions();
 
     return {
@@ -3192,6 +3779,17 @@
       activeId: function () {
         return state.activeId;
       },
+      /** Whether the satellites are on the desktop right now. */
+      enabled: function () {
+        return state.enabled;
+      },
+      /** The satellites on the desktop right now, by id. */
+      visibleIds: function () {
+        return visibleButtons().map(function (button) {
+          return button.getAttribute('data-widget') || '';
+        });
+      },
+      applyConfig: applyConfig,
       open: openWidget,
       close: closeWidget,
       clickAt: clickAt
@@ -3260,9 +3858,16 @@
        pure half of every provider — URL building and payload parsing — so the
        headless tests can check them without a DOM or a network. */
     WIDGETS: WIDGETS,
+    /** Satellite id → the configuration field that shows or hides it. */
+    WIDGET_FIELDS: WIDGET_FIELDS,
+    /** The five widget settings: the master switch plus one flag per satellite. */
+    WIDGET_SETTING_FIELDS: WIDGET_SETTING_FIELDS,
     WIDGET_FETCH_HOSTS: WIDGET_FETCH_HOSTS,
     WIDGET_LINK_HOSTS: WIDGET_LINK_HOSTS,
     WIDGET_REMOTE_HOSTS: WIDGET_REMOTE_HOSTS,
+    WIDGET_NARROW_QUERY: WIDGET_NARROW_QUERY,
+    scatterWidgets: scatterWidgets,
+    createRandom: createRandom,
     WEATHER_FRESH_MS: WEATHER_FRESH_MS,
     WMO_CONDITIONS: WMO_CONDITIONS,
     MUSIC_STATIONS: MUSIC_STATIONS,
@@ -3301,6 +3906,50 @@
       return widgetsRef ? widgetsRef.close() : false;
     },
     /**
+     * Turn all four desktop satellites on or off, exactly like the host's master switch.
+     *
+     * The value travels through the same update path a Lively/Wallpaper Engine property
+     * takes, so it is cached in `localStorage` and both the page and the widget
+     * controller agree on it afterwards. Returns the state now in force.
+     */
+    setWidgetsEnabled: function (enabled) {
+      const value = enabled !== false;
+      if (appRef) {
+        appRef.applyUpdates([{ field: 'widgets', value: value }]);
+      } else if (widgetsRef) {
+        const config = {};
+        config.widgets = value;
+        widgetsRef.applyConfig(config);
+      }
+      return widgetsRef ? widgetsRef.enabled() : false;
+    },
+    /**
+     * Turn one satellite on or off: `DynaWall.setWidgetEnabled('youtube', false)`.
+     *
+     * `id` is a `WIDGETS` id (`music`, `news`, `youtube`, `weather`); an unknown id is
+     * refused rather than silently cached. Returns whether that satellite is now on the
+     * desktop.
+     */
+    setWidgetEnabled: function (id, enabled) {
+      const field = ownLookup(WIDGET_FIELDS, id);
+      if (!field) return false;
+      const value = enabled !== false;
+      if (appRef) {
+        appRef.applyUpdates([{ field: field, value: value }]);
+      }
+      if (!widgetsRef) return false;
+      const ids = widgetsRef.visibleIds();
+      return ids.indexOf(id) !== -1;
+    },
+    /** `true` while the satellites are on the desktop. */
+    widgetsEnabled: function () {
+      return widgetsRef ? widgetsRef.enabled() : false;
+    },
+    /** The satellites on the desktop right now, by id. */
+    enabledWidgets: function () {
+      return widgetsRef ? widgetsRef.visibleIds() : [];
+    },
+    /**
      * The host's way in: replay a click at viewport CSS pixels (`x`, `y`).
      *
      * Both desktop hosts keep the wallpaper click-through — the desktop owns the
@@ -3331,9 +3980,11 @@
 
       // The satellites are wired after the wallpaper itself is running: a card must
       // never be able to stop the greeting, so a failure here leaves a perfectly
-      // good wallpaper with four inert buttons instead of a blank screen.
+      // good wallpaper with four inert buttons instead of a blank screen. They start
+      // in the state the configuration asked for: the master switch and the four
+      // per-satellite flags decide what is placed, drifted and reported as clickable.
       try {
-        widgetsRef = createWidgets(window, document);
+        widgetsRef = createWidgets(window, document, { config: app.state.config });
       } catch (error) {
         widgetsRef = null;
       }

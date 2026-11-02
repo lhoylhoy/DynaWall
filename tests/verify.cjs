@@ -42,6 +42,11 @@ function readJson(fileName) {
   return JSON.parse(fs.readFileSync(path.join(ROOT, fileName), 'utf8'));
 }
 
+/** Reads a text file with LF endings, so CRLF checkouts (Windows CI) still match. */
+function readText(fileName) {
+  return fs.readFileSync(path.join(ROOT, fileName), 'utf8').replace(/\r\n/g, '\n');
+}
+
 /** Deterministic local date used by the time-based assertions. */
 function at(hours, minutes) {
   return new Date(2026, 0, 15, hours, minutes, 30);
@@ -1815,7 +1820,7 @@ test('the Windows installer is per-user and ships the curated wallpapers', () =>
 });
 
 test('the release workflow keeps installers downloadable', () => {
-  const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8');
+  const workflow = readText('.github/workflows/release.yml');
   assert.ok(
     workflow.includes('    branches:\n      - main'),
     'main must refresh the nightly build'
@@ -1836,7 +1841,7 @@ test('the release workflow keeps installers downloadable', () => {
   assert.match(workflow, /gh release upload "\$TAG" dist\/\* --clobber/);
 
   // The README points at those releases, so GitHub is the download page.
-  const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+  const readme = readText('README.md');
   [
     '../../releases/latest/download/DynaWall.dmg',
     '../../releases/latest/download/DynaWall-Setup.exe',

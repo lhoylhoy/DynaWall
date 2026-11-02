@@ -17,18 +17,19 @@ behind the desktop icons. See [macOS app](#macos-app-native) and [Windows app](#
 
 ## Download
 
-Installers are attached to [GitHub Releases](../../releases) — there is nothing to build:
+Installers are attached to [GitHub Releases](../../releases) — there is nothing to build. The left column is
+always the newest successful build:
 
-| Platform | Stable release | Newest build |
+| Platform | Download now | Tagged release |
 | --- | --- | --- |
-| macOS 12+ (Apple silicon) | [DynaWall.dmg](../../releases/latest/download/DynaWall.dmg) | [DynaWall.dmg](../../releases/download/nightly/DynaWall.dmg) |
-| Windows 10 1809+ / 11 (x64) | [DynaWall-Setup.exe](../../releases/latest/download/DynaWall-Setup.exe) · [portable zip](../../releases/latest/download/DynaWall-Windows-Portable.zip) | [DynaWall-Setup.exe](../../releases/download/nightly/DynaWall-Setup.exe) · [portable zip](../../releases/download/nightly/DynaWall-Windows-Portable.zip) |
+| macOS 12+ (Apple silicon) | [DynaWall.dmg](../../releases/download/nightly/DynaWall.dmg) | [DynaWall.dmg](../../releases/latest/download/DynaWall.dmg) |
+| Windows 10 1809+ / 11 (x64) | [DynaWall-Setup.exe](../../releases/download/nightly/DynaWall-Setup.exe) · [portable zip](../../releases/download/nightly/DynaWall-Windows-Portable.zip) | [DynaWall-Setup.exe](../../releases/latest/download/DynaWall-Setup.exe) · [portable zip](../../releases/latest/download/DynaWall-Windows-Portable.zip) |
 
-The **stable** links always resolve to the newest `v*` release, so they start working with the first tagged
-release. The **newest build** links are refreshed on every push to `main`, so from the first commit they
-already carry the latest fixes. Nothing is code-signed: macOS needs **right-click → Open** once, and Windows
-may show SmartScreen (**More info → Run anyway**). The DMG is built on the Apple silicon runner; on an Intel
-Mac run `./build-macos.sh` (see [macOS app](#macos-app-native)).
+The **download now** links are refreshed on every push to `main`, so they carry the latest fixes from the
+first commit. The **tagged release** links always resolve to the newest `v*` release and start working with
+the first tag. Nothing is code-signed: macOS needs **right-click → Open** once, and Windows may show
+SmartScreen (**More info → Run anyway**). The DMG is built on the Apple silicon runner; on an Intel Mac run
+`./build-macos.sh` (see [macOS app](#macos-app-native)).
 
 ### Installing it
 

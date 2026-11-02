@@ -5,9 +5,21 @@
  *
  * Configuration priority (highest wins):
  *   1. Lively / Wallpaper Engine IPC  (livelyPropertyListener / wallpaperPropertyListener)
- *   2. URL query parameters           (?name=Alex&slideshow=true&photos=a.jpg,b.jpg)
- *   3. localStorage cache             (dynawall.firstName, dynawall.slideshow, ...)
- *   4. Built-in defaults              (firstName: "Developer", slideshow: false)
+ *   2. Host seed at document start    (window.__dynawallSeed, written by the macOS app)
+ *   3. URL query parameters           (?name=Alex&slideshow=true&photos=a.jpg,b.jpg)
+ *   4. localStorage cache             (dynawall.firstName, dynawall.slideshow, ...)
+ *   5. Built-in defaults              (firstName: "Developer", slideshow: false)
+ *
+ * A host control cleared to `''` is a reset, not silence: an empty `firstName`
+ * from live IPC resolves to `DEFAULT_CONFIG.firstName`, so deleting the name
+ * character by character clears the desktop instead of leaving the last letter
+ * stuck. Empty URL parameters, cache entries and seeds stay "said nothing", since
+ * they are re-read on every load and cannot express a live edit.
+ *
+ * The seed is the host's own snapshot of its settings, injected as a `WKUserScript`
+ * at `.atDocumentStart`: the first paint is already the user's wallpaper instead of
+ * the built-in copy, so there is nothing to cross-fade (and nothing to flash) while
+ * the window fades in. Live IPC still outranks it, exactly like every other host.
  *
  * Photo sources follow the same rule, except `photos` is never cached: a host
  * (the macOS app) hands the page its resolved list on every load and the page
@@ -17,14 +29,24 @@
  * rotates through photos whose filename names the band active right now —
  * dawn/day/dusk/night, or the palette pinned in the host — so the picture on the
  * desktop matches the light outside. Crossing a band edge (clock or popover)
- * restarts the rotation on the new band's photos and cross-fades to them;
- * `nextPhoto` skips ahead on demand.
+ * restarts the rotation on the new band's photos and cross-fades to them. The
+ * automatic timer stays inside that band even when it holds a single picture;
+ * `nextPhoto` (the menu bar button, a host action) may cross into the rest of the
+ * library so an on-demand skip is never a dead button.
  *
  * Time awareness: the greeting period (morning/afternoon/evening) and the palette
- * (dawn/day/dusk/night) are both read from the same clock and re-evaluated
- * together every 30 s, on wake and on focus. `theme` pins a single palette
- * instead of following the clock, and a background colour set by hand pins
- * `custom` — unless the same source names a theme.
+ * (dawn/day/dusk/night) are both read from the same clock. Nothing can change
+ * between the six hours the page cares about (05 / 09 / 12 / 17 / 18 / 21), so
+ * instead of polling every 30 s the page arms one one-shot timer for the exact next
+ * boundary — six wakeups a day instead of 2,880 — and re-checks on wake and focus.
+ * `theme` pins a single palette instead of following the clock, and a background
+ * colour set by hand pins `custom` — unless the same source names a theme.
+ *
+ * Suspension: `setSuspended(true)` — from `livelyPropertyListener('suspend', …)`,
+ * `DynaWall.setSuspended(...)` or `document.visibilitychange` — parks the clock and
+ * slideshow timers and puts `html.is-suspended` on the document, which pauses the
+ * Ken Burns drift in CSS. An occluded desktop, a sleeping display and a locked
+ * session therefore all settle at 0 FPS and zero timer wakeups.
  */
 (function (global) {
   'use strict';
@@ -107,6 +129,18 @@
   const THEME_MODES = Object.freeze(['auto', 'dawn', 'day', 'dusk', 'night', 'custom']);
   /** The clock-driven bands, in the order a day passes through them. */
   const THEMES = Object.freeze(['dawn', 'day', 'dusk', 'night']);
+  /**
+   * Background colour per band. Mirrors the `--bg-primary` token of each
+   * `[data-theme]` block in style.css and `ThemeSlot.hex` in the macOS host.
+   * `applyTheme()` reads this instead of `getComputedStyle(<html>)`, which forced a
+   * synchronous style recalculation every time the palette moved.
+   */
+  const THEME_BG_HEX = Object.freeze({
+    dawn: '#121020',
+    day: '#0d1117',
+    dusk: '#180f0e',
+    night: '#070a11'
+  });
   /** Shorthands people type in a URL; all mean "follow the clock". */
   const THEME_ALIASES = Object.freeze({ time: 'auto', clock: 'auto', dynamic: 'auto' });
 
@@ -147,8 +181,19 @@
     night: Object.freeze(['dusk', 'dawn', 'day'])
   });
 
-  /** How often the clock is re-read: greeting period and palette (30 seconds). */
+  /**
+   * The historical polling cadence, still exported (and asserted by the tests) as
+   * the documented cadence of the clock. Scheduling is exact now — one one-shot
+   * timer per boundary — so this value is only the fallback used when a boundary
+   * cannot be computed; it is deliberately not a repeating interval any more.
+   */
   const CLOCK_REFRESH_MS = 30 * 1000;
+  /**
+   * Every local hour at which something the clock owns changes: 05:00 and 21:00
+   * move the palette, 12:00 and 18:00 move the greeting, and 09:00/17:00 move both.
+   * Keep in sync with `getThemeSlot()` / `getGreetingPeriod()` below.
+   */
+  const CLOCK_BOUNDARY_HOURS = Object.freeze([5, 9, 12, 17, 18, 21]);
   /** Ignore the focus event that arrives with the initial page load. */
   const FOCUS_GRACE_MS = 5000;
   /** Keep in sync with --text-fade-duration in style.css. */
@@ -188,6 +233,41 @@
     if (hours >= 9 && hours < 17) return 'day';
     if (hours >= 17 && hours < 21) return 'dusk';
     return 'night';
+  }
+
+  /**
+   * Milliseconds from `date` (default: now) to the next clock boundary.
+   *
+   * The greeting and the palette can only change at the six hours in
+   * CLOCK_BOUNDARY_HOURS, so this is the exact sleep a one-shot timer needs —
+   * between 05:00 and 09:00 there is nothing to poll for. `date` is an argument
+   * (rather than an implicit `new Date()`) so the boundary maths is testable
+   * without freezing the clock.
+   *
+   * Boundaries are built from local date components, never by adding milliseconds,
+   * so a DST switch resolves through `Date` instead of drifting the timer by an
+   * hour. A boundary that is exactly now counts as gone: the state it produces is
+   * already applied, so the timer targets the following one.
+   */
+  function msUntilNextClockBoundary(date) {
+    const now = date instanceof Date ? date : new Date();
+    const current = now.getTime();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const day = now.getDate();
+    let wait = Infinity;
+
+    for (let index = 0; index < CLOCK_BOUNDARY_HOURS.length; index += 1) {
+      const hours = CLOCK_BOUNDARY_HOURS[index];
+      let target = new Date(year, month, day, hours, 0, 0, 0).getTime();
+      if (target <= current) {
+        target = new Date(year, month, day + 1, hours, 0, 0, 0).getTime();
+      }
+      if (target - current < wait) wait = target - current;
+    }
+
+    // Defensive: a host with a broken Date must still refresh eventually.
+    return Number.isFinite(wait) && wait > 0 ? wait : CLOCK_REFRESH_MS;
   }
 
   /* ----------------------------------------------------------------------- *
@@ -315,15 +395,22 @@
 
     if (!Array.isArray(raw)) return undefined;
 
+    // A Set keeps the de-duplication at O(N); scanning the output with
+    // `indexOf()` for every entry made a long folder O(N²) on every host push.
     const photos = [];
-    raw.forEach((entry) => {
-      if (typeof entry !== 'string') return;
+    const seen = new Set();
+    for (let index = 0; index < raw.length; index += 1) {
+      const entry = raw[index];
+      if (typeof entry !== 'string') continue;
       const url = entry.trim();
-      if (!url || /\s/.test(url) || /^javascript:/i.test(url)) return;
-      if (photos.indexOf(url) === -1) photos.push(url);
-    });
+      if (!url || /\s/.test(url) || /^javascript:/i.test(url)) continue;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      photos.push(url);
+      if (photos.length >= MAX_PHOTOS) break;
+    }
 
-    return photos.slice(0, MAX_PHOTOS);
+    return photos;
   }
 
   /* ----------------------------------------------------------------------- *
@@ -357,6 +444,38 @@
     );
   }
 
+  /** An empty four-band bucket set. */
+  function emptyBuckets() {
+    const buckets = {};
+    THEMES.forEach((band) => {
+      buckets[band] = [];
+    });
+    return buckets;
+  }
+
+  /** Bucket sets are handed out as copies, so a caller can never poison the cache. */
+  function cloneBuckets(buckets) {
+    const copy = {};
+    THEMES.forEach((band) => {
+      copy[band] = buckets[band].slice();
+    });
+    return copy;
+  }
+
+  /**
+   * Last photo list seen, keyed by array reference, plus a cheap guard for a list
+   * that was edited in place. `activePhotoSources()` classifies on every render
+   * *and* on every slideshow signature check, so re-parsing (substring matching
+   * and `decodeURIComponent` for each URL) several times per render is pure waste.
+   */
+  const classifyCache = new WeakMap();
+
+  function photoListGuard(photos) {
+    const first = typeof photos[0] === 'string' ? photos[0] : '';
+    const last = typeof photos[photos.length - 1] === 'string' ? photos[photos.length - 1] : '';
+    return `${photos.length}\u0000${first}\u0000${last}`;
+  }
+
   /**
    * Bucket a photo list into the four bands, keeping library order.
    *
@@ -367,12 +486,13 @@
    * hour a wallpaper instead of an empty screen.
    */
   function classifyPhotos(photos) {
-    const buckets = {};
-    THEMES.forEach((band) => {
-      buckets[band] = [];
-    });
-    if (!Array.isArray(photos)) return buckets;
+    if (!Array.isArray(photos)) return emptyBuckets();
 
+    const guard = photoListGuard(photos);
+    const cached = classifyCache.get(photos);
+    if (cached && cached.guard === guard) return cloneBuckets(cached.buckets);
+
+    const buckets = emptyBuckets();
     const list = photos.filter((photo) => typeof photo === 'string' && photo !== '');
     const hasDayPhoto = list.some(
       (photo) => photoBandsInName(photoBasename(photo)).indexOf('day') !== -1
@@ -394,7 +514,8 @@
       untagged += 1;
     });
 
-    return buckets;
+    classifyCache.set(photos, { guard: guard, buckets: buckets });
+    return cloneBuckets(buckets);
   }
 
   /**
@@ -463,6 +584,26 @@
       default:
         return undefined;
     }
+  }
+
+  /**
+   * The value a *live* host control should apply.
+   *
+   * An empty URL parameter, an empty cache entry or a hand-edited seed means "this
+   * source said nothing", so `normalizeFieldValue` returning `undefined` is right
+   * to leave that layer out. A live control is different: clearing the name field
+   * sends one event per deleted character, and dropping the final `''` left the
+   * last letter stuck on the desktop — and in `localStorage`, so it survived a
+   * reload. An explicit empty string therefore resets the name to
+   * `DEFAULT_CONFIG.firstName`; anything that is not a string is still ignored.
+   */
+  function resolveIpcFieldValue(field, rawValue) {
+    const value = normalizeFieldValue(field, rawValue);
+    if (value !== undefined) return value;
+    if (field === 'firstName' && typeof rawValue === 'string') {
+      return DEFAULT_CONFIG.firstName;
+    }
+    return undefined;
   }
 
   function firstDefined(candidates) {
@@ -577,16 +718,41 @@
     });
   }
 
-  /** Merge the four layers: IPC → URL → localStorage → defaults. */
+  /**
+   * The host's at-document-start snapshot (`window.__dynawallSeed`), normalised
+   * exactly like an IPC value so a hand-edited seed cannot paint an invalid name,
+   * colour or photo list. The macOS app writes it with a `WKUserScript` before the
+   * page parses, which is what lets the very first frame be the user's wallpaper.
+   */
+  function readSeed(win) {
+    const seed = win && win.__dynawallSeed;
+    if (!seed || typeof seed !== 'object') return {};
+    const config = {};
+    Object.keys(DEFAULT_CONFIG).forEach((field) => {
+      if (!Object.prototype.hasOwnProperty.call(seed, field)) return;
+      const value = normalizeFieldValue(field, seed[field]);
+      if (value !== undefined) config[field] = value;
+    });
+    return config;
+  }
+
+  /** Merge the five layers: IPC → host seed → URL → localStorage → defaults. */
   function resolveConfig(layers) {
     const ipc = (layers && layers.ipc) || {};
+    const seed = (layers && layers.seed) || {};
     const url = (layers && layers.url) || {};
     const storage = (layers && layers.storage) || {};
     const defaults = (layers && layers.defaults) || DEFAULT_CONFIG;
 
     const config = {};
     Object.keys(DEFAULT_CONFIG).forEach((field) => {
-      const resolved = firstDefined([ipc[field], url[field], storage[field], defaults[field]]);
+      const resolved = firstDefined([
+        ipc[field],
+        seed[field],
+        url[field],
+        storage[field],
+        defaults[field]
+      ]);
       config[field] = resolved === undefined ? DEFAULT_CONFIG[field] : resolved;
     });
 
@@ -594,8 +760,13 @@
     // override, so the palette stops following the clock instead of silently
     // discarding the colour. Naming a theme in the same source wins, which is how
     // a host asks for a palette and still keeps a colour for `custom`.
-    const explicitTheme = firstDefined([ipc.theme, url.theme, storage.theme]);
-    const explicitColor = firstDefined([ipc.bgColor, url.bgColor, storage.bgColor]);
+    const explicitTheme = firstDefined([ipc.theme, seed.theme, url.theme, storage.theme]);
+    const explicitColor = firstDefined([
+      ipc.bgColor,
+      seed.bgColor,
+      url.bgColor,
+      storage.bgColor
+    ]);
     if (explicitTheme === undefined && explicitColor !== undefined) {
       config.theme = 'custom';
     }
@@ -608,7 +779,7 @@
     if (typeof name !== 'string') return null;
     const field = ownLookup(LIVELY_FIELDS, name.trim());
     if (!field) return null;
-    const value = normalizeFieldValue(field, rawValue);
+    const value = resolveIpcFieldValue(field, rawValue);
     return value === undefined ? null : { field: field, value: value };
   }
 
@@ -622,7 +793,7 @@
       if (!field) return;
       const entry = properties[key];
       const raw = entry && typeof entry === 'object' ? entry.value : entry;
-      const value = normalizeFieldValue(field, raw);
+      const value = resolveIpcFieldValue(field, raw);
       if (value !== undefined) updates.push({ field: field, value: value });
     });
 
@@ -659,6 +830,8 @@
     const state = {
       config: resolveConfig({
         ipc: {},
+        // Injected by a host (the macOS app) before the document was parsed.
+        seed: readSeed(win),
         url: parseQueryParams(win.location ? win.location.search : ''),
         storage: readStoredConfig(storage),
         defaults: DEFAULT_CONFIG
@@ -668,6 +841,11 @@
       renderedGreeting: '',
       greetingTimeout: 0,
       pendingGreeting: null,
+      // One-shot timer for the next clock boundary (not a 30 s poll).
+      clockTimer: 0,
+      // `true` while the wallpaper asked to stand still, or the page is hidden.
+      suspended: false,
+      hostSuspended: false,
       photoIndex: -1,
       photoLayer: 0,
       // The pool the photo on screen came from: a band's list, or the whole library.
@@ -713,10 +891,12 @@
       state.theme = theme;
 
       if (elements.themeColor) {
-        // Read the target from the custom property rather than the painted colour:
-        // during the cross-fade the painted value is still the previous band, and
-        // the browser chrome tint should never lag a whole transition behind.
-        const target = win.getComputedStyle(root).getPropertyValue('--bg-primary').trim();
+        // The target colour is looked up in a constant instead of read back with
+        // `getComputedStyle(root).getPropertyValue('--bg-primary')`: that read
+        // forced a synchronous style recalculation on <html> every single time the
+        // palette moved. `custom` is the one mode that rewrites the token inline,
+        // so its colour comes straight from the configuration.
+        const target = theme === 'custom' ? state.config.bgColor : THEME_BG_HEX[theme];
         if (target) elements.themeColor.setAttribute('content', target);
       }
     }
@@ -845,10 +1025,17 @@
         return token !== state.photoToken;
       };
 
+      // Removing `.is-ken-burns` and adding it again in the same task does not
+      // restart a CSS animation; the reflow does. It is only needed when the drift
+      // was actually running on this layer, though — a fresh layer starts at frame
+      // 0 anyway, and `offsetWidth` forces a synchronous layout, so asking for it
+      // unconditionally is a wasted layout on every single slide.
+      const wasDrifting = layer.classList.contains('is-ken-burns');
       layer.classList.remove('is-visible', 'is-ken-burns');
       layer.style.removeProperty('--photo-duration');
-      void layer.offsetWidth; // restart the drift from its first frame
-      if (state.config.kenBurns && !prefersReducedMotion()) {
+      const drift = Boolean(state.config.kenBurns) && !prefersReducedMotion();
+      if (wasDrifting && drift) void layer.offsetWidth; // restart from the first frame
+      if (drift) {
         layer.style.setProperty('--photo-duration', `${slideshowIntervalMs() + PHOTO_FADE_MS}ms`);
         layer.classList.add('is-ken-burns');
       }
@@ -906,14 +1093,29 @@
 
     function scheduleSlide(delay) {
       win.clearTimeout(state.photoTimer);
+      state.photoTimer = 0;
+      // An occluded or sleeping desktop must not rotate photos: only a short retry
+      // for a photo that failed to decode is allowed through, because it is bounded
+      // by the list length and would otherwise park a blank layer until resume.
+      if (state.suspended && typeof delay !== 'number') return;
       const wait = typeof delay === 'number' ? delay : slideshowIntervalMs();
       state.photoTimer = win.setTimeout(advancePhoto, wait);
     }
 
+    /**
+     * The automatic tick: stay inside the active band.
+     *
+     * `photoSync` means "show the light that is outside right now", so the timer
+     * (and the wake/focus handler) must never fall back to the whole library just
+     * because the band holds one photo — that would put a Night picture on screen
+     * at noon after a single interval. When the band already has its only photo on
+     * screen there is nothing to advance to, so the spare layer is left alone too.
+     */
     function advancePhoto() {
       if (!state.config.slideshow) return false;
-      const pool = nextPhotoPool();
+      const pool = activePhotoSources();
       if (pool.length === 0) return false;
+      if (pool.length === 1 && state.photoPool[state.photoIndex] === pool[0]) return false;
       paintPhoto(nextPhotoIndexFor(pool), pool);
       scheduleSlide(); // a manual skip earns a full interval as well
       return true;
@@ -922,10 +1124,19 @@
     /**
      * Skip to the next photo right away — the menu bar "Next photo" button,
      * `livelyPropertyListener('nextPhoto', true)` and `DynaWall.nextPhoto()`.
-     * Same step the timer takes, just now, and the timer restarts from here.
+     *
+     * Unlike the timer this may leave the active band when the band holds only the
+     * photo already on screen: a button that visibly does nothing would be worse
+     * than one that crosses into another time of day on request. The timer restarts
+     * from here, and the next band change returns to the synced pool.
      */
     function nextPhoto() {
-      return advancePhoto();
+      if (!state.config.slideshow) return false;
+      const pool = nextPhotoPool();
+      if (pool.length === 0) return false;
+      paintPhoto(nextPhotoIndexFor(pool), pool);
+      scheduleSlide();
+      return true;
     }
 
     function clearPhotos() {
@@ -974,6 +1185,77 @@
       const start = state.config.slideshowShuffle ? Math.floor(Math.random() * sources.length) : 0;
       paintPhoto(start, sources);
       scheduleSlide();
+    }
+
+    /* --------------------------------------------------------------------- *
+     * Clock scheduling & suspension
+     * ---------------------------------------------------------------------- */
+
+    /**
+     * Arm the one-shot timer for the next clock boundary.
+     *
+     * `syncClock()` is cheap, but waking the JS thread 2,880 times a day to
+     * discover that 05:00 is still hours away is not: the timer sleeps for exactly
+     * `msUntilNextClockBoundary()`. On a suspend/resume or a wake the caller
+     * resyncs and re-arms, so a throttled background timer can never leave the
+     * wallpaper on a stale band.
+     */
+    function scheduleClock(delay) {
+      win.clearTimeout(state.clockTimer);
+      state.clockTimer = 0;
+      if (state.suspended) return;
+
+      const wait = typeof delay === 'number' && delay >= 0 ? delay : msUntilNextClockBoundary();
+      state.clockTimer = win.setTimeout(function () {
+        state.clockTimer = 0;
+        if (state.suspended) return;
+        syncClock();
+        scheduleClock();
+      }, wait);
+    }
+
+    /** Parked while the host asked for it, or while the page is not being shown. */
+    function shouldSuspend() {
+      return state.hostSuspended || doc.visibilityState === 'hidden';
+    }
+
+    /**
+     * Apply the suspension state: park the clock and slideshow timers and let CSS
+     * pause the Ken Burns drift (`html.is-suspended`), or resume and resync
+     * everything the clock owns. Idempotent, so a host may repeat itself freely.
+     */
+    function applySuspension() {
+      const suspended = shouldSuspend();
+      if (suspended === state.suspended) return state.suspended;
+      state.suspended = suspended;
+
+      const root = doc.documentElement;
+      if (suspended) {
+        win.clearTimeout(state.clockTimer);
+        win.clearTimeout(state.photoTimer);
+        state.clockTimer = 0;
+        state.photoTimer = 0;
+        root.classList.add('is-suspended');
+        return true;
+      }
+
+      root.classList.remove('is-suspended');
+      // Whatever happened while we were parked (a band edge, a new day, a folder
+      // dropped on the desktop) lands in one visible tick.
+      syncClock();
+      scheduleClock();
+      if (state.config.slideshow) scheduleSlide();
+      return false;
+    }
+
+    /**
+     * Host / page control: `livelyPropertyListener('suspend', true)`,
+     * `DynaWall.setSuspended(true)` and `document.visibilitychange` all land here.
+     * Returns the state that applies right now.
+     */
+    function setSuspended(paused) {
+      state.hostSuspended = Boolean(paused);
+      return applySuspension();
     }
 
     function render(options) {
@@ -1075,16 +1357,19 @@
       render({ animate: false });
       playEntrance();
 
-      win.setInterval(syncClock, CLOCK_REFRESH_MS);
+      // A suspended start (an occluded desktop, a sleeping display) must not arm
+      // anything; the host's request may even have arrived before the app existed.
+      applySuspension();
+      scheduleClock();
 
-      // Timers throttle while hidden; resync as soon as the wallpaper is back.
-      doc.addEventListener('visibilitychange', function () {
-        if (doc.visibilityState !== 'visible') return;
-        syncClock();
-      });
+      // Timers throttle while hidden, and an occluded desktop should not animate at
+      // all: park everything on the way out and resync on the way back in.
+      doc.addEventListener('visibilitychange', applySuspension);
 
       win.addEventListener('focus', function () {
+        if (state.suspended) return;
         syncClock();
+        scheduleClock();
         // Like a phone coming back to life: a fresh photo after sleep or resume.
         // The focus that lands with the initial page load is not a "resume".
         if (new Date().getTime() - startedAt > FOCUS_GRACE_MS) advancePhoto();
@@ -1096,6 +1381,7 @@
       render: render,
       start: start,
       applyUpdates: applyUpdates,
+      setSuspended: setSuspended,
       checkGreetingPeriod: checkGreetingPeriod,
       checkTheme: checkTheme,
       syncClock: syncClock,
@@ -1115,10 +1401,28 @@
    * configuration (and never gets cached in localStorage).
    */
   const LIVELY_ACTIONS = Object.freeze({ nextPhoto: 'nextPhoto' });
+  /**
+   * The live "stand still / carry on" flag hosts send around occlusion, display
+   * sleep, a locked session or the menu bar's Pause button. Also not a setting.
+   */
+  const LIVELY_SUSPEND = 'suspend';
 
   let appRef = null;
   const pendingUpdates = [];
   const pendingActions = [];
+  /** A host may suspend the wallpaper before the app exists (document-start). */
+  let pendingSuspended = null;
+
+  /**
+   * Host / page control for suspension. Before the app exists the request is
+   * parked, so an occluded, sleeping or locked start still boots at 0 FPS.
+   */
+  function setSuspended(paused) {
+    const next = Boolean(paused);
+    if (appRef) return appRef.setSuspended(next);
+    pendingSuspended = next;
+    return next;
+  }
 
   /** Feed host updates into the app, or queue them until it is ready. */
   function deliver(updates) {
@@ -1152,6 +1456,13 @@
         runAction(name.trim());
         return;
       }
+      // The suspension flag is also momentary: it must never be cached, and an
+      // occluded desktop must be able to drop to 0 FPS before the app exists.
+      if (typeof name === 'string' && name.trim().toLowerCase() === LIVELY_SUSPEND) {
+        const paused = parseBoolean(value);
+        if (paused !== undefined) setSuspended(paused);
+        return;
+      }
       const update = mapLivelyProperty(name, value);
       if (update) deliver([update]);
     };
@@ -1176,14 +1487,18 @@
     ABSTRACT_PHOTOS: ABSTRACT_PHOTOS,
     THEMES: THEMES,
     THEME_MODES: THEME_MODES,
+    THEME_BG_HEX: THEME_BG_HEX,
     CLOCK_REFRESH_MS: CLOCK_REFRESH_MS,
+    CLOCK_BOUNDARY_HOURS: CLOCK_BOUNDARY_HOURS,
     /** Alias kept for hosts and scripts written before the palette existed. */
     GREETING_REFRESH_MS: CLOCK_REFRESH_MS,
     TEXT_FADE_MS: TEXT_FADE_MS,
     PHOTO_FADE_MS: PHOTO_FADE_MS,
     LIVELY_ACTIONS: LIVELY_ACTIONS,
+    LIVELY_SUSPEND: LIVELY_SUSPEND,
     getGreetingPeriod: getGreetingPeriod,
     getThemeSlot: getThemeSlot,
+    msUntilNextClockBoundary: msUntilNextClockBoundary,
     buildGreeting: buildGreeting,
     normalizeName: normalizeName,
     parseBoolean: parseBoolean,
@@ -1200,9 +1515,14 @@
     nextPhoto: function () {
       return runAction(LIVELY_ACTIONS.nextPhoto);
     },
+    /** Park or restore every timer/animation (occlusion, sleep, lock, Pause). */
+    setSuspended: function (paused) {
+      return setSuspended(paused);
+    },
     normalizePhotos: normalizePhotos,
     parseQueryParams: parseQueryParams,
     readStoredConfig: readStoredConfig,
+    readSeed: readSeed,
     persistConfig: persistConfig,
     resolveConfig: resolveConfig,
     mapLivelyProperty: mapLivelyProperty,
@@ -1226,6 +1546,18 @@
       appRef = app;
       installBridges(window);
 
+      // The seed is folded into the configuration above; drop the global so the
+      // snapshot does not sit in the heap for the lifetime of the wallpaper.
+      try {
+        delete window.__dynawallSeed;
+      } catch (error) {
+        window.__dynawallSeed = undefined;
+      }
+
+      if (pendingSuspended !== null) {
+        app.setSuspended(pendingSuspended);
+        pendingSuspended = null;
+      }
       if (pendingUpdates.length > 0) {
         app.applyUpdates(pendingUpdates.splice(0, pendingUpdates.length));
       }

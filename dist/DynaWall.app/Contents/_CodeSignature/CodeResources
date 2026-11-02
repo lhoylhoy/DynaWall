@@ -6,7 +6,7 @@
 	<dict>
 		<key>Resources/AppIcon.icns</key>
 		<data>
-		qfGG8OFRXz/OtLSEwfK41QUdEZs=
+		nQFCQhQmvMOH1+daDcmGb8HMtUQ=
 		</data>
 		<key>Resources/assets/fonts/OFL-Outfit.txt</key>
 		<data>
@@ -16,9 +16,13 @@
 		<data>
 		vbokPg/nituvGY2eESJMoFSkJCs=
 		</data>
-		<key>Resources/images/.DS_Store</key>
+		<key>Resources/assets/fonts/outfit-regular.ttf</key>
 		<data>
-		3y++sUAKzaCQmjLBz2v0kvESHgc=
+		7e7S1qRsURyE6UIPmPH6SCqoDn8=
+		</data>
+		<key>Resources/assets/fonts/outfit-semibold.ttf</key>
+		<data>
+		upK6q7GtZ+eBEKAtc6JL45KlT7Y=
 		</data>
 		<key>Resources/images/01-neon-dusk.jpg</key>
 		<data>
@@ -60,18 +64,6 @@
 		<data>
 		Pcvv4Yr8AfPVaNvFNuVdl82f/mE=
 		</data>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-4K-Dark.jpg</key>
-		<data>
-		BGmXujMkXADxfFlUt6FJXnCkaVI=
-		</data>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-4K-Light.jpg</key>
-		<data>
-		lcJAAUXoPzvnZx00/9yxJ5xbb8E=
-		</data>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-4K.jpg</key>
-		<data>
-		S5wpWlqWORWOMWRrD7Iozy8syQo=
-		</data>
 		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-5K-Dark.jpg</key>
 		<data>
 		BW3dh9Jb60xFxsQblW4OXsg6z8k=
@@ -80,33 +72,17 @@
 		<data>
 		BaAt1kplXcQdNgxM3/uh9PeQNv0=
 		</data>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-Dark.heic</key>
-		<data>
-		kxLdbAvPrW4aGzOEYP09d66656s=
-		</data>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-Dark.jpg</key>
-		<data>
-		iuxJyoYWUIec2PGWEU/+0J6iTPM=
-		</data>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-Light.heic</key>
-		<data>
-		O5dF5VnSOpPAzUul68oYAqmOSM4=
-		</data>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-Light.jpg</key>
-		<data>
-		Lr6UhKxS5SI4zeL13W71RTG3ZqU=
-		</data>
 		<key>Resources/index.html</key>
 		<data>
-		paD4TCWaWVo8HCPL+W2xOTLckcw=
+		Xf+O8E1ikK9Qyvkjc++Zo60Iltc=
 		</data>
 		<key>Resources/script.js</key>
 		<data>
-		Koz4Z4KjFR9nNfg2T37u4dyL9Ao=
+		p1OWJguXzFM2N8SwdSIyJrfnSBU=
 		</data>
 		<key>Resources/style.css</key>
 		<data>
-		9fr9AZrjQ9dZe+AmB6VG5W5oiY4=
+		iqFTG0osVe3uRYOO0qnlH3b2v5E=
 		</data>
 	</dict>
 	<key>files2</key>
@@ -115,7 +91,7 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			Ls4lszov1SVQqG1+vV3QTvpcp5W5j1PwnJCQ9wJftvQ=
+			/sQPdAnlDjBSLMF2QbFE0swWCfHpZuIxNu5XnkfembE=
 			</data>
 		</dict>
 		<key>Resources/assets/fonts/OFL-Outfit.txt</key>
@@ -130,6 +106,20 @@
 			<key>hash2</key>
 			<data>
 			kmhOSs3nnvB3WM0JOAt+AemCTYsGHt3toEb3jBZtexI=
+			</data>
+		</dict>
+		<key>Resources/assets/fonts/outfit-regular.ttf</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			loJFuMeJiv0fsZMFnQUvrvAJP5na51t3mjUQv1RhUcY=
+			</data>
+		</dict>
+		<key>Resources/assets/fonts/outfit-semibold.ttf</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			EqX4s0gTs5LxKKkt6zVISLE+THD2U3czm3NsdwLdHSM=
 			</data>
 		</dict>
 		<key>Resources/images/01-neon-dusk.jpg</key>
@@ -202,27 +192,6 @@
 			Po/KrlTYDa2vSPoorb6r73J/wmPc+KY9sVzfQPk5aAY=
 			</data>
 		</dict>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-4K-Dark.jpg</key>
-		<dict>
-			<key>hash2</key>
-			<data>
-			+YcCJiUC6CxgzvfNTxtOrZT3PcyocHROTK5rGH1WlqI=
-			</data>
-		</dict>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-4K-Light.jpg</key>
-		<dict>
-			<key>hash2</key>
-			<data>
-			a+e+7EYEvTstctYYsfVfRfKOE7Vizp3DCs8ZAUvOQmE=
-			</data>
-		</dict>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-4K.jpg</key>
-		<dict>
-			<key>hash2</key>
-			<data>
-			Q/2HZvUr7sgovGEb++M5POlVjsSCkCeyClTNXgmd6yY=
-			</data>
-		</dict>
 		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-5K-Dark.jpg</key>
 		<dict>
 			<key>hash2</key>
@@ -237,53 +206,25 @@
 			/qBpMgfMkJpyUWixtBhwSEUfDINrQlUQlqUjOaQY454=
 			</data>
 		</dict>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-Dark.heic</key>
-		<dict>
-			<key>hash2</key>
-			<data>
-			mOogNhLM3jbTQzwbPRuTtyPkzyb2e1o4gZsKrYYl2xY=
-			</data>
-		</dict>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-Dark.jpg</key>
-		<dict>
-			<key>hash2</key>
-			<data>
-			O6VR2rFUoNbrjjPb1nR4IcOKUj9yv0VOIUBpBeFWv5k=
-			</data>
-		</dict>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-Light.heic</key>
-		<dict>
-			<key>hash2</key>
-			<data>
-			Kfi4NPfDa8TQ+TBmAYHB2WzMx+Jw/rOoxwqcp2Pe8VY=
-			</data>
-		</dict>
-		<key>Resources/images/iClarified-macOS-27-Golden-Gate-Wallpaper-Light.jpg</key>
-		<dict>
-			<key>hash2</key>
-			<data>
-			gMUPcgLu1ZwYNj01SEdENcMyqqjjTmRKhjvAGqoz61s=
-			</data>
-		</dict>
 		<key>Resources/index.html</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			NZIvVoIzlGa1SGkG1eyEse65nvp97MOJ8IBovGIsIqw=
+			BpDB1Pd47aX3dxUI1/RQZMp0D+LHWnG1SW3/tpEzakc=
 			</data>
 		</dict>
 		<key>Resources/script.js</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			/bidvCWy1R8hJWgdpsVgYCqrkqG5yxLpdqGb9Ow9LVo=
+			rw8JCghpM8kOv+9EI+j4YLnpG6JqOzB4R0FDeDc4W0s=
 			</data>
 		</dict>
 		<key>Resources/style.css</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			ArjZ+ztbEO4liPItQEPw26kUt+/ezW5SPkxli2858bA=
+			OnCJtDJIPN5cAa9JYyweDeAXwZZRftnbG7m2YaJ5xyo=
 			</data>
 		</dict>
 	</dict>

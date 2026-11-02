@@ -30,7 +30,45 @@ func squirclePath(in rect: CGRect, cornerRadius: CGFloat) -> CGPath {
     return CGPath(roundedRect: rect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
 }
 
+/// Strokes `path` with a linear gradient.
+///
+/// CoreGraphics can only *fill* with a gradient, so the stroked outline is turned
+/// into a clip region first (`replacePathWithStrokedPath`). Every lit edge in the
+/// mark — the squircle rim, the horizon, the eclipse arc — is drawn this way, so a
+/// single stroke can fade along its own length instead of ending in a hard edge.
+func strokeGradient(_ ctx: CGContext,
+                    path: CGPath,
+                    lineWidth: CGFloat,
+                    colorSpace: CGColorSpace,
+                    colors: [CGColor],
+                    locations: [CGFloat],
+                    from start: CGPoint,
+                    to end: CGPoint) {
+    guard let gradient = CGGradient(colorsSpace: colorSpace, colors: colors as CFArray, locations: locations) else {
+        return
+    }
+    ctx.saveGState()
+    ctx.addPath(path)
+    ctx.setLineWidth(lineWidth)
+    ctx.setLineCap(.butt)
+    ctx.replacePathWithStrokedPath()
+    ctx.clip()
+    ctx.drawLinearGradient(
+        gradient,
+        start: start,
+        end: end,
+        options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
+    )
+    ctx.restoreGState()
+}
+
 /// Renders the DynaWall icon at `pixelSize x pixelSize`.
+///
+/// The mark is deliberately ultra-minimalist: pure geometry, light and negative
+/// space. Inside an obsidian squircle a single orb is cut by a razor horizon — a
+/// warm solar hemisphere rises above it, a submerged eclipse hemisphere rests
+/// below it. Day over night, in one clean optical split. No stars, no ridges, no
+/// floating glass card: anything that cannot survive 16x16 is noise, not identity.
 func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
     let size = CGFloat(pixelSize)
     let scale = size / 1024.0
@@ -71,7 +109,44 @@ func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
     let cornerRadius: CGFloat = 185.0
     let bodyPath = squirclePath(in: bodyRect, cornerRadius: cornerRadius)
 
-    // 1. Outer ambient drop shadow (for sizes >= 32)
+    // The only composition anchor in the whole mark: a horizon a hair above the
+    // optical centre, so the dome reads as rising light rather than a bisected
+    // circle. Everything else is sized from it.
+    let center = CGPoint(x: 512, y: 488)
+    let orbRadius: CGFloat = 204.0
+    let orbRect = CGRect(
+        x: center.x - orbRadius,
+        y: center.y - orbRadius,
+        width: orbRadius * 2,
+        height: orbRadius * 2
+    )
+    let orbPath = CGPath(ellipseIn: orbRect, transform: nil)
+    let upperHalf = CGRect(x: bodyRect.minX, y: center.y, width: bodyRect.width, height: bodyRect.maxY - center.y)
+    let lowerHalf = CGRect(x: bodyRect.minX, y: bodyRect.minY, width: bodyRect.width, height: center.y - bodyRect.minY)
+
+    // Hairlines are floored to whole rendered pixels. At 16x16 the modelled 2.5pt
+    // horizon is 4% of a pixel, which would turn the icon into a grey haze; flooring
+    // it keeps the split razor sharp all the way down to the smallest iconset entry.
+    let onePixel = 1.0 / scale
+    let horizonThickness = max(2.5, onePixel)
+    let arcThickness = max(2.5, onePixel)
+    // The squircle rim light is a large-size nicety: floored to a whole pixel it turns
+    // into a grey ring that fights the silhouette, so below 128px it keeps its modelled
+    // width and simply disappears instead.
+    let rimThickness: CGFloat = pixelSize >= 128 ? max(3.0, onePixel) : 3.0
+
+    // The bloom, corona and 1.5pt specular rim only resolve once there are enough
+    // pixels to carry them. The smallest sizes keep the bare optical split, which is
+    // what makes the 16x16 icon legible in a Dock or Finder list.
+    let hasAtmosphere = pixelSize >= 64
+    let hasFineDetail = pixelSize >= 128
+
+    // An 18%-white hairline averages away to nothing once it is one pixel wide, so
+    // the submerged half leans on its outline instead: the same rim arc is drawn
+    // heavier below 128px and the eclipse silhouette survives the downscale.
+    let rimArcAlpha: CGFloat = hasFineDetail ? 0.18 : 0.46
+
+    // 1. Outer ambient drop shadow (a single soft contact shadow, no inner glow)
     if pixelSize >= 32 {
         ctx.saveGState()
         ctx.setShadow(
@@ -79,347 +154,232 @@ func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
             blur: 38,
             color: srgb(4, 7, 15, 0.58)
         )
-        ctx.setFillColor(srgb(13, 17, 23, 1.0))
+        ctx.setFillColor(srgb(9, 12, 20, 1.0))
         ctx.addPath(bodyPath)
         ctx.fillPath()
         ctx.restoreGState()
     }
 
-    // 2. Clip to the squircle body
+    // 2. Clip to the squircle body — everything below lives inside the silhouette
     ctx.saveGState()
     ctx.addPath(bodyPath)
     ctx.clip()
 
-    // 3. Sky gradient: Deep Night zenith -> Dawn violet -> Dusk crimson -> Warm amber horizon
-    let skyColors: [CGColor] = [
-        srgb(7, 10, 19, 1.0),     // Deep night zenith (#070a13)
-        srgb(16, 18, 38, 1.0),    // Midnight indigo
-        srgb(35, 27, 66, 1.0),    // Dawn violet (#231b42)
-        srgb(88, 42, 78, 1.0),    // Twilight plum
-        srgb(176, 68, 66, 1.0),   // Dusk rose-coral
-        srgb(238, 132, 74, 1.0),  // Golden hour amber
-        srgb(252, 198, 118, 1.0)  // Horizon glow
-    ]
-    let skyLocations: [CGFloat] = [0.0, 0.22, 0.44, 0.62, 0.77, 0.90, 1.0]
-    if let skyGradient = CGGradient(
+    // 3. Obsidian canvas: night ink -> day ink -> night ink. Vast negative space,
+    //    the only "background" the mark allows itself.
+    if let canvas = CGGradient(
         colorsSpace: colorSpace,
-        colors: skyColors as CFArray,
-        locations: skyLocations
+        colors: [
+            srgb(7, 10, 17, 1.0),   // #070a11 night ink
+            srgb(13, 17, 23, 1.0),  // #0d1117 day ink
+            srgb(9, 12, 20, 1.0)    // #090c14 back to night
+        ] as CFArray,
+        locations: [0.0, 0.52, 1.0]
     ) {
         ctx.drawLinearGradient(
-            skyGradient,
-            start: CGPoint(x: 512, y: 924),
-            end: CGPoint(x: 512, y: 210),
+            canvas,
+            start: CGPoint(x: center.x, y: bodyRect.maxY),
+            end: CGPoint(x: center.x, y: bodyRect.minY),
             options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
         )
     }
 
-    // 4. Radial celestial aurora / atmospheric bloom near the horizon center
-    let bloomCenter = CGPoint(x: 512, y: 380)
-    if let bloomGrad = CGGradient(
+    // 4. Atmospheric whisper: one restrained dusk-to-dawn bloom behind the orb.
+    //    Warm where the sun is, a cold blue rim where the night is.
+    if hasAtmosphere, let whisper = CGGradient(
         colorsSpace: colorSpace,
         colors: [
-            srgb(255, 224, 155, 0.72),
-            srgb(255, 148, 92, 0.34),
-            srgb(130, 72, 150, 0.10),
-            srgb(13, 17, 23, 0.0)
+            srgb(255, 146, 80, 0.22),   // #ff9250 dusk
+            srgb(255, 148, 170, 0.09),  // #ff94aa dawn
+            srgb(72, 110, 255, 0.0)     // #486eff night, fully transparent
         ] as CFArray,
-        locations: [0.0, 0.32, 0.68, 1.0]
+        locations: [0.0, 0.42, 1.0]
     ) {
         ctx.drawRadialGradient(
-            bloomGrad,
-            startCenter: bloomCenter,
-            startRadius: 10,
-            endCenter: bloomCenter,
-            endRadius: 430,
-            options: [.drawsAfterEndLocation]
-        )
-    }
-
-    // 5. Subtle starfield in upper sky
-    let stars: [(x: CGFloat, y: CGFloat, r: CGFloat, a: CGFloat)] = [
-        (235, 805, 3.2, 0.75),
-        (320, 845, 2.2, 0.45),
-        (420, 790, 2.6, 0.55),
-        (615, 835, 3.5, 0.80),
-        (715, 785, 2.4, 0.50),
-        (790, 825, 2.8, 0.65),
-        (268, 728, 2.0, 0.38),
-        (755, 720, 2.2, 0.42),
-        (512, 860, 2.5, 0.50)
-    ]
-    for star in stars {
-        ctx.setFillColor(srgb(240, 246, 252, star.a))
-        ctx.fillEllipse(in: CGRect(x: star.x - star.r, y: star.y - star.r, width: star.r * 2, height: star.r * 2))
-    }
-
-    // Four-point sparkle star in upper right sky
-    func drawSparkle(cx: CGFloat, cy: CGFloat, arm: CGFloat, alpha: CGFloat) {
-        ctx.saveGState()
-        let path = CGMutablePath()
-        let waist = arm * 0.16
-        path.move(to: CGPoint(x: cx, y: cy + arm))
-        path.addQuadCurve(to: CGPoint(x: cx + arm, y: cy), control: CGPoint(x: cx + waist, y: cy + waist))
-        path.addQuadCurve(to: CGPoint(x: cx, y: cy - arm), control: CGPoint(x: cx + waist, y: cy - waist))
-        path.addQuadCurve(to: CGPoint(x: cx - arm, y: cy), control: CGPoint(x: cx - waist, y: cy - waist))
-        path.addQuadCurve(to: CGPoint(x: cx, y: cy + arm), control: CGPoint(x: cx - waist, y: cy + waist))
-        path.closeSubpath()
-        ctx.setFillColor(srgb(255, 248, 235, alpha))
-        ctx.addPath(path)
-        ctx.fillPath()
-        ctx.restoreGState()
-    }
-    drawSparkle(cx: 660, cy: 790, arm: 16, alpha: 0.88)
-    drawSparkle(cx: 295, cy: 775, arm: 11, alpha: 0.68)
-
-    // 6. Glowing Sun Orb perched above the mountain horizon
-    let sunCenter = CGPoint(x: 512, y: 418)
-    let sunRadius: CGFloat = 112.0
-
-    // Outer sun halo
-    if let haloGrad = CGGradient(
-        colorsSpace: colorSpace,
-        colors: [
-            srgb(255, 242, 200, 0.65),
-            srgb(255, 178, 102, 0.25),
-            srgb(255, 140, 82, 0.0)
-        ] as CFArray,
-        locations: [0.0, 0.45, 1.0]
-    ) {
-        ctx.drawRadialGradient(
-            haloGrad,
-            startCenter: sunCenter,
-            startRadius: sunRadius * 0.7,
-            endCenter: sunCenter,
-            endRadius: sunRadius * 1.95,
+            whisper,
+            startCenter: center,
+            startRadius: 0,
+            endCenter: center,
+            endRadius: 360,
             options: []
         )
     }
 
-    // Crisp sun disc with vertical warm gradient
-    ctx.saveGState()
-    let sunRect = CGRect(
-        x: sunCenter.x - sunRadius,
-        y: sunCenter.y - sunRadius,
-        width: sunRadius * 2,
-        height: sunRadius * 2
-    )
-    ctx.addEllipse(in: sunRect)
-    ctx.clip()
-    if let sunDiscGrad = CGGradient(
+    // 5. Outer corona: the light the solar hemisphere spills past its own edge.
+    //    Drawn under the orb, so only the halo outside the disc survives.
+    if hasAtmosphere, let corona = CGGradient(
         colorsSpace: colorSpace,
         colors: [
-            srgb(255, 252, 238, 1.0),
-            srgb(255, 219, 148, 1.0),
-            srgb(250, 148, 86, 1.0)
+            srgb(255, 158, 92, 0.30),
+            srgb(255, 146, 80, 0.10),
+            srgb(255, 146, 80, 0.0)
         ] as CFArray,
         locations: [0.0, 0.55, 1.0]
     ) {
-        ctx.drawLinearGradient(
-            sunDiscGrad,
-            start: CGPoint(x: 512, y: sunCenter.y + sunRadius),
-            end: CGPoint(x: 512, y: sunCenter.y - sunRadius),
+        ctx.drawRadialGradient(
+            corona,
+            startCenter: center,
+            startRadius: orbRadius * 0.84,
+            endCenter: center,
+            endRadius: orbRadius * 1.60,
             options: []
+        )
+    }
+
+    // 6. Upper solar hemisphere: warm ivory at the apex melting to amber at the
+    //    horizon, clipped to the half of the disc that sits above the split.
+    ctx.saveGState()
+    ctx.clip(to: upperHalf)
+    ctx.addPath(orbPath)
+    ctx.clip()
+    if let solar = CGGradient(
+        colorsSpace: colorSpace,
+        colors: [
+            srgb(255, 252, 245, 1.0),  // #fffcf5 ivory
+            srgb(255, 213, 153, 1.0),  // #ffd599 amber light
+            srgb(255, 146, 80, 1.0)    // #ff9250 ember at the horizon
+        ] as CFArray,
+        locations: [0.0, 0.58, 1.0]
+    ) {
+        ctx.drawLinearGradient(
+            solar,
+            start: CGPoint(x: center.x, y: center.y + orbRadius),
+            end: CGPoint(x: center.x, y: center.y),
+            options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
         )
     }
     ctx.restoreGState()
 
-    // 7. Layered Distant & Foreground Mountain Ridges (evoking macOS dynamic landscapes)
-    // Back ridge (misty plum-indigo)
-    let backRidge = CGMutablePath()
-    backRidge.move(to: CGPoint(x: 100, y: 100))
-    backRidge.addLine(to: CGPoint(x: 100, y: 350))
-    backRidge.addCurve(
-        to: CGPoint(x: 355, y: 415),
-        control1: CGPoint(x: 185, y: 355),
-        control2: CGPoint(x: 270, y: 430)
-    )
-    backRidge.addCurve(
-        to: CGPoint(x: 615, y: 345),
-        control1: CGPoint(x: 435, y: 400),
-        control2: CGPoint(x: 520, y: 330)
-    )
-    backRidge.addCurve(
-        to: CGPoint(x: 924, y: 405),
-        control1: CGPoint(x: 715, y: 360),
-        control2: CGPoint(x: 825, y: 420)
-    )
-    backRidge.addLine(to: CGPoint(x: 924, y: 100))
-    backRidge.closeSubpath()
+    // 6b. 1.5pt specular rim inside the dome: the sun catching its own edge,
+    //     brightest at the apex and dissolving as it reaches the horizon.
+    if hasFineDetail {
+        let solarRim = CGMutablePath()
+        solarRim.addArc(
+            center: center,
+            radius: orbRadius - 0.75,
+            startAngle: 0,
+            endAngle: .pi,
+            clockwise: false
+        )
+        strokeGradient(
+            ctx,
+            path: solarRim,
+            lineWidth: 1.5,
+            colorSpace: colorSpace,
+            colors: [
+                srgb(255, 255, 255, 0.08),
+                srgb(255, 255, 255, 0.62)
+            ],
+            locations: [0.0, 1.0],
+            from: CGPoint(x: center.x, y: center.y),
+            to: CGPoint(x: center.x, y: center.y + orbRadius)
+        )
+    }
 
+    // 7. Lower eclipse hemisphere: submerged nocturnal glass, darker the deeper it
+    //    sinks, with a diffused vertical reflection still bleeding off the horizon.
     ctx.saveGState()
-    ctx.addPath(backRidge)
+    ctx.clip(to: lowerHalf)
+    ctx.addPath(orbPath)
     ctx.clip()
-    if let backRidgeGrad = CGGradient(
+    if let eclipse = CGGradient(
         colorsSpace: colorSpace,
         colors: [
-            srgb(52, 33, 68, 0.96),
-            srgb(24, 21, 44, 1.0)
+            srgb(16, 21, 34, 1.0),  // #101522 glass at the waterline
+            srgb(7, 10, 17, 1.0)    // #070a11 night at the pole
         ] as CFArray,
         locations: [0.0, 1.0]
     ) {
         ctx.drawLinearGradient(
-            backRidgeGrad,
-            start: CGPoint(x: 512, y: 425),
-            end: CGPoint(x: 512, y: 180),
-            options: []
+            eclipse,
+            start: CGPoint(x: center.x, y: center.y),
+            end: CGPoint(x: center.x, y: center.y - orbRadius),
+            options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
         )
     }
-    ctx.restoreGState()
-
-    // Mid ridge (deep slate-violet)
-    let midRidge = CGMutablePath()
-    midRidge.move(to: CGPoint(x: 100, y: 100))
-    midRidge.addLine(to: CGPoint(x: 100, y: 300))
-    midRidge.addCurve(
-        to: CGPoint(x: 410, y: 315),
-        control1: CGPoint(x: 210, y: 340),
-        control2: CGPoint(x: 310, y: 285)
-    )
-    midRidge.addCurve(
-        to: CGPoint(x: 720, y: 372),
-        control1: CGPoint(x: 520, y: 348),
-        control2: CGPoint(x: 630, y: 392)
-    )
-    midRidge.addCurve(
-        to: CGPoint(x: 924, y: 295),
-        control1: CGPoint(x: 800, y: 355),
-        control2: CGPoint(x: 865, y: 315)
-    )
-    midRidge.addLine(to: CGPoint(x: 924, y: 100))
-    midRidge.closeSubpath()
-
-    ctx.saveGState()
-    ctx.addPath(midRidge)
-    ctx.clip()
-    if let midRidgeGrad = CGGradient(
+    if hasFineDetail, let reflection = CGGradient(
         colorsSpace: colorSpace,
         colors: [
-            srgb(26, 28, 48, 0.98),
-            srgb(13, 17, 26, 1.0)
+            srgb(240, 246, 252, 0.10),
+            srgb(240, 246, 252, 0.0)
         ] as CFArray,
         locations: [0.0, 1.0]
     ) {
         ctx.drawLinearGradient(
-            midRidgeGrad,
-            start: CGPoint(x: 512, y: 380),
-            end: CGPoint(x: 512, y: 120),
+            reflection,
+            start: CGPoint(x: center.x, y: center.y),
+            end: CGPoint(x: center.x, y: center.y - orbRadius * 0.78),
             options: []
         )
     }
     ctx.restoreGState()
 
-    // Foreground ridge (DynaWall signature #0d1117 -> #070a11 dark developer slate)
-    let frontRidge = CGMutablePath()
-    frontRidge.move(to: CGPoint(x: 100, y: 100))
-    frontRidge.addLine(to: CGPoint(x: 100, y: 248))
-    frontRidge.addCurve(
-        to: CGPoint(x: 520, y: 252),
-        control1: CGPoint(x: 245, y: 292),
-        control2: CGPoint(x: 380, y: 222)
-    )
-    frontRidge.addCurve(
-        to: CGPoint(x: 924, y: 258),
-        control1: CGPoint(x: 660, y: 282),
-        control2: CGPoint(x: 805, y: 235)
-    )
-    frontRidge.addLine(to: CGPoint(x: 924, y: 100))
-    frontRidge.closeSubpath()
-
+    // 8. Eclipse rim arc: a crisp 2.5pt light on the submerged half, brightest where
+    //    it meets the horizon and fading as it falls toward the bottom pole.
     ctx.saveGState()
-    ctx.addPath(frontRidge)
+    ctx.clip(to: lowerHalf)
+    ctx.addPath(orbPath)
     ctx.clip()
-    if let frontGrad = CGGradient(
-        colorsSpace: colorSpace,
-        colors: [
-            srgb(15, 20, 30, 1.0),
-            srgb(8, 11, 18, 1.0)
-        ] as CFArray,
-        locations: [0.0, 1.0]
-    ) {
-        ctx.drawLinearGradient(
-            frontGrad,
-            start: CGPoint(x: 512, y: 285),
-            end: CGPoint(x: 512, y: 100),
-            options: []
-        )
-    }
-    ctx.restoreGState()
-
-    // 8. Signature DynaWall Greeting Card / Glassmorphic Pill at the center
-    //    Represents the minimal greeting typography floating on the desktop
-    let cardRect = CGRect(x: 232, y: 548, width: 560, height: 168)
-    let cardPath = CGPath(roundedRect: cardRect, cornerWidth: 42, cornerHeight: 42, transform: nil)
-
-    // Soft shadow under the glass card
-    ctx.saveGState()
-    ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 24, color: srgb(5, 8, 18, 0.42))
-    ctx.setFillColor(srgb(13, 17, 25, 0.56))
-    ctx.addPath(cardPath)
-    ctx.fillPath()
-    ctx.restoreGState()
-
-    // Subtle glass gradient fill
-    ctx.saveGState()
-    ctx.addPath(cardPath)
-    ctx.clip()
-    if let glassGrad = CGGradient(
-        colorsSpace: colorSpace,
-        colors: [
-            srgb(255, 255, 255, 0.16),
-            srgb(255, 255, 255, 0.05)
-        ] as CFArray,
-        locations: [0.0, 1.0]
-    ) {
-        ctx.drawLinearGradient(
-            glassGrad,
-            start: CGPoint(x: 512, y: cardRect.maxY),
-            end: CGPoint(x: 512, y: cardRect.minY),
-            options: []
-        )
-    }
-    ctx.restoreGState()
-
-    // Crisp glass border highlight
-    ctx.saveGState()
-    ctx.addPath(cardPath)
-    ctx.setStrokeColor(srgb(240, 246, 252, 0.28))
-    ctx.setLineWidth(3.0)
-    ctx.strokePath()
-    ctx.restoreGState()
-
-    // Minimalist typographic greeting bars inside the glass card:
-    // Primary headline pill ("Good morning, Developer.") + warm accent dot
-    let titlePill = CGPath(
-        roundedRect: CGRect(x: 292, y: 644, width: 396, height: 30),
-        cornerWidth: 15,
-        cornerHeight: 15,
-        transform: nil
+    let eclipseRim = CGMutablePath()
+    eclipseRim.addArc(
+        center: center,
+        radius: orbRadius - arcThickness / 2,
+        startAngle: 0,
+        endAngle: .pi,
+        clockwise: true
     )
-    ctx.setFillColor(srgb(240, 246, 252, 0.95))
-    ctx.addPath(titlePill)
-    ctx.fillPath()
-
-    // Warm sunrise period dot at the end of the greeting line
-    ctx.setFillColor(srgb(255, 190, 108, 1.0))
-    ctx.fillEllipse(in: CGRect(x: 704, y: 644, width: 30, height: 30))
-
-    // Subtitle pill ("What are we building today?")
-    let subtitlePill = CGPath(
-        roundedRect: CGRect(x: 362, y: 590, width: 300, height: 18),
-        cornerWidth: 9,
-        cornerHeight: 9,
-        transform: nil
+    strokeGradient(
+        ctx,
+        path: eclipseRim,
+        lineWidth: arcThickness,
+        colorSpace: colorSpace,
+        colors: [
+            srgb(240, 246, 252, rimArcAlpha),
+            srgb(240, 246, 252, rimArcAlpha * 0.12)
+        ],
+        locations: [0.0, 1.0],
+        from: CGPoint(x: center.x, y: center.y),
+        to: CGPoint(x: center.x, y: center.y - orbRadius)
     )
-    ctx.setFillColor(srgb(201, 209, 217, 0.62))
-    ctx.addPath(subtitlePill)
-    ctx.fillPath()
+    ctx.restoreGState()
 
-    // 9. Inner specular squircle border (macOS native icon rim light)
-    ctx.addPath(bodyPath)
-    ctx.setStrokeColor(srgb(255, 255, 255, 0.22))
-    ctx.setLineWidth(4.0)
-    ctx.strokePath()
+    // 9. Razor horizon line: 824pt of light splitting day from night. Bright across
+    //    the orb, dissolving into the canvas at both ends so it never looks like a
+    //    ruler laid over the icon.
+    let horizon = CGMutablePath()
+    horizon.move(to: CGPoint(x: bodyRect.minX, y: center.y))
+    horizon.addLine(to: CGPoint(x: bodyRect.maxX, y: center.y))
+    strokeGradient(
+        ctx,
+        path: horizon,
+        lineWidth: horizonThickness,
+        colorSpace: colorSpace,
+        colors: [
+            srgb(255, 246, 232, 0.0),
+            srgb(255, 246, 232, 0.78),
+            srgb(255, 246, 232, 0.78),
+            srgb(255, 246, 232, 0.0)
+        ],
+        locations: [0.0, 0.24, 0.76, 1.0],
+        from: CGPoint(x: bodyRect.minX, y: center.y),
+        to: CGPoint(x: bodyRect.maxX, y: center.y)
+    )
+
+    // 10. Squircle rim light: a top-lit specular border, 22% white at the top edge
+    //     falling to 4% at the bottom — the standard macOS icon lighting cue.
+    strokeGradient(
+        ctx,
+        path: bodyPath,
+        lineWidth: rimThickness,
+        colorSpace: colorSpace,
+        colors: [
+            srgb(255, 255, 255, 0.04),
+            srgb(255, 255, 255, 0.22)
+        ],
+        locations: [0.0, 1.0],
+        from: CGPoint(x: center.x, y: bodyRect.minY),
+        to: CGPoint(x: center.x, y: bodyRect.maxY)
+    )
 
     ctx.restoreGState() // end squircle clip
     NSGraphicsContext.restoreGraphicsState()

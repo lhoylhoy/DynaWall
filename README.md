@@ -22,10 +22,10 @@ required. See [macOS app](#macos-app-native).
 | Time windows | 05:00–11:59 morning · 12:00–17:59 afternoon · 18:00–04:59 evening |
 | Palette | Four time-aware bands: **dawn** 05:00–08:59 (violet ink, rose glow) · **day** 09:00–16:59 (neutral) · **dusk** 17:00–20:59 (amber) · **night** 21:00–04:59 (deep blue, dimmer type, dimmed photos). Pin one band or hand it a colour instead |
 | Subtitle | Defaults to `What are we building today?`; clear it to hide the line |
-| Refresh | Greeting period *and* palette re-checked every 30 s, and again on wake, resume or window focus |
+| Refresh | Greeting period *and* palette re-checked on the exact boundaries that can change them (05:00 · 09:00 · 12:00 · 17:00 · 18:00 · 21:00 local — six one-shot timers a day, nothing in between), and again on wake, resume or window focus |
 | Photo slideshow | Off by default. When on, the wallpaper cross-fades through photos every 1–60 min, in order or shuffled, with an optional slow zoom (Ken Burns) and a scrim that keeps the greeting readable. Twelve wallpapers ship in `images/` — the six Golden Gate 5K time-of-day pictures plus six generated abstracts — and the macOS app can rotate any folder you point it at |
 | Photo sync | **On by default.** The slideshow only rotates through photos whose filename names the active band — `dawn`, `day`, `dusk` or `night` — so the picture on the desktop matches the light outside and the palette in use. Crossing 05:00 / 09:00 / 17:00 / 21:00, or picking a band in the popover, cross-fades to that band's photos. Turn it off to cycle the whole library |
-| Next photo | A **Next photo** button in the macOS popover (and `livelyPropertyListener('nextPhoto', true)` / `window.DynaWall.nextPhoto()`) skips to the next photo immediately and restarts the timer |
+| Next photo | A **Next** button in the macOS popover's slideshow controls (and `livelyPropertyListener('nextPhoto', true)` / `window.DynaWall.nextPhoto()`) skips to the next photo immediately and restarts the timer |
 | Typography | **Outfit** (variable, 600 for the greeting) — optically tracked at display size, so the greeting is ~90 px on a 1080p screen and ~112 px on a 1440p/5K desktop |
 | Motion | One-shot entrance fade plus a 320 ms cross-fade whenever the greeting text changes; photos cross-fade over 1.2 s |
 | Dependencies | No frameworks, CDN links or network requests. The only artwork is the vendored Outfit face (~32 KB, SIL OFL 1.1) plus the wallpapers in `images/`: six generated abstracts (~780 KB) and the six Golden Gate 5K pictures (~15 MB) |
@@ -41,10 +41,12 @@ required. See [macOS app](#macos-app-native).
 | `LivelyInfo.json` | Lively project descriptor (`Type: 1` = web) |
 | `project.json` | Wallpaper Engine project and user properties |
 | `thumbnail.png` | Thumbnail/preview used by both hosts |
-| `assets/fonts/` | Vendored Outfit latin-subset variable WOFF2 with its SIL OFL license |
+| `assets/fonts/` | Vendored Outfit latin-subset variable WOFF2 with its SIL OFL license, plus static Regular/SemiBold TTFs generated from that same face for the native popover preview |
 | `images/` | The bundled wallpapers: the six Golden Gate 5K time-of-day pictures plus six generated abstracts (replaceable — see Notes) |
 | `tests/verify.cjs` | Headless checks for `script.js` and the manifests |
 | `macos/DynaWallApp.swift` | Native macOS host: desktop-level windows, WebKit, menu bar settings |
+| `macos/make-icon.swift` | CoreGraphics generator for the app icon — the Luminous Horizon & Eclipse Orb, drawn from 16×16 to 1024×1024 |
+| `macos/AppIcon.icns` | Generated icon set (`AppIcon.png` is the 1024×1024 master it ships alongside) |
 | `macos/Info.plist` | Bundle metadata (`com.dynawall.macos`, `LSUIElement`) |
 | `build-macos.sh` | Zero-dependency `swiftc` build that assembles and signs `dist/DynaWall.app` |
 | `dist/DynaWall.app` | Build output (generated, not checked in) |
@@ -61,8 +63,11 @@ photo grade, and the wallpaper moves between them four times a day:
 | `dusk` | 17:00–20:59 | `#180f0e` warm ink | amber | `sepia` + slightly brighter |
 | `night` | 21:00–04:59 | `#070a11` deep blue | indigo | dimmed & desaturated |
 
-- The palette and the greeting are read from the same clock and re-evaluated together every 30 s, plus on
-  wake and on window focus — so a laptop that slept through sunset wakes up in the right band.
+- The palette and the greeting are read from the same clock and re-evaluated together whenever the clock
+  can actually change them: a one-shot `setTimeout` armed for the exact next edge (05:00 · 09:00 · 12:00 ·
+  17:00 · 18:00 · 21:00 local, computed from local date components so DST cannot skip or double one), plus
+  on wake and on window focus — so a laptop that slept through sunset wakes up in the right band, and an
+  idle afternoon costs six wakeups instead of 2,880 thirty-second polls.
 - A band change cross-fades over 2.4 s (`--theme-fade-duration`): background, text colours and the photo
   grade all interpolate, so it reads as a change of light rather than a UI event. The fade only arms after
   the entrance, which is why a 23:00 launch starts at night instead of fading in from the previous band.
@@ -187,7 +192,9 @@ desktop background. No extra tools, no browser window, no Dock icon.
 open dist/DynaWall.app           # starts the menu bar item and the wallpaper
 ```
 
-The script builds for the architecture of the Mac running it (arm64 or x86_64) and targets macOS 12+.
+The script builds for the architecture of the Mac running it (arm64 or x86_64) and targets macOS 12+, in one
+whole-module optimisation pass with `-dead_strip`, and copies only the twelve curated wallpapers — a 23 MB
+bundle with a 426 KB binary.
 `DynaWall` lives in the menu bar — click the icon to open the settings popover, or use **Quit DynaWall**
 there to stop it. Because the app is ad-hoc signed, Gatekeeper is happy with locally built copies; if you
 move the app to another Mac, re-run `build-macos.sh` on that Mac instead of copying the binary.
@@ -203,33 +210,71 @@ move the app to another Mac, re-run `build-macos.sh` on that Mac instead of copy
 | Photos | The host resolves your collection or folder and hands the page `dynawall-photo://photo/<n>/<filename>` URLs; a `WKURLSchemeHandler` serves those files, so the web view stays sandboxed to exactly the images you picked. The filename rides along so `script.js` can match a photo to the time of day |
 | Multi-monitor | `NSApplication.didChangeScreenParametersNotification` rebuilds the windows (only when the layout actually changed) |
 | Sleep/wake | `NSWorkspace.didWakeNotification` re-pushes the settings and asks the page to re-evaluate its greeting and pick a fresh photo |
-| Live settings | Every change is pushed straight into the page with `window.livelyPropertyListener(...)` — the exact same bridge Lively uses, so both hosts share one configuration code path |
-| Persistence | `UserDefaults` in the `com.dynawall.macos` domain |
+| Live settings | Every change is pushed straight into the page with `window.livelyPropertyListener(...)` — the exact same bridge Lively uses, so both hosts share one configuration code path. Pushes are diffed per window: typing a subtitle sends a few hundred bytes, not the photo array again |
+| First paint | The host also injects `window.__dynawallSeed` at `documentStart`, so the very first frame already carries your name, palette and photo; the page deletes the seed once it has read it |
+| Suspension | Occlusion, display sleep, system sleep, session lock and **Pause** all park the page: `classList.add('is-suspended')` pauses the Ken Burns drift in CSS, and the clock and slideshow timers are cleared instead of firing into a hidden window |
+| Persistence | `UserDefaults` in the `com.dynawall.macos` domain. The greeting name is not stored: it is computed from the logged-in macOS account, and a `firstName` override left by an earlier build is deleted on launch |
 | Zero flash | The window stays at `alphaValue = 0` until the page has loaded and the settings have been applied, then fades in |
 
-The first launch starts from your macOS account name (`NSFullUserName()`, e.g. `Froilan`) and the
-**Auto (time of day)** palette, so the wallpaper arrives already matching the light outside. A slow timer
-re-checks the hour and repaints the native window and backing layer when the band changes, so the surface
-behind the page never lags the palette.
+Every launch — and every settings push — greets you by your macOS account name: `NSFullUserName()` first
+(e.g. `Froilan Banaticla` → `Froilan`), `NSUserName()` when the account has no full name, and `Developer`
+only when neither names the account. The name is normalised with the same rules `script.js` applies, so
+`Good morning, Froilan.` is identical in the popover and on the desktop. The **Auto (time of day)** palette
+is the default, so the wallpaper arrives already matching the light outside. The band is checked on a
+one-shot timer armed for the exact next boundary — four wakeups a day (05:00 · 09:00 · 17:00 · 21:00 local,
+resolved with `date(bySettingHour:)` so DST cannot drift it) instead of 1,440 minute-polls — and again on
+wake, on `NSSystemClockDidChange` and on `NSCalendarDayChanged`, so the surface behind the page never lags
+the palette.
 
 ### Menu bar settings
 
+Clicking the menu bar icon opens a 340 pt popover that mirrors the desktop instead of listing settings, and
+that sizes itself to whatever is on screen:
+
+- **Live preview card.** The top card paints the exact background the wallpaper is using — the active band's
+  ink plus its radial accent — with the greeting the page is rendering (`Good morning, Froilan.`), your
+  subtitle, a time-of-day badge (`Dawn`, `Day`, `Dusk`, `Night` or `Paused`) and the photo currently on screen.
+  The greeting and subtitle are set in the wallpaper's own **Outfit** face at its 600/400 weights and CSS
+  tracking, tinted with the active band's `--text-primary` / `--text-secondary`, and centred in the card the
+  same way `.wallpaper-content` is centred on screen — so the card and the desktop read as one design.
+  **Pause** / **Resume** sits right on the card, and the badge turns into `Paused` while the wallpaper is
+  detached. The greeting name is never something you type: it is read from the logged-in macOS account on
+  every push (`NSFullUserName()` → `NSUserName()`), so type in **Subtitle** and the card follows the
+  keystrokes while the name stays the person actually using the Mac.
+- **Visual palette.** Dawn, Day, Dusk, Night, GitHub Dark and Deep Slate are clickable swatches painted with
+  the ink they apply, next to a live colour well. The **Auto (follow the clock)** pill hands the palette back
+  to the clock and names the band it is on (`Day · 09:00–17:00`). Picking a colour in the well selects **Custom
+  color** immediately — no dropdown to change first.
+- **Progressive disclosure.** The six slideshow controls (collection, custom folder, time-of-day matching,
+  interval, shuffle, slow zoom) only appear while **Photo slideshow** is on; choosing a collection or dropping
+  a folder turns it on for you, and the controls that would otherwise be greyed out are simply not shown.
+- **Drag and drop.** With **Custom folder…** selected, the folder row accepts a folder of images dragged from
+  Finder: it becomes the collection, the slideshow starts, and the row shows the folder name and how many
+  photos it found.
+- **Startup.** A native **Launch at login** switch registers DynaWall with macOS (`SMAppService`) so it starts automatically when you log in, without having to open System Settings manually.
+- **Reset** in the footer restores the default subtitle, palette, slideshow and sync settings in one
+  click (your chosen photo folder is kept).
+
 | Control | Key | Effect |
 | --- | --- | --- |
-| First name | `firstName` | Greeting name; the wallpaper updates as you type |
-| Subtitle | `subtitleText` | Subtitle line; clear it to hide the line |
-| Palette | `themePreset` | **Auto (time of day)** by default; Dawn/Day/Dusk/Night pin one band; GitHub Dark `#0d1117`, Deep Slate `#0b0f19` or a custom colour ride the neutral palette. The caption under the picker says which band the clock is on |
-| Custom color | `customBgColor` | Used when the palette is "Custom color"; picking a colour pins that palette |
-| Photo slideshow | `slideshowEnabled` | Rotate photos behind the greeting |
-| Collection | `photoCollection` | **Golden Gate** (six 5K time-of-day pictures), **Abstract** (six abstracts) or **Custom folder…** — a curated list, so bundled mode never cycles 4K/5K/HEIC duplicates of the same image |
+| Live preview card | — | Active ink + accent, the live greeting and subtitle, band/`Paused` badge, photo name, and a Pause/Resume pill in place |
+| Greeting name | — | Read dynamically from the logged-in macOS account (`NSFullUserName()` → `NSUserName()`, and `Developer` only when the account names neither) and normalised exactly like the page (first word, trailing punctuation dropped); there is nothing to type, and any name stored by an earlier build is removed on launch |
+| Subtitle | `subtitleText` | Subtitle line; the `×` button clears it, which hides the line |
+| Auto (follow the clock) | `themePreset` | Hands the palette back to the clock and shows the band it is on (`Day · 09:00–17:00`) |
+| Palette swatches | `themePreset` | Dawn/Day/Dusk/Night pin one band; GitHub Dark `#0d1117` and Deep Slate `#0b0f19` ride the neutral palette |
+| Custom color | `customBgColor` | The colour well is always live: picking a colour selects **Custom color** and pins it at once |
+| Photo slideshow | `slideshowEnabled` | Rotate photos behind the greeting; the controls below only appear while it is on |
+| Collection | `photoCollection` | **Golden Gate** (six 5K time-of-day pictures), **Abstract** (six abstracts) or **Folder** — a curated list, so bundled mode never cycles 4K/5K/HEIC duplicates of the same image. Choosing one starts the slideshow |
+| Folder row | `photoFolderPath` | Shown only for **Folder**: drop a folder here or click **Choose…**; the row reports the folder name and its photo count |
 | Match time of day | `photoSyncTimeOfDay` | **On** by default: only show the photos whose filename matches the active band, and cross-fade when the band changes. Off cycles the whole collection |
 | Rotate every | `slideshowIntervalMinutes` | 1, 5, 15, 30 or 60 minutes |
-| Shuffle order | `slideshowShuffle` | Random order instead of file-name order |
+| Shuffle | `slideshowShuffle` | Random order instead of file-name order |
 | Slow zoom | `kenBurns` | Drift/zoom each photo for the length of its turn |
-| Next photo | — | Skip to the next photo now and restart the interval |
-| Choose… | `photoFolderPath` | Pick the folder the **Custom folder…** collection rotates through |
-| Pause / Resume wallpaper | — | Detaches the wallpaper from the desktop (the menu bar icon dims) |
-| Quit DynaWall | — | Stops the app |
+| Next | — | Skip to the next photo now and restart the interval (shown while the slideshow is on) |
+| Pause / Resume | — | Detaches the wallpaper from the desktop (the menu bar icon dims) |
+| Launch at login | `launchAtLogin` | Starts DynaWall automatically on login (registered with macOS via `SMAppService`) |
+| Reset | — | Restores the default subtitle, palette (`Auto`), slideshow, interval, shuffle, slow zoom and collection |
+| Quit | — | Stops the app |
 
 ### Diagnostics
 
@@ -263,7 +308,7 @@ appears each time the popover button is pressed.
 - Settings changes while the app is closed are picked up on the next launch; changes in the popover apply
   immediately.
 - `defaults delete com.dynawall.macos` resets every macOS-side setting.
-- Want it at login? Add `DynaWall.app` to **System Settings → General → Login Items**.
+- Want it at login? Turn on **Launch at login** in the menu bar popover (or manage it in **System Settings → General → Login Items**).
 
 ## Lively Wallpaper
 
@@ -272,7 +317,7 @@ appears each time the popover button is pressed.
 
 | Lively control | Type | Effect |
 | --- | --- | --- |
-| `firstName` | textbox | Name used in the greeting (`Developer` by default) |
+| `firstName` | textbox | Name used in the greeting (`Developer` by default); clearing the field resets it to `Developer` |
 | `subtitleText` | textbox | Subtitle line; leave empty to hide it |
 | `theme` | dropdown | `Auto (time of day)`, the four bands, or `Custom color` |
 | `bgColor` | color | Background color, used by the `Custom color` theme |
@@ -309,15 +354,19 @@ from Wallpaper Engine's `"r g b"` floats to hex automatically.
 ## Configuration priority
 
 1. **Host IPC** — Lively or Wallpaper Engine values
-2. **URL query parameters**
-3. **`localStorage` cache** — `dynawall.firstName`, `dynawall.subtitle`, `dynawall.bgColor`,
+2. **Host seed** — `window.__dynawallSeed`, which the macOS app injects at `documentStart`. It is the same
+   values as the IPC push, delivered early so the first paint is already correct; the page deletes it once
+   it has been read, and a later `livelyPropertyListener` still wins
+3. **URL query parameters**
+4. **`localStorage` cache** — `dynawall.firstName`, `dynawall.subtitle`, `dynawall.bgColor`,
    `dynawall.theme`, `dynawall.slideshow`, `dynawall.slideshowInterval`, `dynawall.slideshowShuffle`,
    `dynawall.kenBurns`, `dynawall.photoSync`
-4. **Built-in defaults** — `Developer`, `What are we building today?`, `#0d1117`, palette on `auto`,
+5. **Built-in defaults** — `Developer`, `What are we building today?`, `#0d1117`, palette on `auto`,
    slideshow off, 15 minutes, shuffled, slow zoom on, photos matched to the time of day
 
 The photo list is the one exception: `photos` is never cached, because the host resolves it fresh on every
-load (and the page falls back to `images/` when nobody sends one).
+load (and the page falls back to `images/` when nobody sends one). `suspend` is not a setting at all — it is a
+live host flag, so it is neither exposed in any customization panel nor written to `localStorage`.
 
 Each field resolves independently, so a host that only exposes the background colour still picks up the name from the URL.
 The one interaction to know about: a colour with no theme beside it pins `custom` (a colour on its own means
@@ -325,8 +374,8 @@ The one interaction to know about: a colour with no theme beside it pins `custom
 
 > Inside Lively or Wallpaper Engine the host sends its saved values on load, so host settings take
 > precedence over URL parameters — that is the intended hierarchy. The native macOS app is a host too:
-> it pushes its `UserDefaults` values through `livelyPropertyListener` right after the page loads, so
-> they win over the URL and the cached values.
+> it seeds the page at `documentStart` and then pushes its `UserDefaults` values through
+> `livelyPropertyListener` as they change, so they win over the URL and the cached values.
 
 ## Notes
 
@@ -355,12 +404,16 @@ The one interaction to know about: a colour with no theme beside it pins `custom
 - `prefers-reduced-motion: reduce` disables the fades while keeping the same layout.
 - A missing or blocked `localStorage` is tolerated; the wallpaper falls back to the URL and defaults.
 - **Slideshow**: twelve wallpapers ship in `images/` — the six Golden Gate 5K time-of-day pictures
-  (Light/Day/Sunset/Evening/Night/Dark, `iClarified-macOS-27-Golden-Gate-*.jpg`, 4K, 5K and HEIC duplicates
-  included but not used) and six generated abstracts (soft mesh gradients, 2560×1440, ~780 KB total), all
-  free to replace. Swapping them means editing `GOLDEN_GATE_PHOTOS` / `ABSTRACT_PHOTOS` in `script.js` — or,
-  in the macOS app, pointing **Custom folder… → Choose…** at any folder (jpg, png, heic, webp, gif, bmp,
-  tiff; the same folder on every display). Two stacked `<img>` layers cross-fade, so a slide never flashes
-  empty, and a photo that fails to decode is skipped instead of leaving a blank frame.
+  (Light/Day/Sunset/Evening/Night/Dark, `iClarified-macOS-27-Golden-Gate-*.jpg`) and six generated abstracts
+  (soft mesh gradients, 2560×1440, ~780 KB total), all free to replace. The folder also holds 4K, alternate-5K
+  and HEIC versions of the same Golden Gate scenes; nothing rotates through them and `build-macos.sh` does not
+  copy them, so the app bundle is 23 MB rather than 35 MB. Swapping the twelve means editing
+  `GOLDEN_GATE_PHOTOS` / `ABSTRACT_PHOTOS` in `script.js` (and `CURATED_PHOTOS` in `build-macos.sh`, which
+  `tests/verify.cjs` keeps in sync) — or, in the macOS app, pointing **Folder → Choose…** (or dropping a folder
+  on that row) at any folder (jpg, png, heic, webp, gif, bmp, tiff; the same folder on every display). Two
+  stacked `<img>` layers
+  cross-fade, so a slide never flashes empty, and a photo that fails to decode is skipped instead of leaving
+  a blank frame.
 - **Time-of-day names**: the classifier reads the filename, so a folder works out of the box if its pictures
   are named after the hour they belong to (`dawn`, `day`, `sunset`, `night`, …); untagged folders are dealt
   across the four bands instead of being ignored. `photoSync=false` (or **Match time of day** off) hands the
@@ -374,6 +427,14 @@ The one interaction to know about: a colour with no theme beside it pins `custom
 - The subtitle over a photo is the band's own primary ink at 74% opacity rather than a hard-coded white, so
   it dims with the palette instead of glowing in the dark.
 - `prefers-reduced-motion: reduce` also disables the Ken Burns drift; photos still rotate.
+- **Idle cost**: nothing polls. The page and the host each arm one timer for the next boundary that can
+  actually change the greeting or the palette; `applyTheme()` looks its band colour up in `THEME_BG_HEX`
+  instead of reading `getComputedStyle()`, which used to force a style recalculation on every tick;
+  `will-change` is scoped to the entrance fade and the visible photo, so a settled wallpaper owns no
+  compositing layer; the wallpaper subtree is `contain: layout style paint`, so a slide cannot invalidate the
+  rest of the page; and `offsetWidth` is only read when a drift really has to restart on the same layer. On a
+  hidden or occluded window (`visibilitychange`, occlusion, display sleep, session lock, **Pause**) the timers
+  are cleared and the drift is paused with `animation-play-state`, so an idle desktop stays idle.
 
 ## Verification
 
@@ -384,15 +445,27 @@ python3 -m json.tool LivelyProperties.json > /dev/null   # likewise LivelyInfo.j
 ```
 
 `tests/verify.cjs` covers the greeting boundaries (04:59, 05:00, 11:59, 12:00, 17:59, 18:00, 00:00, 23:59),
-the greeting copy, value normalization, the four-tier hierarchy, both IPC bridges, the slideshow (interval
-clamping, photo list sanitising, bundled files present), the palette (band boundaries at 05:00 / 09:00 /
-17:00 / 21:00, theme normalization incl. Lively's indices, the colour-pins-`custom` rule, a full token set
-per `[data-theme]` block, and that the macOS hexes and hours match the CSS), the time-synced photo
-classification (Golden Gate and abstract filenames, Light/Dark pairs, percent-encoded host URLs, untagged
-folders, adjacent-band fallback), `photoSync` resolution across IPC / URL / `localStorage` / both manifests,
-the band → photo-pool transition at each edge (the band is part of the slideshow signature, so a swap
-cross-fades instead of blinking), the `nextPhoto` action and pool stepping (wrap, shuffle, no
-repeat), that the clock controls are gone, and the consistency of the host manifests with `script.js`.
+the greeting copy, value normalization, the five-tier hierarchy (IPC → host seed → URL → `localStorage` →
+defaults), both IPC bridges, the slideshow (interval clamping, photo list sanitising, bundled files present),
+the palette (band boundaries at 05:00 / 09:00 / 17:00 / 21:00, theme normalization incl. Lively's indices, the
+colour-pins-`custom` rule, a full token set per `[data-theme]` block, and that the macOS hexes and hours match
+the CSS), the time-synced photo classification (Golden Gate and abstract filenames, Light/Dark pairs,
+percent-encoded host URLs, untagged folders, adjacent-band fallback), `photoSync` resolution across IPC / URL /
+`localStorage` / both manifests, the band → photo-pool transition at each edge (the band is part of the
+slideshow signature, so a swap cross-fades instead of blinking), the `nextPhoto` action and pool stepping
+(wrap, shuffle, no repeat), that the clock controls are gone, and the consistency of the host manifests with
+`script.js`.
+
+The efficiency guards are checked the same way, because none of them is visible in a screenshot: the clock is
+a one-shot timer armed on each of the six daily boundaries (midnight wrap included, computed from local date
+components) with no `setInterval` left anywhere; suspension clears both timers, pauses the drift in CSS and is
+never cached as a setting; `applyTheme()` contains no `getComputedStyle()` and its `THEME_BG_HEX` table still
+matches every `[data-theme]` block; `normalizePhotos()` de-duplicates with a `Set`; `classifyPhotos()` serves a
+memoised result that still notices an in-place edit; `paintPhoto()` reads `offsetWidth` once, and only when a
+drift has to restart on the same layer; exactly three `will-change` declarations exist (the entrance fade, its
+`auto` reset, and the visible photo) over a `contain`ed subtree; the host seeds the page at `documentStart`,
+registers the occlusion / display-sleep / session observers, diffs its pushes, keeps one-shot boundary timers
+and builds its popover lazily; and `build-macos.sh` copies exactly `GOLDEN_GATE_PHOTOS + ABSTRACT_PHOTOS`.
 
 For the native macOS app:
 
@@ -414,6 +487,7 @@ Manual check in a browser console (or in Lively):
 
 ```js
 livelyPropertyListener('firstName', 'Sam');   // greeting cross-fades and is cached
+livelyPropertyListener('firstName', '');      // cleared field resets to Developer (no stuck letter)
 livelyPropertyListener('theme', 'night');     // palette cross-fades over 2.4 s, no reload
 livelyPropertyListener('bgColor', '#221133'); // a colour alone pins the custom palette
 livelyPropertyListener('theme', 'auto');      // back to following the clock
@@ -421,7 +495,10 @@ livelyPropertyListener('slideshow', true);    // photos fade in behind the greet
 livelyPropertyListener('theme', 'dusk');      // …and time-of-day photos follow along: the dusk set
 livelyPropertyListener('photoSync', false);   // every photo again, clock or not
 livelyPropertyListener('nextPhoto', true);    // skip to the next photo right now
+livelyPropertyListener('suspend', true);      // park the timers + drift (the host owns this flag)
+livelyPropertyListener('suspend', false);     // and pick up exactly where it left off
 window.DynaWall;                              // exposed helpers for quick inspection
 window.DynaWall.getThemeSlot(new Date());      // which band the clock is on right now
+window.DynaWall.msUntilNextClockBoundary();    // how long the one-shot clock timer is armed for
 window.DynaWall.classifyPhotos(photos);        // how the library splits across the four bands
 ```

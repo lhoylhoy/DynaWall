@@ -74,7 +74,8 @@
 
 /* ---------------------------------------------------------------------------
    Time-aware palettes — dawn · day · dusk · night
-   script.js re-reads the clock every 30 s and swaps [data-theme] on <html>; the
+   script.js swaps [data-theme] on <html> at each band boundary (05:00, 09:00,
+   17:00, 21:00 — six exact one-shot wakeups a day, plus wake and focus); the
    tokens below decide what that looks like. All four bands stay dark and
    legible: only the hue of the ink, the accent glow, the text tones and the
    photo grade move, so the layout never shifts.
@@ -173,8 +174,12 @@ body {
 
 /* Palette changes cross-fade — but only once the wallpaper has settled (script.js
    adds `is-theme-ready` after the entrance), so a cold start lands on the right
-   band instantly instead of fading in from the band the last launch used. */
-html.is-theme-ready body {
+   band instantly instead of fading in from the band the last launch used.
+   `.photo-stack` paints its own opaque `--bg-primary` in front of `body`, so it
+   has to fade on the same curve; otherwise a palette swap snaps at 0 ms behind an
+   un-transitioned layer. */
+html.is-theme-ready body,
+html.is-theme-ready .photo-stack {
   transition: background-color var(--theme-fade-duration) var(--ease-out);
 }
 
@@ -190,6 +195,10 @@ html.is-theme-ready body {
   width: 100%;
   height: 100%;
   isolation: isolate;
+  /* The wallpaper fills the viewport and nothing inside it can affect anything
+     outside it, so contain the paint/layout/style work here: a palette swap or a
+     photo cross-fade then invalidates one subtree instead of the whole document. */
+  contain: layout style paint;
 }
 
 /* Ambient depth: a barely-there radial accent plus a soft edge vignette. */
@@ -217,12 +226,15 @@ html.is-theme-ready body {
   transition:
     opacity var(--fade-duration) var(--ease-out),
     transform var(--fade-duration) var(--ease-out);
+  /* Composited for the entrance fade only: `.is-loaded` drops the hint again, so a
+     settled wallpaper is not kept on its own GPU layer for the rest of the day. */
   will-change: opacity, transform;
 }
 
 .wallpaper-content.is-loaded {
   opacity: 1;
   transform: translate3d(0, 0, 0) scale(1);
+  will-change: auto;
 }
 
 /* ---------------------------------------------------------------------------
@@ -238,6 +250,9 @@ html.is-theme-ready body {
   overflow: hidden;
   pointer-events: none;
   background-color: var(--bg-primary);
+  /* Isolates the two cross-fading layers: their opacity/transform work never
+     invalidates the greeting or anything outside the stack. */
+  contain: layout style paint;
 }
 
 .photo {
@@ -258,7 +273,9 @@ html.is-theme-ready body {
     opacity var(--photo-fade-duration) var(--ease-out),
     filter var(--theme-fade-duration) var(--ease-out),
     visibility 0s linear var(--photo-fade-duration);
-  will-change: opacity, transform;
+  /* No permanent `will-change`: a layer is only promoted while a photo is actually
+     on screen and fading/drifting, so a wallpaper with the slideshow off allocates
+     no extra compositing textures at all. */
   backface-visibility: hidden;
 }
 
@@ -271,9 +288,20 @@ html.is-theme-ready body {
     visibility 0s linear 0s;
 }
 
+/* Promote a layer only while it is the visible photo of an enabled slideshow. */
+body.has-photo .photo.is-visible {
+  will-change: opacity, transform;
+}
+
 /* Slow drift for as long as the photo is on screen; script.js sets the duration. */
 .photo.is-ken-burns {
   animation: ken-burns var(--photo-duration, 60s) linear both;
+}
+
+/* Occluded desktop, sleeping display or a paused wallpaper: the drift stops
+   inside WebKit/WindowServer instead of asking for frames nobody can see. */
+html.is-suspended .photo.is-ken-burns {
+  animation-play-state: paused;
 }
 
 @keyframes ken-burns {
@@ -384,9 +412,11 @@ body.has-photo .subtitle {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* The palette transition lives on `html.is-theme-ready body` (higher
-     specificity), so it has to be switched off by name here as well. */
+  /* The palette transition lives on `html.is-theme-ready body` and
+     `html.is-theme-ready .photo-stack` (higher specificity), so both have to be
+     switched off by name here as well. */
   html.is-theme-ready body,
+  html.is-theme-ready .photo-stack,
   body,
   .wallpaper-content,
   .greeting,

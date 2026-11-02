@@ -308,6 +308,32 @@ test('applyUserProperties payloads map to config fields', () => {
   assert.deepEqual(DynaWall.mapWallpaperEngineProperties(null), []);
 });
 
+test('clearing the name field resets it instead of dropping the event', () => {
+  // Deleting a name character by character sends one event per keystroke; the last
+  // one carries "". Dropping it left the final letter on the desktop and in the
+  // cache, so an explicit empty string is a reset to the built-in name.
+  [DynaWall.mapLivelyProperty('firstName', ''), DynaWall.mapLivelyProperty('firstName', '   ')].forEach(
+    (update) => {
+      assert.deepEqual(update, { field: 'firstName', value: DynaWall.DEFAULT_CONFIG.firstName });
+      assert.equal(update.value, 'Developer');
+    }
+  );
+  assert.deepEqual(DynaWall.mapWallpaperEngineProperties({ firstname: { value: '' } }), [
+    { field: 'firstName', value: DynaWall.DEFAULT_CONFIG.firstName }
+  ]);
+  assert.deepEqual(DynaWall.mapWallpaperEngineProperties({ firstname: { value: '   ' } }), [
+    { field: 'firstName', value: DynaWall.DEFAULT_CONFIG.firstName }
+  ]);
+  // Only a string can be a cleared field; junk is still ignored.
+  assert.equal(DynaWall.mapLivelyProperty('firstName', 42), null);
+  assert.equal(DynaWall.mapLivelyProperty('firstName', null), null);
+  // A trailing empty value in a URL, cache or seed still means "said nothing".
+  assert.equal(DynaWall.normalizeName(''), undefined);
+  assert.deepEqual(DynaWall.parseQueryParams('?name='), {});
+  assert.deepEqual(DynaWall.readStoredConfig(fakeStorage({ 'dynawall.firstName': '' })), {});
+  assert.deepEqual(DynaWall.readSeed({ __dynawallSeed: { firstName: '' } }), {});
+});
+
 /* -------------------------------------------------------------------------- *
  * Photo slideshow
  * -------------------------------------------------------------------------- */
@@ -632,6 +658,23 @@ test('a band change restarts the rotation without clearing the layers', () => {
   assert.match(checkTheme, /applyTheme\(\);\s*(\/\/[^\n]*\n\s*)*applySlideshow\(\);/);
 });
 
+test('the automatic tick stays in the active band; Next may leave it', () => {
+  const script = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  const body = (start) => {
+    const from = script.indexOf(start);
+    assert.notEqual(from, -1, `${start} is missing`);
+    return script.slice(from, script.indexOf('\n    }', from));
+  };
+  const advance = body('function advancePhoto()');
+  assert.match(advance, /activePhotoSources\(\)/, 'the timer must not widen to the whole library');
+  assert.ok(
+    !advance.includes('nextPhotoPool()'),
+    'a one-photo band must not jump to a Night photo at noon after one interval'
+  );
+  const next = body('function nextPhoto()');
+  assert.match(next, /nextPhotoPool\(\)/, 'the explicit Next button still searches the whole library');
+});
+
 test('the macOS host mirrors the curated collections and the photo actions', () => {
   const swift = fs.readFileSync(path.join(ROOT, 'macos', 'DynaWallApp.swift'), 'utf8');
   // Every curated picture is spelled out in the host, so bundled mode never sweeps
@@ -776,6 +819,13 @@ function ruleBackground(selector) {
   return match ? match[1] : null;
 }
 
+/** Any `#rrggbb` token from a `[data-theme]` block, e.g. `--text-primary`. */
+function tokenHex(selector, token) {
+  const rule = cssRule(selector);
+  const match = rule ? rule.match(new RegExp(`${token}:\\s*(#[0-9a-f]{6})`)) : null;
+  return match ? match[1] : null;
+}
+
 const PALETTE_TOKENS = [
   '--bg-primary',
   '--bg-radial-accent',
@@ -810,7 +860,7 @@ test('the daylight band is the pre-JS baseline', () => {
 
 test('palette changes cross-fade, grade the photos and respect reduced motion', () => {
   assert.match(css, /--theme-fade-duration:\s*\d+ms/);
-  assert.match(css, /html\.is-theme-ready body\s*{[^}]*background-color/, 'the fade arms after boot');
+  assert.match(css, /html\.is-theme-ready body[^{]*\{[^}]*background-color/, 'the fade arms after boot');
   assert.match(css, /filter:\s*var\(--photo-filter\)/, 'photos follow the band');
   assert.match(css, /text-shadow:\s*0 1px 40px var\(--greeting-glow\)/);
   const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
@@ -818,12 +868,42 @@ test('palette changes cross-fade, grade the photos and respect reduced motion', 
   assert.match(reduced, /\.subtitle/);
 });
 
-test('the macOS host mirrors the same bands, colours and hours', () => {
+test('the photo stack fades with the palette instead of snapping it', () => {
+  assert.match(
+    css,
+    /html\.is-theme-ready body,\s*\n\s*html\.is-theme-ready \.photo-stack\s*{[^}]*transition:\s*background-color/,
+    '.photo-stack paints --bg-primary in front of body and must fade too'
+  );
+  const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+  assert.match(
+    reduced,
+    /html\.is-theme-ready \.photo-stack/,
+    'reduced motion must switch that fade off as well'
+  );
+});
+
+test('the macOS host mirrors the same bands, colours, inks and hours', () => {
   const swift = fs.readFileSync(path.join(ROOT, 'macos', 'DynaWallApp.swift'), 'utf8');
+  const primary = memberBody(swift, 'var textPrimaryHex: String');
+  const secondary = memberBody(swift, 'var textSecondaryHex: String');
   DynaWall.THEMES.forEach((theme) => {
     assert.match(swift, new RegExp(`case \\.${theme}: return`), `ThemeSlot.${theme} is missing`);
     const hex = ruleBackground(`[data-theme="${theme}"]`);
     assert.ok(swift.includes(hex), `ThemeSlot.${theme} should paint ${hex}`);
+
+    // The preview card sets the greeting and subtitle in the band's own inks.
+    const textPrimary = tokenHex(`[data-theme="${theme}"]`, '--text-primary');
+    const textSecondary = tokenHex(`[data-theme="${theme}"]`, '--text-secondary');
+    assert.ok(textPrimary, `[data-theme="${theme}"] needs a --text-primary`);
+    assert.ok(textSecondary, `[data-theme="${theme}"] needs a --text-secondary`);
+    assert.ok(
+      primary.includes(`case .${theme}: return "${textPrimary}"`),
+      `ThemeSlot.${theme}.textPrimaryHex should be ${textPrimary}`
+    );
+    assert.ok(
+      secondary.includes(`case .${theme}: return "${textSecondary}"`),
+      `ThemeSlot.${theme}.textSecondaryHex should be ${textSecondary}`
+    );
   });
   assert.match(swift, /case 5\.\.<9: return \.dawn/);
   assert.match(swift, /case 9\.\.<17: return \.day/);
@@ -831,16 +911,383 @@ test('the macOS host mirrors the same bands, colours and hours', () => {
   assert.match(swift, /default: return \.night/);
 });
 
+/* -------------------------------------------------------------------------- *
+ * Menu bar popover
+ * -------------------------------------------------------------------------- */
+
+group('Menu bar popover');
+
+/** The native host source. */
+function hostSwift() {
+  return fs.readFileSync(path.join(ROOT, 'macos', 'DynaWallApp.swift'), 'utf8');
+}
+
+/** Source of a member, from its signature to the first 4-space closing brace. */
+function memberBody(swift, signature) {
+  const start = swift.indexOf(signature);
+  assert.notEqual(start, -1, `${signature} is missing from DynaWallApp.swift`);
+  const end = swift.indexOf('\n    }', start);
+  return end === -1 ? swift.slice(start) : swift.slice(start, end);
+}
+
+/** The `--bg-radial-accent` of a band as hex: `rgba(56, 139, 253, 0.04)` → `#388bfd`. */
+function accentHex(selector) {
+  const rule = cssRule(selector);
+  const match = rule
+    ? rule.match(/--bg-radial-accent:\s*rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/)
+    : null;
+  if (!match) return null;
+  return '#' + match.slice(1, 4).map((value) => Number(value).toString(16).padStart(2, '0')).join('');
+}
+
+test('the macOS host mirrors every band accent for the popover glow', () => {
+  const swift = hostSwift();
+  DynaWall.THEMES.forEach((theme) => {
+    const accent = accentHex(`[data-theme="${theme}"]`);
+    assert.ok(accent, `[data-theme="${theme}"] needs a --bg-radial-accent colour`);
+    assert.ok(
+      swift.includes(`return "${accent}"`),
+      `ThemeSlot.${theme}.accentHex should be ${accent}`
+    );
+  });
+});
+
+test('the preview card repeats the greeting the page renders', () => {
+  const swift = hostSwift();
+  assert.match(swift, /var previewGreeting: String/);
+  assert.ok(
+    swift.includes('"Good \\(GreetingPeriod.current().rawValue), \\(firstName)."'),
+    'the preview must build the same string as buildGreeting()'
+  );
+  assert.match(swift, /static func normalizedName\(_ value: String\) -> String\?/);
+  assert.match(swift, /case 5\.\.<12: return \.morning/);
+  assert.match(swift, /case 12\.\.<18: return \.afternoon/);
+  assert.match(swift, /default: return \.evening/);
+  // The badge, the glow and the swatches all read the band the clock is on.
+  assert.match(swift, /var activeThemeSlot: ThemeSlot\?/);
+  assert.match(swift, /var accentHex: String/);
+  assert.match(swift, /var swatchHex: String\?/);
+});
+
+test('the greeting name always comes from the logged-in macOS user', () => {
+  const swift = hostSwift();
+  const prefsStart = swift.indexOf('final class WallpaperPreferences');
+  assert.notEqual(prefsStart, -1, 'WallpaperPreferences is missing');
+  const prefs = swift.slice(prefsStart, swift.indexOf('\n}\n', prefsStart));
+
+  // The name is computed on every read instead of being stored and editable, so
+  // the popover and the desktop can never disagree about who is logged in.
+  assert.match(
+    prefs,
+    /var firstName: String \{\s*Self\.detectedFirstName\(\)\s*\}/,
+    'firstName must be read from the macOS account on every access'
+  );
+  assert.ok(!prefs.includes('@Published var firstName'), 'firstName must not be a stored preference');
+  assert.ok(!prefs.includes('Key.firstName'), 'there is no firstName UserDefaults key any more');
+  assert.ok(!swift.includes('$preferences.firstName'), 'the popover must not bind a name field');
+
+  // A stored override from a previous build is deleted rather than honoured.
+  const init = memberBody(swift, 'init(defaults: UserDefaults = .standard)');
+  assert.match(init, /defaults\.removeObject\(forKey: "firstName"\)/);
+  assert.ok(!init.includes('firstName ='), 'the name is never assigned or restored');
+
+  // NSFullUserName() first, NSUserName() second, both cleaned exactly like the
+  // page's normalizeName(), and only a nameless account falls back to Developer.
+  const detected = memberBody(swift, 'static func detectedFirstName()');
+  assert.match(detected, /NSFullUserName\(\)/);
+  assert.match(detected, /NSUserName\(\)/);
+  assert.match(detected, /normalizedName\(full\)/, 'the full name must be normalised like the page');
+  assert.match(detected, /normalizedName\(short\) \?\? "Developer"/);
+
+  // The same computed name drives the preview, the IPC push and the seed.
+  assert.match(
+    memberBody(swift, 'var previewGreeting: String'),
+    /"Good \\\(GreetingPeriod\.current\(\)\.rawValue\), \\\(firstName\)\."/
+  );
+  assert.match(
+    memberBody(swift, 'var javaScriptUpdate: String'),
+    /livelyPropertyListener\("firstName", \\\(Self\.jsLiteral\(firstName\)\)\)/
+  );
+  const seed = memberBody(swift, 'func javaScriptSeed(photoURLs: [String]) -> String');
+  assert.match(seed, /firstName/);
+  assert.match(seed, /Self\.jsLiteral\(firstName\)/);
+  assert.ok(!swift.includes('effectiveFirstName'), 'the blank-field fallback went with the field');
+});
+
+test('picking a colour or a collection turns the setting on', () => {
+  const swift = hostSwift();
+
+  const selectCustom = memberBody(swift, 'func selectCustomColor(');
+  assert.match(selectCustom, /customColorHex = (HexColor\.normalized\(hex\)|normalized)/);
+  assert.match(selectCustom, /themePreset = \.custom/, 'a picked colour must pin the custom palette');
+
+  const selectCollection = memberBody(swift, 'func selectCollection(');
+  assert.match(selectCollection, /photoCollection = collection/);
+  assert.match(selectCollection, /slideshow = true/, 'choosing a collection must start the slideshow');
+
+  const dropped = memberBody(swift, 'func applyDroppedFolder(');
+  assert.match(dropped, /isDirectory\.boolValue/, 'only a folder may be dropped');
+  assert.match(dropped, /photoCollection = \.custom/);
+  assert.match(dropped, /photoFolderPath = url\.path/);
+  assert.match(dropped, /slideshow = true/, 'a dropped folder must start the slideshow');
+});
+
+test('Reset restores the shipped defaults', () => {
+  const swift = hostSwift();
+  const reset = memberBody(swift, 'func resetToDefaults()');
+  [
+    ['subtitleText = Self.defaultSubtitle', 'subtitle'],
+    ['themePreset = .auto', 'palette'],
+    ['customColorHex = HexColor.fallback', 'colour'],
+    ['slideshow = false', 'slideshow'],
+    ['slideshowIntervalMinutes = 15', 'interval'],
+    ['slideshowShuffle = true', 'shuffle'],
+    ['kenBurns = true', 'slow zoom'],
+    ['photoCollection = .goldenGate', 'collection'],
+    ['photoSync = true', 'time-of-day sync']
+  ].forEach(([snippet, label]) => {
+    assert.ok(reset.includes(snippet), `resetToDefaults() must restore the ${label}`);
+  });
+  // The greeting name is not resettable: it always follows the logged-in account.
+  assert.ok(!reset.includes('firstName'), 'resetToDefaults() must not store a name');
+  assert.match(swift, /\.help\("Restore the default subtitle, palette and slideshow"\)/);
+});
+
+test('the popover reveals the photo controls only while the slideshow runs', () => {
+  const swift = hostSwift();
+  const popover = swift.slice(swift.indexOf('struct SettingsPopoverView'));
+  assert.match(popover, /if preferences\.slideshow \{/, 'the photo controls must be disclosed');
+  const disclosed = popover.slice(popover.indexOf('if preferences.slideshow {'));
+  [
+    'Picker("Collection"',
+    'Toggle("Match time of day"',
+    'Picker("Rotate every"',
+    'Toggle("Shuffle"',
+    'Toggle("Slow zoom"',
+    'folderRow'
+  ].forEach((control) => {
+    assert.ok(disclosed.includes(control), `${control} is missing from the disclosed section`);
+  });
+  // Nothing in the popover is greyed out any more: a control is either shown or not.
+  assert.ok(!popover.includes('.disabled('), 'the popover must not disable controls');
+  assert.match(popover, /if preferences\.photoCollection == \.custom \{\s*folderRow/);
+  assert.match(popover, /xmark\.circle\.fill/, 'the subtitle needs a one-click clear');
+});
+
+test('the popover accepts a folder drop and sizes itself to its content', () => {
+  const swift = hostSwift();
+  assert.match(swift, /\.onDrop\(of: \[\.fileURL\], isTargeted:/);
+  assert.match(swift, /loadItem\(forTypeIdentifier: identifier, options: nil\)/);
+  assert.match(swift, /preferences\.applyDroppedFolder\(url\)/);
+  assert.match(swift, /static let popoverWidth: CGFloat = 340/);
+  assert.match(swift, /onContentHeightChange/);
+  assert.match(swift, /popover\.contentSize = target/);
+  assert.ok(!swift.includes('NSSize(width: 324'), 'the fixed 324×534 panel is gone');
+});
+
+test('the host publishes the photo the page put on screen', () => {
+  const swift = hostSwift();
+  assert.match(swift, /@Published private\(set\) var currentPhotoName = ""/);
+  assert.match(swift, /@Published private\(set\) var photoCount = 0/);
+  assert.match(swift, /var onAdvance: \(\(String\) -> Void\)\?/);
+  assert.match(swift, /photoLogger\.onAdvance = \{ \[weak self\] name in/);
+  assert.match(swift, /static func photoName\(fromSource source: String\) -> String\?/);
+  // Turning the slideshow off must drop the stale photo name.
+  assert.match(swift, /if !self\.preferences\.slideshow \{\s*self\.currentPhotoName = ""/);
+});
+
+
+test('the preview centres its glow, dims the bottom edge and names the paused state', () => {
+  const swift = hostSwift();
+  const preview = memberBody(swift, 'private var previewCard: some View');
+  assert.match(preview, /UnitPoint\(x: 0\.5, y: 0\.35\)/, 'the glow must be centred, not a corner spotlight');
+  assert.ok(!preview.includes('.topTrailing'), 'the harsh diagonal glow is gone');
+  assert.match(swift, /Wallpaper paused — click Resume to reattach/);
+});
+
+test('the preview card is set in the wallpaper’s Outfit face and band inks', () => {
+  const swift = hostSwift();
+  const preview = memberBody(swift, 'private var previewCard: some View');
+
+  // Same face, weight, tracking and ink as .greeting / .subtitle in style.css.
+  assert.match(preview, /WallpaperFont\.semibold\(size: 19\)/);
+  assert.match(preview, /WallpaperFont\.tracking\(size: 19, em: -0\.03\)/);
+  assert.match(preview, /WallpaperFont\.regular\(size: 11\)/);
+  assert.match(preview, /WallpaperFont\.tracking\(size: 11, em: 0\.012\)/);
+  assert.match(preview, /previewTextPrimaryHex/);
+  assert.match(preview, /previewTextSecondaryHex/);
+  assert.equal(
+    (preview.match(/\.multilineTextAlignment\(\.center\)/g) || []).length,
+    2,
+    'the greeting and subtitle must be centred like .wallpaper-content'
+  );
+  assert.match(
+    preview,
+    /\.frame\(maxWidth: \.infinity, alignment: \.center\)/,
+    'the centred text block must span the card'
+  );
+  assert.ok(!preview.includes('design: .rounded'), 'the preview must not use SF Rounded');
+  assert.ok(!preview.includes('.white.opacity(0.62)'), 'the subtitle must use the palette ink');
+
+  const fontStart = swift.indexOf('enum WallpaperFont');
+  assert.notEqual(fontStart, -1, 'WallpaperFont is missing');
+  const font = swift.slice(fontStart, swift.indexOf('\n}\n', fontStart));
+  assert.match(font, /CTFontManagerRegisterFontsForURL/);
+  assert.match(font, /outfit-regular/);
+  assert.match(font, /outfit-semibold/);
+  assert.match(font, /\.custom\(semiboldName, size: size\)/);
+  assert.match(font, /\.custom\(regularName, size: size\)/);
+
+  const launch = memberBody(swift, 'func applicationDidFinishLaunching(');
+  assert.match(launch, /WallpaperFont\.register\(\)/, 'register before the popover can open');
+
+  ['outfit-regular.ttf', 'outfit-semibold.ttf'].forEach((file) => {
+    assert.ok(fs.existsSync(path.join(ROOT, 'assets', 'fonts', file)), `missing preview font ${file}`);
+  });
+});
+
+test('the Greeting card only holds the subtitle field', () => {
+  const swift = hostSwift();
+  const greeting = memberBody(swift, 'private var greetingCard: some View');
+  assert.match(
+    greeting,
+    /TextField\("What are we building today\? \(empty hides\)", text: \$preferences\.subtitleText\)/
+  );
+  assert.equal(
+    (greeting.match(/TextField\(/g) || []).length,
+    1,
+    'the subtitle is the only input in the Greeting card'
+  );
+  assert.ok(!greeting.includes('Your first name'), 'the manual first-name field must be gone');
+  assert.ok(!greeting.includes('$preferences.firstName'), 'no field binds a stored name');
+  assert.ok(!swift.includes('private var greetingHint'), 'the name hint went with the field');
+});
+
+test('the subtitle clear button lives inside a full-width field', () => {
+  const swift = hostSwift();
+  const greeting = memberBody(swift, 'private var greetingCard: some View');
+  assert.match(greeting, /\.overlay\(alignment: \.trailing\)/);
+  assert.ok(
+    !/HStack\(spacing: 6\) \{\s*TextField\("What are we building today\?/.test(greeting),
+    'the clear button must not sit beside the subtitle field'
+  );
+});
+
+test('the palette renders one Custom swatch and keeps every band distinct', () => {
+  const swift = hostSwift();
+  const swatches = memberBody(swift, 'private var swatches: some View');
+  assert.equal((swatches.match(/customSwatch/g) || []).length, 1, 'Custom must be rendered once');
+  assert.ok(
+    !swatches.includes('ThemePreset.allCases.filter'),
+    'the grid must not enumerate .custom and then append a second Custom swatch'
+  );
+  assert.match(swatches, /Self\.bandPresets/);
+  assert.match(swatches, /Self\.fixedPresets/);
+  assert.match(swift, /\$0\.accentHex/, 'band swatches must glow with ThemeSlot.accentHex');
+});
+
+test('photo captions drop watermarks, resolutions and sort prefixes', () => {
+  const swift = hostSwift();
+  const titlesStart = swift.indexOf('private static let photoTitles');
+  assert.notEqual(titlesStart, -1, 'the curated titles are missing');
+  const titles = swift.slice(titlesStart, swift.indexOf('\n    ]', titlesStart));
+  [
+    '"iClarified-macOS-27-Golden-Gate-Day-Wallpaper": "Golden Gate · Day"',
+    '"iClarified-macOS-27-Golden-Gate-Sunset-Wallpaper": "Golden Gate · Sunset"',
+    '"01-neon-dusk": "Neon Dusk"',
+    '"02-solar-flare": "Solar Flare"'
+  ].forEach((mapping) => {
+    assert.ok(titles.includes(mapping), `missing clean title ${mapping}`);
+  });
+
+  const name = memberBody(swift, 'static func photoName(fromSource source: String) -> String?');
+  assert.match(name, /iClarified-macOS-27-/, 'the blog watermark must be stripped');
+  assert.match(name, /\["wallpaper", "4k", "5k"/, 'resolution/boilerplate words must be stripped');
+  assert.match(name, /isNumber/, 'leading sort prefixes must be stripped');
+  assert.ok(name.includes('"Golden Gate · '), 'the location reads as subject · light');
+});
+
+test('the Photos card fits its pickers and never truncates the folder caption', () => {
+  const swift = hostSwift();
+  const photos = memberBody(swift, 'private var photosCard: some View');
+  assert.ok(!photos.includes('.frame(width: 176)'), 'the five-segment picker must size itself');
+  assert.ok(
+    (photos.match(/\.controlSize\(\.small\)/g) || []).length >= 4,
+    'the collection and interval pickers use the small control size'
+  );
+  assert.match(swift, /"Drop a folder here, or click Choose…"/);
+  assert.match(swift, /"photos"\) · drop a folder to switch/);
+});
+
+test('Pause/Resume appears once and an empty folder clears the old photos', () => {
+  const swift = hostSwift();
+  const footer = memberBody(swift, 'private var footer: some View');
+  assert.ok(!footer.includes('togglePause'), 'the preview pill already owns Pause/Resume');
+  assert.match(footer, /Button\("Quit"\)/);
+  assert.match(swift, /if entry\.pushedPhotos != photosURLs \{/);
+  assert.ok(
+    !swift.includes('if !photosURLs.isEmpty, entry.pushedPhotos'),
+    'an empty custom folder must reach the page instead of leaving stale photos'
+  );
+});
+
+test('the menu bar mark keeps air between dome, horizon and eclipse', () => {
+  const swift = hostSwift();
+  const icon = memberBody(swift, 'static func makeMenuBarIcon() -> NSImage');
+  assert.match(icon, /let horizonGap: CGFloat = [0-9.]+/);
+  assert.match(icon, /roundedRect: horizon/);
+  assert.match(icon, /y: center\.y - horizonGap - horizonThickness/);
+  assert.match(icon, /\[90\.0, 45\.0, 135\.0\]/, 'the sun needs its rays at 18×18');
+  assert.match(icon, /setLineDash/, 'the eclipse arc is a faint reflection, not a chin strap');
+});
+
+test('the popover includes an option to run on startup / launch at login', () => {
+  const swift = hostSwift();
+  assert.match(swift, /enum LaunchAtLogin/);
+  assert.match(swift, /SMAppService\.mainApp/);
+  assert.match(swift, /static let launchAtLogin = "launchAtLogin"/);
+  assert.match(swift, /@Published var launchAtLogin: Bool/);
+  assert.match(swift, /private var startupCard: some View/);
+  assert.match(swift, /Toggle\("Launch at login", isOn: \$preferences\.launchAtLogin\)/);
+  assert.match(swift, /startupCard/);
+});
+
+
+group('App bundle');
+
 test('the macOS bundle ships a custom AppIcon.icns and Info.plist icon entry', () => {
   const plist = fs.readFileSync(path.join(ROOT, 'macos', 'Info.plist'), 'utf8');
   assert.match(plist, /<key>CFBundleIconFile<\/key>\s*<string>AppIcon<\/string>/);
   assert.match(plist, /<key>CFBundleIconName<\/key>\s*<string>AppIcon<\/string>/);
   const icnsPath = path.join(ROOT, 'macos', 'AppIcon.icns');
   const pngPath = path.join(ROOT, 'macos', 'AppIcon.png');
+  assert.ok(fs.existsSync(path.join(ROOT, 'macos', 'make-icon.swift')), 'missing macos/make-icon.swift');
   assert.ok(fs.existsSync(icnsPath), 'missing macos/AppIcon.icns');
   assert.ok(fs.existsSync(pngPath), 'missing macos/AppIcon.png');
+
+  // The preview PNG is the 1024x1024 master: 8-byte PNG signature, then the IHDR
+  // width/height as big-endian uint32s (12 bytes in, after the chunk length/type).
+  const png = fs.readFileSync(pngPath);
+  assert.equal(png.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', 'AppIcon.png must start with the PNG signature');
+  assert.equal(png.subarray(12, 16).toString('ascii'), 'IHDR', 'AppIcon.png must start with an IHDR chunk');
+  assert.equal(png.readUInt32BE(16), 1024, 'AppIcon.png must be 1024 px wide');
+  assert.equal(png.readUInt32BE(20), 1024, 'AppIcon.png must be 1024 px tall');
+
   const icnsHeader = fs.readFileSync(icnsPath).subarray(0, 4).toString('ascii');
   assert.equal(icnsHeader, 'icns', 'AppIcon.icns must begin with the icns magic header');
+});
+
+test('the menu bar icon is a custom vector template, not an SF Symbol', () => {
+  const swift = hostSwift();
+  assert.match(swift, /static func makeMenuBarIcon\(\) -> NSImage/);
+  assert.match(swift, /image\.isTemplate = true/);
+  assert.match(swift, /button\.image = Self\.makeMenuBarIcon\(\)/);
+  // The mark mirrors the app icon: a filled solar dome with three short rays over a
+  // rounded horizon, with the eclipse hemisphere stroked as a faint, gapped arc below.
+  const icon = memberBody(swift, 'static func makeMenuBarIcon() -> NSImage');
+  assert.match(icon, /appendArc\(withCenter: center, radius: orbRadius, startAngle: 0, endAngle: 180/);
+  assert.match(icon, /startAngle: 202,?\s*endAngle: 338/);
+  assert.ok(!swift.includes('text.below.photo'), 'the generic SF Symbol menu bar icon is gone');
 });
 
 /* -------------------------------------------------------------------------- *
@@ -992,12 +1439,272 @@ test('host manifests point at index.html and the shipped assets exist', () => {
     livelyInfo.Thumbnail,
     'script.js',
     'style.css',
-    'assets/fonts/outfit-latin.woff2'
+    'assets/fonts/outfit-latin.woff2',
+    'assets/fonts/outfit-regular.ttf',
+    'assets/fonts/outfit-semibold.ttf'
   ]
     .concat(DynaWall.BUNDLED_PHOTOS)
     .forEach((asset) => {
       assert.ok(fs.existsSync(path.join(ROOT, asset)), `missing asset: ${asset}`);
     });
+
+  // The README and Lively preview is a 1280×720 render with the greeting baked in,
+  // not the old blank 640×360 gradient.
+  const thumbnail = fs.readFileSync(path.join(ROOT, 'thumbnail.png'));
+  assert.equal(thumbnail.readUInt32BE(16), 1280);
+  assert.equal(thumbnail.readUInt32BE(20), 720);
+});
+
+/* -------------------------------------------------------------------------- *
+ * Efficiency guards
+ * -------------------------------------------------------------------------- */
+
+group('Clock scheduling');
+
+test('the clock is a one-shot boundary timer, not a 30 s poll', () => {
+  assert.deepEqual(DynaWall.CLOCK_BOUNDARY_HOURS, [5, 9, 12, 17, 18, 21]);
+  const script = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  assert.ok(!/setInterval\(/.test(script), 'script.js must not poll on an interval any more');
+  assert.match(script, /win\.setTimeout\(function \(\) \{/, 'the clock is a one-shot timer');
+  assert.match(script, /msUntilNextClockBoundary\(\)/, 'armed from the next boundary');
+  // The historical cadence constant stays exported for hosts and tests.
+  assert.equal(DynaWall.CLOCK_REFRESH_MS, 30000);
+});
+
+test('msUntilNextClockBoundary() targets each of the six daily edges', () => {
+  const hourMs = 60 * 60 * 1000;
+  [
+    ['05:00 → 09:00', 5, 9],
+    ['09:00 → 12:00', 9, 12],
+    ['12:00 → 17:00', 12, 17],
+    ['17:00 → 18:00', 17, 18],
+    ['18:00 → 21:00', 18, 21],
+    ['21:00 → 05:00 (next day)', 21, 5]
+  ].forEach(([label, from, to]) => {
+    const expected = ((to - from + 24) % 24) * hourMs - 30000; // `at()` is h:mm:30
+    assert.equal(DynaWall.msUntilNextClockBoundary(at(from, 0)), expected, label);
+  });
+});
+
+test('an exact boundary schedules the next one and stays inside setTimeout', () => {
+  const hourMs = 60 * 60 * 1000;
+  assert.equal(
+    DynaWall.msUntilNextClockBoundary(new Date(2026, 0, 15, 5, 0, 0, 0)),
+    4 * hourMs,
+    'the 05:00 state is already applied, so the timer waits for 09:00'
+  );
+  assert.equal(
+    DynaWall.msUntilNextClockBoundary(new Date(2026, 0, 15, 23, 30, 0, 0)),
+    5.5 * hourMs,
+    'past the last edge the timer wraps to 05:00'
+  );
+  [0, 3, 4, 5, 8, 9, 12, 16, 17, 20, 21, 23].forEach((hours) => {
+    const wait = DynaWall.msUntilNextClockBoundary(at(hours, 37));
+    assert.ok(wait > 0 && wait <= 8 * hourMs, `unexpected wait at ${hours}:37 (${wait} ms)`);
+  });
+});
+
+group('Suspension');
+
+test('suspend is a live host flag, never a cached setting', () => {
+  assert.equal(DynaWall.LIVELY_SUSPEND, 'suspend');
+  assert.equal(DynaWall.DEFAULT_CONFIG.suspend, undefined, 'suspend is not configurable');
+  assert.equal(DynaWall.STORAGE_KEYS.suspend, undefined, 'suspend is never cached');
+  assert.equal(DynaWall.isLivelyAction('suspend'), false, 'suspend carries a value; nextPhoto does not');
+  // Before the page boots the request is parked for the app.
+  assert.equal(DynaWall.setSuspended(true), true);
+  assert.equal(DynaWall.setSuspended(false), false);
+});
+
+test('suspension parks the timers and pauses the drift in CSS', () => {
+  const script = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  const app = script.slice(script.indexOf('function createApp('));
+  assert.match(app, /function applySuspension\(\)/, 'applySuspension() is missing');
+  assert.match(app, /function setSuspended\(paused\)/, 'setSuspended() is missing');
+  assert.match(app, /classList\.add\('is-suspended'\)/);
+  assert.match(app, /classList\.remove\('is-suspended'\)/);
+  assert.match(app, /win\.clearTimeout\(state\.clockTimer\)/, 'the clock timer must be cleared');
+  assert.match(app, /win\.clearTimeout\(state\.photoTimer\)/, 'the slideshow timer must be cleared');
+  assert.match(app, /addEventListener\('visibilitychange', applySuspension\)/);
+  assert.match(
+    script,
+    /name\.trim\(\)\.toLowerCase\(\) === LIVELY_SUSPEND/,
+    'livelyPropertyListener("suspend", …) must reach setSuspended()'
+  );
+  assert.match(
+    css,
+    /html\.is-suspended \.photo\.is-ken-burns\s*{[^}]*animation-play-state:\s*paused/,
+    'the Ken Burns drift must stop while suspended'
+  );
+});
+
+group('Rendering cost');
+
+test('applyTheme() never forces a synchronous style recalculation', () => {
+  const script = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  const from = script.indexOf('function applyTheme()');
+  assert.notEqual(from, -1, 'applyTheme() is missing');
+  const body = script.slice(from, script.indexOf('\n    }', from));
+  const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.ok(!/getComputedStyle/.test(code), 'applyTheme() must not read computed styles');
+  assert.match(code, /THEME_BG_HEX\[theme\]/, 'the band colour comes from the constant table');
+  // The table itself has to agree with the CSS the browser actually paints.
+  DynaWall.THEMES.forEach((band) => {
+    assert.equal(
+      DynaWall.THEME_BG_HEX[band],
+      ruleBackground(`[data-theme="${band}"]`),
+      `THEME_BG_HEX.${band} disagrees with style.css`
+    );
+  });
+});
+
+test('the photo drift only forces a layout when it restarts the same layer', () => {
+  const script = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  const from = script.indexOf('function paintPhoto(');
+  const body = script.slice(from, script.indexOf('\n    }', from));
+  const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  assert.equal((code.match(/offsetWidth/g) || []).length, 1, 'exactly one layout read');
+  assert.match(code, /if \(wasDrifting && drift\) void layer\.offsetWidth/);
+  assert.match(code, /wasDrifting && drift/, 'only a re-armed layer pays for the reflow');
+});
+
+test('no layer is promoted unless it is actually on screen', () => {
+  const willChange = Array.from(css.matchAll(/will-change:\s*([^;]+);/g)).map((match) =>
+    match[1].trim()
+  );
+  assert.deepEqual(
+    willChange,
+    ['opacity, transform', 'auto', 'opacity, transform'],
+    'only the entrance fade and the visible photo are promoted'
+  );
+  assert.match(css, /body\.has-photo \.photo\.is-visible\s*{[^}]*will-change:\s*opacity, transform/);
+  assert.match(css, /\.wallpaper-content\.is-loaded\s*{[^}]*will-change:\s*auto/);
+  assert.match(css, /\.wallpaper-container\s*{[^}]*contain:\s*layout style paint/);
+  assert.match(css, /\.photo-stack\s*{[^}]*contain:\s*layout style paint/);
+});
+
+group('Photo classification memoisation');
+
+test('classifyPhotos() serves stable buckets and notices an in-place edit', () => {
+  const list = DynaWall.GOLDEN_GATE_PHOTOS.slice();
+  const first = DynaWall.classifyPhotos(list);
+  const second = DynaWall.classifyPhotos(list);
+  assert.deepEqual(second, first, 'the memoised result is identical');
+  assert.notEqual(second.dawn, first.dawn, 'callers get copies, never the cached arrays');
+  list.push('images/07-night-study.jpg');
+  const third = DynaWall.classifyPhotos(list);
+  assert.deepEqual(third.night, first.night.concat(['images/07-night-study.jpg']));
+});
+
+test('getPhotosForSlot() stays consistent through the memo', () => {
+  const list = DynaWall.ABSTRACT_PHOTOS.slice();
+  assert.deepEqual(DynaWall.getPhotosForSlot(list, 'dusk'), ['images/01-neon-dusk.jpg']);
+  assert.deepEqual(DynaWall.getPhotosForSlot(list, 'dusk'), ['images/01-neon-dusk.jpg']);
+  assert.deepEqual(DynaWall.getPhotosForSlot(list, 'day'), [
+    'images/02-solar-flare.jpg',
+    'images/03-deep-ocean.jpg'
+  ]);
+});
+
+test('photo lists are de-duplicated in linear time', () => {
+  const script = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  const from = script.indexOf('function normalizePhotos(');
+  const body = script.slice(from, script.indexOf('\n  }', from));
+  assert.match(body, /new Set\(\)/, 'normalizePhotos() must de-duplicate with a Set');
+  assert.ok(!/photos\.indexOf\(/.test(body), 'indexOf() de-duplication is O(N²)');
+});
+
+group('Host seed');
+
+test('the document-start seed outranks URL and cache but not live IPC', () => {
+  const seed = { firstName: 'Ada', theme: 'night', photos: ['dynawall-photo://photo/0/a.jpg'] };
+  const config = DynaWall.resolveConfig({
+    ipc: {},
+    seed: seed,
+    url: { firstName: 'Grace' },
+    storage: { subtitle: 'cached' },
+    defaults: DynaWall.DEFAULT_CONFIG
+  });
+  assert.equal(config.firstName, 'Ada', 'the seed is the host, so it beats the URL');
+  assert.equal(config.theme, 'night');
+  assert.equal(config.subtitle, 'cached', 'unseeded fields still resolve from the cache');
+  assert.deepEqual(config.photos, ['dynawall-photo://photo/0/a.jpg']);
+
+  const ipc = DynaWall.resolveConfig({
+    ipc: { firstName: 'Lin' },
+    seed: seed,
+    url: {},
+    storage: {},
+    defaults: DynaWall.DEFAULT_CONFIG
+  });
+  assert.equal(ipc.firstName, 'Lin', 'live IPC still wins');
+});
+
+test('a seed is normalised exactly like an IPC value', () => {
+  assert.deepEqual(
+    DynaWall.readSeed({
+      __dynawallSeed: {
+        firstName: '  Ada   Lovelace ',
+        slideshow: 'yes',
+        photos: 'a.jpg, a.jpg, b.jpg',
+        theme: 'nope'
+      }
+    }),
+    { firstName: 'Ada', slideshow: true, photos: ['a.jpg', 'b.jpg'] }
+  );
+  assert.deepEqual(DynaWall.readSeed({}), {});
+  assert.deepEqual(DynaWall.readSeed(null), {});
+});
+
+test('the macOS host seeds the page, suspends it and keeps its own clock', () => {
+  const swift = fs.readFileSync(path.join(ROOT, 'macos', 'DynaWallApp.swift'), 'utf8');
+  // First paint is the user's wallpaper: the seed is injected before parsing.
+  assert.match(swift, /injectionTime: \.atDocumentStart/);
+  assert.match(swift, /func javaScriptSeed\(photoURLs: \[String\]\) -> String/);
+  assert.match(swift, /window\.__dynawallSeed/);
+  // Occlusion, display sleep and session lock park the page; it is told once.
+  assert.match(swift, /NSWindow\.didChangeOcclusionStateNotification/);
+  assert.match(swift, /NSWorkspace\.screensDidSleepNotification/);
+  assert.match(swift, /NSWorkspace\.screensDidWakeNotification/);
+  assert.match(swift, /NSWorkspace\.willSleepNotification/);
+  assert.match(swift, /NSWorkspace\.sessionDidResignActiveNotification/);
+  assert.match(swift, /NSWorkspace\.sessionDidBecomeActiveNotification/);
+  assert.match(swift, /static func javaScriptSuspend/);
+  // Delta pushes: a keystroke never re-encodes the photo array.
+  assert.match(swift, /entry\.pushedPhotos != photosURLs/);
+  assert.match(swift, /entry\.pushedSettings != settingsScript/);
+  // One-shot theme clock instead of a 60 s repeating timer.
+  assert.match(swift, /static func nextBoundary\(after now: Date = Date\(\)/);
+  assert.match(swift, /Timer\(fire: fireDate, interval: 0, repeats: false\)/);
+  assert.ok(!/timeInterval: 60, repeats: true/.test(swift), 'the 60 s poll is gone');
+  assert.match(swift, /Notification\.Name\.NSSystemClockDidChange/);
+  assert.match(swift, /\.NSCalendarDayChanged/);
+  // Curated collections resolve before any folder scan.
+  const reload = swift.slice(swift.indexOf('func reload(collection:'));
+  assert.ok(
+    reload.indexOf('if !curated.isEmpty') < reload.indexOf('Self.scan('),
+    'a bundled collection must not pay for a directory scan'
+  );
+  // The SwiftUI popover is built on first click, not at launch.
+  assert.match(swift, /private func makePopover\(\) -> NSPopover/);
+  assert.ok(!swift.includes('configurePopover'), 'the popover must not be built at launch');
+  // Handlers registered on a web view are removed with it.
+  assert.match(swift, /removeScriptMessageHandler\(forName: "dynawallPhoto"\)/);
+  // WKProcessPool does not isolate processes on macOS 12, so it is not used.
+  assert.ok(!/WKProcessPool/.test(swift), 'the shared process pool was cargo cult');
+});
+
+test('the bundle ships only the curated wallpapers, optimised', () => {
+  const build = fs.readFileSync(path.join(ROOT, 'build-macos.sh'), 'utf8');
+  const listed = Array.from(build.matchAll(/^\s{2}"([^"]+\.jpg)",?$/gm)).map((match) => match[1]);
+  assert.deepEqual(
+    listed,
+    DynaWall.BUNDLED_PHOTOS.map((photo) => photo.split('/').pop()),
+    'build-macos.sh must copy exactly GOLDEN_GATE_PHOTOS + ABSTRACT_PHOTOS'
+  );
+  assert.ok(!/cp -R "\$ROOT\/images"/.test(build), 'the whole images/ folder must not be copied');
+  assert.match(build, /-whole-module-optimization/);
+  assert.match(build, /-Xlinker -dead_strip/);
 });
 
 /* -------------------------------------------------------------------------- *

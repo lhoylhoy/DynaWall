@@ -30,6 +30,17 @@ already carry the latest fixes. Nothing is code-signed: macOS needs **right-clic
 may show SmartScreen (**More info → Run anyway**). The DMG is built on the Apple silicon runner; on an Intel
 Mac run `./build-macos.sh` (see [macOS app](#macos-app-native)).
 
+### Installing it
+
+1. **macOS** — download `DynaWall.dmg`, double-click it, drag **DynaWall** into **Applications**, then open it
+   from Applications. On the first launch only, right-click (or Control-click) the DynaWall icon → **Open** →
+   **Open**; macOS remembers it after that. DynaWall appears in the menu bar and sets the wallpaper itself.
+2. **Windows** — download `DynaWall-Setup.exe` and run it. It installs for the current user only, so Windows
+   never asks for an administrator password; DynaWall then starts with Windows and lives in the system tray.
+   `DynaWall-Windows-Portable.zip` is the same app without an installer: unzip it anywhere and run
+   `DynaWall.exe`.
+3. Nothing else is required — no Lively Wallpaper, no Wallpaper Engine, no frameworks, no accounts.
+
 ## Behaviour
 
 | Feature | Detail |

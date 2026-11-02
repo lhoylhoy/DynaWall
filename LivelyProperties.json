@@ -36,7 +36,7 @@
     "value": "#0d1117"
   },
   "fontFamily": {
-    "text": "Font family — Outfit, SF Pro, New York, SF Mono, Avenir Next or any installed font",
+    "text": "Font family — Outfit (default), Google Sans Flex, Space Grotesk, Geist (bundled) or any installed font",
     "type": "textbox",
     "value": "Outfit"
   },

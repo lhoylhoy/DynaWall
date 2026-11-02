@@ -29,11 +29,12 @@ internal sealed class SettingsForm : Form
     };
 
     /// <summary>
-    /// The families offered above the installed list. Every one of them ships with
-    /// Windows (or DynaWall itself), so the quick picks never point at a font the
-    /// user has to go and download first; an imported file is added on top.
+    /// The quick picks above the installed list: exactly the four families DynaWall
+    /// ships in <c>web/assets/fonts</c>. They render in every host with no install,
+    /// so the picks never point at a font the user has to download first; every
+    /// other family comes from the installed list or an imported file.
     /// </summary>
-    private static readonly string[] FontPresets = { "Outfit", "Segoe UI", "Georgia", "Consolas" };
+    private static readonly string[] FontPresets = Preferences.BundledFontFamilies;
 
     private readonly WallpaperController controller;
     private readonly TextBox firstNameBox = new();
@@ -537,10 +538,16 @@ internal sealed class SettingsForm : Form
             return;
         }
 
-        fontHint.Text = string.Equals(
-            Preferences.FontFamily, Preferences.DefaultFontFamily, StringComparison.OrdinalIgnoreCase)
-            ? "Outfit ships with DynaWall. Any family you pick falls back to it when the font is missing."
-            : "Used for the greeting and subtitle; missing families fall back to the bundled Outfit.";
+        // Both sentences are constant, so picking a family never re-wraps the hint and
+        // never grows the card under the pointer: the name is right above it in the
+        // list, and the message is about the family as a class.
+        if (Preferences.IsBundledFontFamily(Preferences.FontFamily))
+        {
+            fontHint.Text = "Bundled with DynaWall — every other family falls back to Outfit.";
+            return;
+        }
+
+        fontHint.Text = "A system font from this PC — missing families fall back to Outfit.";
     }
 
     private void OnFontChanged(object? sender, EventArgs e)

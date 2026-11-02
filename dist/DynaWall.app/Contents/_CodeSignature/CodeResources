@@ -8,9 +8,45 @@
 		<data>
 		nQFCQhQmvMOH1+daDcmGb8HMtUQ=
 		</data>
+		<key>Resources/assets/fonts/OFL-Geist.txt</key>
+		<data>
+		Zuwt/aaxn38GDI4GA0rnIFUtcVo=
+		</data>
+		<key>Resources/assets/fonts/OFL-GoogleSansFlex.txt</key>
+		<data>
+		V/na4EMjYSRu2/1VK9yvJcSiGWQ=
+		</data>
 		<key>Resources/assets/fonts/OFL-Outfit.txt</key>
 		<data>
 		UR+D0PkSlcB4YcpjCFmRmRJoSL8=
+		</data>
+		<key>Resources/assets/fonts/OFL-SpaceGrotesk.txt</key>
+		<data>
+		5vGu33yeW1VOcVtJVnxi1j7bCVQ=
+		</data>
+		<key>Resources/assets/fonts/geist-latin.woff2</key>
+		<data>
+		nYRtuExQEydDFnD+I7Go6h0qU0k=
+		</data>
+		<key>Resources/assets/fonts/geist-regular.ttf</key>
+		<data>
+		skBtjBvIE2YfiFeO/gc+F7Y6J0g=
+		</data>
+		<key>Resources/assets/fonts/geist-semibold.ttf</key>
+		<data>
+		A2sOQp3x+eLujj4KtUssIUiJzVU=
+		</data>
+		<key>Resources/assets/fonts/google-sans-flex-latin.woff2</key>
+		<data>
+		wzgMpDS7V9Jrl3CXgkpQLugJ/KU=
+		</data>
+		<key>Resources/assets/fonts/google-sans-flex-regular.ttf</key>
+		<data>
+		14aJK+dtM0L8ANV3Gl56m0cg2X0=
+		</data>
+		<key>Resources/assets/fonts/google-sans-flex-semibold.ttf</key>
+		<data>
+		lTOFz0X+zB7/tGzfELrAdGixudc=
 		</data>
 		<key>Resources/assets/fonts/outfit-latin.woff2</key>
 		<data>
@@ -23,6 +59,18 @@
 		<key>Resources/assets/fonts/outfit-semibold.ttf</key>
 		<data>
 		upK6q7GtZ+eBEKAtc6JL45KlT7Y=
+		</data>
+		<key>Resources/assets/fonts/space-grotesk-latin.woff2</key>
+		<data>
+		y+5yNMHXU+fGP46pvbGch/U3i/s=
+		</data>
+		<key>Resources/assets/fonts/space-grotesk-regular.ttf</key>
+		<data>
+		qfc/KV13Ghg6sjJg1EBrfzO1Oxg=
+		</data>
+		<key>Resources/assets/fonts/space-grotesk-semibold.ttf</key>
+		<data>
+		eoRdqk9z2s4wqANYdqNh01DC10A=
 		</data>
 		<key>Resources/images/01-neon-dusk.jpg</key>
 		<data>
@@ -78,11 +126,11 @@
 		</data>
 		<key>Resources/script.js</key>
 		<data>
-		uF7THJH/TG/qwy/wgWq1V2TbOoM=
+		QE1BoGVU4nxR5cQJWgAYhNlSD+E=
 		</data>
 		<key>Resources/style.css</key>
 		<data>
-		CK4aZnLJZk6/X2vwAPDDi93Kn3k=
+		SaZXhZl8QaXBwl/jTOrPWaB7vPc=
 		</data>
 	</dict>
 	<key>files2</key>
@@ -94,11 +142,74 @@
 			/sQPdAnlDjBSLMF2QbFE0swWCfHpZuIxNu5XnkfembE=
 			</data>
 		</dict>
+		<key>Resources/assets/fonts/OFL-Geist.txt</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			F4HSgGoH2RxO30dAuIRJ+rfQ6trVP3w1G5TNTU64wA8=
+			</data>
+		</dict>
+		<key>Resources/assets/fonts/OFL-GoogleSansFlex.txt</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			/BPWn2PjbShLbjg9TRRj2K1ATwqgZeV8+WElLVEGMTc=
+			</data>
+		</dict>
 		<key>Resources/assets/fonts/OFL-Outfit.txt</key>
 		<dict>
 			<key>hash2</key>
 			<data>
 			xnY1G/hXa5q6dDzV6qjA5+4NUfgF1yBEe0303bai5BY=
+			</data>
+		</dict>
+		<key>Resources/assets/fonts/OFL-SpaceGrotesk.txt</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			VkzlZcNxxeW78oYAZWWnyapVqfVufKWNVuBdZJ3WGnI=
+			</data>
+		</dict>
+		<key>Resources/assets/fonts/geist-latin.woff2</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			m29f9FsnjHRLXzeaLE7Lr4WKhCuOr4KsjSG2mcoWxgg=
+			</data>
+		</dict>
+		<key>Resources/assets/fonts/geist-regular.ttf</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			zM5ZRlrlxhkwraVFODT2BQD72VCE2F22Pg5l+tASVFU=
+			</data>
+		</dict>
+		<key>Resources/assets/fonts/geist-semibold.ttf</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			cXH0gbEhgD0Af1xsds2ZiMDUHM5CAtuaGN/5lFUF020=
+			</data>
+		</dict>
+		<key>Resources/assets/fonts/google-sans-flex-latin.woff2</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			4FuuF+0Bm5mBSSPJpvOXm+GdAPzDa/Yk/LZvWccOg7s=
+			</data>
+		</dict>
+		<key>Resources/assets/fonts/google-sans-flex-regular.ttf</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			+1jQlUm7mV4LK4oY0N8jt1PrFvGTsvx3OgA8H1h7qHE=
+			</data>
+		</dict>
+		<key>Resources/assets/fonts/google-sans-flex-semibold.ttf</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			PODw7qOT9V3crEZOOhT7yjRXXDFcuzTUM6wTFRURdWw=
 			</data>
 		</dict>
 		<key>Resources/assets/fonts/outfit-latin.woff2</key>
@@ -120,6 +231,27 @@
 			<key>hash2</key>
 			<data>
 			EqX4s0gTs5LxKKkt6zVISLE+THD2U3czm3NsdwLdHSM=
+			</data>
+		</dict>
+		<key>Resources/assets/fonts/space-grotesk-latin.woff2</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			oNBUxK9VfeIK/Wyln0erNTvK7EnGP/BLbJ050PiRBVc=
+			</data>
+		</dict>
+		<key>Resources/assets/fonts/space-grotesk-regular.ttf</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			7JJtUGXqykmkj5bjEruuC7xXM8JCFc9d+rvczukm/vc=
+			</data>
+		</dict>
+		<key>Resources/assets/fonts/space-grotesk-semibold.ttf</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			bANGuNKX69wiWDKDPgPohKJq2Z0mXs05JNRuG6KF6oc=
 			</data>
 		</dict>
 		<key>Resources/images/01-neon-dusk.jpg</key>
@@ -217,14 +349,14 @@
 		<dict>
 			<key>hash2</key>
 			<data>
-			bp1WsgCzVZUkp/SJd1GNnkEc07HceJg66hyBrnKjzTY=
+			4J3dvAe8r6+QR8y0rFndq4Nyfz7JdzZikBKuA5vaYUc=
 			</data>
 		</dict>
 		<key>Resources/style.css</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			cmBFN8krDGX2KvvyxEFPGWBj+6JsNqLpibyJ1HBsWrw=
+			NvCHoQhhksVMkCEqdcmxVRCpauPoL96K+uzr5w1hCDM=
 			</data>
 		</dict>
 	</dict>

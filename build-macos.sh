@@ -49,10 +49,20 @@ for tool in swiftc lipo; do
   fi
 done
 
-for asset in index.html style.css script.js \
-  assets/fonts/outfit-latin.woff2 \
-  assets/fonts/outfit-regular.ttf \
-  assets/fonts/outfit-semibold.ttf; do
+# Every bundled face ships in two forms: the latin WOFF2 the page loads through
+# @font-face and the static Regular/SemiBold TTFs the popover registers so each
+# preset previews in its own typeface. Keep this list in step with
+# BUNDLED_FONT_FAMILIES in script.js.
+FONT_ASSETS=()
+for font in outfit google-sans-flex space-grotesk geist; do
+  FONT_ASSETS+=(
+    "assets/fonts/$font-latin.woff2"
+    "assets/fonts/$font-regular.ttf"
+    "assets/fonts/$font-semibold.ttf"
+  )
+done
+
+for asset in index.html style.css script.js "${FONT_ASSETS[@]}"; do
   if [[ ! -f "$ROOT/$asset" ]]; then
     echo "error: missing web wallpaper asset: $asset" >&2
     exit 1

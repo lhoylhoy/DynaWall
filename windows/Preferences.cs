@@ -29,6 +29,16 @@ internal sealed class Preferences
     /// <summary>Keep in sync with MAX_FONT_FAMILY_LENGTH in script.js.</summary>
     internal const int MaxFontFamilyLength = 80;
 
+    /// <summary>
+    /// The families that ship in <c>web/assets/fonts</c> (one @font-face each), so
+    /// they render on every host with no install and no download. Everything else is
+    /// a system font or an imported file.
+    /// Keep in sync with BUNDLED_FONT_FAMILIES in script.js and
+    /// WallpaperFont.bundledFamilies in the macOS host.
+    /// </summary>
+    internal static readonly string[] BundledFontFamilies =
+        { "Outfit", "Google Sans Flex", "Space Grotesk", "Geist" };
+
     /// <summary>Keep in sync with THEME_MODES in script.js.</summary>
     internal static readonly string[] ThemeModes = { "auto", "dawn", "day", "dusk", "night", "custom" };
 
@@ -202,6 +212,11 @@ internal sealed class Preferences
         if (cleaned.Length == 0 || cleaned.Length > MaxFontFamilyLength) return DefaultFontFamily;
         return cleaned;
     }
+
+    /// <summary>Whether <paramref name="family"/> is one of the bundled faces.</summary>
+    internal static bool IsBundledFontFamily(string? family) =>
+        BundledFontFamilies.Any(
+            name => string.Equals(name, family, StringComparison.OrdinalIgnoreCase));
 
     internal static string NormalizeColor(string? raw)
     {

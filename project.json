@@ -38,7 +38,7 @@
       },
       "fontfamily": {
         "order": 5,
-        "text": "Font family (Outfit, SF Pro, New York, SF Mono, Avenir Next or an installed font)",
+        "text": "Font family (Outfit by default; Google Sans Flex, Space Grotesk and Geist are bundled; any installed font works)",
         "type": "textinput",
         "value": "Outfit"
       },

@@ -54,9 +54,9 @@ SmartScreen (**More info → Run anyway**). The DMG is built on the Apple silico
 | Photo slideshow | Off by default. When on, the wallpaper cross-fades through photos every 1–60 min, in order or shuffled, with an optional slow zoom (Ken Burns) and a scrim that keeps the greeting readable. Twelve wallpapers ship in `images/` — the six Golden Gate 5K time-of-day pictures plus six generated abstracts — and the macOS and Windows apps can rotate any folder you point them at |
 | Photo sync | **On by default.** The slideshow only rotates through photos whose filename names the active band — `dawn`, `day`, `dusk` or `night` — so the picture on the desktop matches the light outside and the palette in use. Crossing 05:00 / 09:00 / 17:00 / 21:00, or picking a band in the popover, cross-fades to that band's photos. Turn it off to cycle the whole library |
 | Next photo | A **Next** button in the macOS popover and a **Next photo** tray item in the Windows app (and `livelyPropertyListener('nextPhoto', true)` / `window.DynaWall.nextPhoto()`) skip to the next photo immediately and restart the timer |
-| Typography | **Outfit** (variable, 600 for the greeting) — optically tracked at display size, so the greeting is ~90 px on a 1080p screen and ~112 px on a 1440p/5K desktop |
+| Typography | **Outfit** by default (variable, 600 for the greeting) — optically tracked at display size, so the greeting is ~90 px on a 1080p screen and ~112 px on a 1440p/5K desktop. Three more families ship with it: **Google Sans Flex**, **Space Grotesk** and **Geist** |
 | Motion | One-shot entrance fade plus a 320 ms cross-fade whenever the greeting text changes; photos cross-fade over 1.2 s |
-| Dependencies | No frameworks, CDN links or network requests. The only artwork is the vendored Outfit face (~32 KB, SIL OFL 1.1) plus the wallpapers in `images/`: six generated abstracts (~780 KB) and the six Golden Gate 5K pictures (~15 MB) |
+| Dependencies | No frameworks, CDN links or network requests. The only artwork is the four vendored faces — Outfit, Google Sans Flex, Space Grotesk and Geist (~132 KB of latin-subset WOFF2, each SIL OFL 1.1, plus static TTFs for the native preview cards) — and the wallpapers in `images/`: six generated abstracts (~780 KB) and the six Golden Gate 5K pictures (~15 MB) |
 
 ## Files
 
@@ -69,7 +69,7 @@ SmartScreen (**More info → Run anyway**). The DMG is built on the Apple silico
 | `LivelyInfo.json` | Lively project descriptor (`Type: 1` = web) |
 | `project.json` | Wallpaper Engine project and user properties |
 | `thumbnail.png` | Thumbnail/preview used by both hosts |
-| `assets/fonts/` | Vendored Outfit latin-subset variable WOFF2 with its SIL OFL license, plus static Regular/SemiBold TTFs generated from that same face for the native popover preview |
+| `assets/fonts/` | The four bundled faces — Outfit, Google Sans Flex, Space Grotesk and Geist — each as a latin-subset variable WOFF2 plus static Regular/SemiBold TTFs generated from the same face for the native preview cards, with their SIL OFL licenses (`OFL-*.txt`) |
 | `images/` | The bundled wallpapers: the six Golden Gate 5K time-of-day pictures plus six generated abstracts (replaceable — see Notes) |
 | `tests/verify.cjs` | Headless checks for `script.js` and the manifests |
 | `macos/DynaWallApp.swift` | Native macOS host: desktop-level windows, WebKit, menu bar settings |
@@ -287,9 +287,10 @@ that sizes itself to whatever is on screen:
 - **Live preview card.** The top card paints the exact background the wallpaper is using — the active band's
   ink plus its radial accent — with the greeting the page is rendering (`Good morning, Froilan.`), your
   subtitle, a time-of-day badge (`Dawn`, `Day`, `Dusk`, `Night` or `Paused`) and the photo currently on screen.
-  The greeting and subtitle are set in the wallpaper's own **Outfit** face at its 600/400 weights and CSS
-  tracking, tinted with the active band's `--text-primary` / `--text-secondary`, and centred in the card the
-  same way `.wallpaper-content` is centred on screen — so the card and the desktop read as one design.
+  The greeting and subtitle are set in the wallpaper's own family — **Outfit** until you pick another — at its
+  600/400 weights and CSS tracking, tinted with the active band's `--text-primary` / `--text-secondary`, and
+  centred in the card the same way `.wallpaper-content` is centred on screen — so the card and the desktop read
+  as one design.
   **Pause** / **Resume** sits right on the card, and the badge turns into `Paused` while the wallpaper is
   detached. The greeting name is never something you type: it is read from the logged-in macOS account on
   every push (`NSFullUserName()` → `NSUserName()`), so type in **Subtitle** and the card follows the
@@ -304,14 +305,17 @@ that sizes itself to whatever is on screen:
 - **Drag and drop.** With **Custom folder…** selected, the folder row accepts a folder of images dragged from
   Finder: it becomes the collection, the slideshow starts, and the row shows the folder name and how many
   photos it found.
-- **Typography.** A **Typography** card sets the greeting and subtitle in **Outfit** (the shipped face),
-  **SF Pro**, **New York**, **SF Mono** or **Avenir Next** — each chip drawn in its own face — or in any family
-  installed in Font Book, listed in a **System font…** menu. **Add Font…** imports a downloaded `.ttf`, `.otf`,
-  `.ttc`, `.woff` or `.woff2` without installing it system-wide: DynaWall copies the file into
-  `~/Library/Application Support/DynaWall/Fonts`, registers it with CoreText, and reads the family name out of
-  the file so the popover preview and the desktop use the same face. Every stack still tails into the bundled
-  Outfit, so a font that is later uninstalled, renamed or deleted degrades to the shipped look instead of a
-  blank greeting.
+- **Typography.** A **Typography** card sets the greeting and subtitle in one of the four faces DynaWall ships
+  — **Outfit** (the default), **Google Sans Flex**, **Space Grotesk** or **Geist** — each chip drawn in its own
+  face, so the choice previews itself. Every other family belongs to the system: **System font…** lists what
+  Font Book has installed. **Add Font…** imports a downloaded `.ttf`, `.otf`, `.ttc`, `.woff` or `.woff2` without
+  installing it system-wide: DynaWall copies the file into `~/Library/Application Support/DynaWall/Fonts`,
+  registers it with CoreText, and reads the family name out of the file so the popover preview and the desktop
+  use the same face. Every stack still tails into the bundled Outfit, so a font that is later uninstalled,
+  renamed or deleted degrades to the shipped look instead of a blank greeting. The hint under the picker stays
+  on one line (a long name truncates, with the full text on hover), because the popover is sized from its
+  measured content: a hint that wrapped for "Google Sans Flex" would grow the panel and shift every card below
+  it under the pointer.
 - **Startup.** A native **Launch at login** switch registers DynaWall with macOS (`SMAppService`) so it starts automatically when you log in, without having to open System Settings manually.
 - **Reset** in the footer restores the default subtitle, palette, slideshow and sync settings in one
   click (your chosen photo folder is kept).
@@ -332,7 +336,7 @@ that sizes itself to whatever is on screen:
 | Shuffle | `slideshowShuffle` | Random order instead of file-name order |
 | Slow zoom | `kenBurns` | Drift/zoom each photo for the length of its turn |
 | Next | — | Skip to the next photo now and restart the interval (shown while the slideshow is on) |
-| Font | `fontFamily` | Typography chips (**Outfit**, **SF Pro**, **New York**, **SF Mono**, **Avenir Next**), a **System font…** menu listing every family in Font Book, and **Add Font…** for a downloaded file |
+| Font | `fontFamily` | Typography chips (**Outfit**, **Google Sans Flex**, **Space Grotesk**, **Geist** — the bundled faces), a **System font…** menu listing every family in Font Book, and **Add Font…** for a downloaded file |
 | Add Font… | `customFont` | Copies the picked `.ttf`/`.otf`/`.ttc`/`.woff`/`.woff2` (up to 4 MB) into Application Support, applies its family and pushes the bytes to the page as a `data:` URL |
 | Pause / Resume | — | Detaches the wallpaper from the desktop (the menu bar icon dims) |
 | Launch at login | `launchAtLogin` | Starts DynaWall automatically on login (registered with macOS via `SMAppService`) |
@@ -353,7 +357,7 @@ tail -f /tmp/dynawall.log
 # [DynaWall] subtitle: What are we building today? hidden=0
 # [DynaWall] background: rgb(13, 17, 23)
 # [DynaWall] palette: day (mode: auto)
-# [DynaWall] font: Outfit @ 90.240005px Outfit=1
+# [DynaWall] font: Outfit @ 90.240005px width=949 face=loaded
 # [DynaWall] photo library: Golden Gate: 6 photo(s) from …/Resources/images
 # [DynaWall] slideshow advanced: dynawall-photo://photo/1/iClarified-macOS-27-Golden-Gate-Day-Wallpaper.jpg (4096x2160)
 # [DynaWall] slideshow: on=1 photo=dynawall-photo://photo/1/iClarified-macOS-27-Golden-Gate-Day-Wallpaper.jpg size=4096x2160 layers=2
@@ -362,7 +366,10 @@ tail -f /tmp/dynawall.log
 
 `slideshow advanced:` names the file that was put on screen, so the time-of-day match (`…-Day-Wallpaper.jpg`
 at 10:00, `…-Sunset-Wallpaper.jpg` at 18:00) can be verified from a terminal, and `next photo requested`
-appears each time the popover button is pressed.
+appears each time the popover button is pressed. `font:` names the family the page asked for, the width the
+greeting actually measured with it and the state of the `@font-face` behind it — `face=loaded` for one of the
+four bundled faces, `face=<null>` for a system font or a name nothing can resolve — so a build can prove which
+typeface reached the screen without a screenshot.
 
 ### Good to know
 
@@ -437,10 +444,11 @@ shortcuts, and can register it to start when you sign in.
 
 Settings apply live: the window writes `settings.json`, pushes the changed values into every WebView2 and
 re-scans the folder if the photo source changed. **Reset** restores the shipped subtitle, palette, slideshow
-and sync settings but keeps your folder. The **Typography** card lists the quick picks (**Outfit**, **Segoe UI**,
-**Georgia**, **Consolas**) plus every family installed in Windows, and **Add font…** copies a downloaded
-`.ttf`/`.otf`/`.ttc`/`.woff`/`.woff2` (up to 4 MB) into `%LOCALAPPDATA%\DynaWall\Fonts` and sends its bytes to
-the page as a `data:` URL — the file stays put even if you delete the original download.
+and sync settings but keeps your folder. The **Typography** card lists the quick picks (**Outfit**, **Google Sans
+Flex**, **Space Grotesk**, **Geist** — the bundled faces) plus every family installed in Windows, and **Add
+font…** copies a downloaded `.ttf`/`.otf`/`.ttc`/`.woff`/`.woff2` (up to 4 MB) into
+`%LOCALAPPDATA%\DynaWall\Fonts` and sends its bytes to the page as a `data:` URL — the file stays put even if you
+delete the original download.
 
 ### Diagnostics
 
@@ -479,7 +487,7 @@ Logs go to `%LOCALAPPDATA%\DynaWall\dynawall.log` (one 512 KB generation is kept
 | `slideshowInterval` | slider | Minutes between photos (1–120, default 15) |
 | `slideshowShuffle` | checkbox | Random order |
 | `kenBurns` | checkbox | Slow zoom on each photo |
-| `fontFamily` | textbox | Family for the greeting and subtitle — `Outfit` (default), `SF Pro`, an installed family, or a family the native hosts imported; clearing the field puts it back in `Outfit` |
+| `fontFamily` | textbox | Family for the greeting and subtitle — `Outfit` (default), `Google Sans Flex`, `Space Grotesk`, `Geist`, an installed family, or a family the native hosts imported; clearing the field puts it back in `Outfit` |
 
 Lively talks to the page through `window.livelyPropertyListener(name, value)`: every change is applied
 instantly, cross-faded when needed, and cached in `localStorage`. Lively sends the *index* of a dropdown item,
@@ -501,7 +509,7 @@ so `theme` arrives as `0…5` — the page maps it back to the band name.
 | `slideshowinterval` | slider | Minutes between photos (1–120, default 15) |
 | `slideshowshuffle` | checkbox | Random order |
 | `kenburns` | checkbox | Slow zoom on each photo |
-| `fontfamily` | text input | Family for the greeting and subtitle (default `Outfit`); empty resets to `Outfit` |
+| `fontfamily` | text input | Family for the greeting and subtitle (default `Outfit`; `Google Sans Flex`, `Space Grotesk` and `Geist` ship with the wallpaper); empty resets to `Outfit` |
 
 Values arrive through `window.wallpaperPropertyListener.applyUserProperties(...)`; colors are converted
 from Wallpaper Engine's `"r g b"` floats to hex automatically.
@@ -562,26 +570,32 @@ The one interaction to know about: a colour with no theme beside it pins `custom
 
 ## Notes
 
-- The type is [Outfit](https://fonts.google.com/specimen/Outfit) — a geometric sans by Rodrigo Fuenzalida —
-  SIL OFL 1.1, vendored as one latin-subset variable WOFF2 in `assets/fonts`. Drop in a new WOFF2 file and
-  update the single `@font-face` rule in `style.css` to re-skin the wallpaper — nothing else has to change.
-  Names with characters outside the latin subset (Cyrillic, CJK, …) fall back to the system face for those
-  glyphs only, thanks to the `unicode-range` on the face.
-- Outfit is also the **default** rather than the only choice: the native hosts (and the `font`/`fonturl` URL
-  parameters, and the host manifests) can name any installed family, or hand over an imported font file as a
+- Four faces ship in `assets/fonts`, all SIL OFL 1.1 and all latin subsets, so the typography presets work
+  with no install and no network: [Outfit](https://fonts.google.com/specimen/Outfit) (the default — a geometric
+  sans by Rodrigo Fuenzalida), [Google Sans Flex](https://fonts.google.com/specimen/Google+Sans+Flex),
+  [Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk) and
+  [Geist](https://fonts.google.com/specimen/Geist). Each is one variable WOFF2 for the page plus a static
+  Regular/SemiBold TTF pair for the native preview cards, with its license beside it (`OFL-*.txt`). Dropping in
+  a new WOFF2 and editing its `@font-face` rule in `style.css` re-skins the wallpaper — nothing else has to
+  change. Names with characters outside the latin subset (Cyrillic, CJK, …) fall back to the system face for
+  those glyphs only, thanks to the `unicode-range` on each rule.
+- Those four are the **presets**, not the limit: the native hosts (and the `font`/`fonturl` URL parameters, and
+  the host manifests) can name any family installed on the machine, or hand over an imported font file as a
   `data:` URL that the page registers with `document.fonts`. `applyTypography()` rewrites the `--font-sans`
   token on `<html>` rather than any rule, so the stylesheet still declares the shipped stack and Outfit stays
   the tail of every generated stack — a family that is missing, renamed or uninstalled lands back on the
-  vendored face instead of leaving the greeting blank. Font family names are cleaned the same way in
-  `script.js`, the macOS app and the Windows app (quotes, backslashes, braces, semicolons and angle brackets
-  removed, whitespace collapsed, 80 characters max).
+  vendored face instead of leaving the greeting blank. The bundled list lives in three places that the tests
+  keep in step: `BUNDLED_FONT_FAMILIES` in `script.js`, `WallpaperFont.bundledFamilies` in the macOS app and
+  `Preferences.BundledFontFamilies` in the Windows app. Font family names are cleaned the same way in all
+  three (quotes, backslashes, braces, semicolons and angle brackets removed, whitespace collapsed, 80
+  characters max).
 - **Typography**: the display scale is tuned for a wide geometric face rather than left at browser defaults —
   the greeting is tracked in (`-0.03em`, because Outfit's round forms open up at 90 px), leads at `1.06`
   instead of the default heading `1.15`, balances its line breaks (`text-wrap: balance` + `hyphens: none`, so
   long names wrap between words, never mid-word), and the subtitle gets matching treatment the other way
   round: `+0.012em` tracking, `1.5` leading and a `46ch` measure cap. `font-synthesis: none` keeps every
-  weight real (the vendored file covers 100–900), and `font-kerning: normal` plus
-  `common-ligatures contextual` are enabled explicitly.
+  weight real (the vendored files cover 100–900, except Space Grotesk, which stops at 700), and
+  `font-kerning: normal` plus `common-ligatures contextual` are enabled explicitly.
 - All of that lives in tokens at the top of `style.css` — `--greeting-size`, `--greeting-weight`,
   `--greeting-tracking`, `--greeting-leading`, `--subtitle-size`, `--subtitle-weight`,
   `--subtitle-tracking`, `--subtitle-leading`, `--subtitle-measure` — so the whole scale can be retuned

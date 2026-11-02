@@ -154,6 +154,21 @@
   const DEFAULT_FONT_FAMILY = 'Outfit';
 
   /**
+   * The families that ship with the wallpaper (one @font-face each in style.css,
+   * plus static TTFs for the native preview cards). They are the presets every
+   * host offers; anything else is a system font or an imported file, which is why
+   * this list — not "whatever is installed" — is what the UI calls bundled.
+   * Keep in sync with WallpaperFont.bundledFamilies (macOS) and
+   * Preferences.BundledFontFamilies (Windows); tests/verify.cjs asserts the three agree.
+   */
+  const BUNDLED_FONT_FAMILIES = Object.freeze([
+    'Outfit',
+    'Google Sans Flex',
+    'Space Grotesk',
+    'Geist'
+  ]);
+
+  /**
    * The tail of every font stack: the vendored Outfit face, then the geometric
    * faces macOS and Windows ship, then the system UI face.
    *
@@ -1724,6 +1739,7 @@
     normalizeTheme: normalizeTheme,
     normalizeSlideshowInterval: normalizeSlideshowInterval,
     DEFAULT_FONT_FAMILY: DEFAULT_FONT_FAMILY,
+    BUNDLED_FONT_FAMILIES: BUNDLED_FONT_FAMILIES,
     normalizeFontFamily: normalizeFontFamily,
     normalizeCustomFont: normalizeCustomFont,
     fontStack: fontStack,

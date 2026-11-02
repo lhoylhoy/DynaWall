@@ -47,6 +47,27 @@ function readText(fileName) {
   return fs.readFileSync(path.join(ROOT, fileName), 'utf8').replace(/\r\n/g, '\n');
 }
 
+/**
+ * The faces that ship in `assets/fonts`, derived from the list script.js exports:
+ * `<slug>-latin.woff2` is what the page loads through `@font-face`, and the static
+ * `<slug>-regular/semibold.ttf` pair is what the native preview cards register.
+ * PostScript names are the family with the spaces removed (`SpaceGrotesk-Regular`),
+ * which is how each host asks for a weight.
+ */
+const BUNDLED_FONTS = DynaWall.BUNDLED_FONT_FAMILIES.map((family) => {
+  const slug = family.toLowerCase().replace(/\s+/g, '-');
+  const postScript = family.replace(/\s+/g, '');
+  return {
+    family,
+    slug,
+    postScript,
+    woff2: `assets/fonts/${slug}-latin.woff2`,
+    regular: `assets/fonts/${slug}-regular.ttf`,
+    semibold: `assets/fonts/${slug}-semibold.ttf`,
+    license: `assets/fonts/OFL-${postScript}.txt`
+  };
+});
+
 /** Deterministic local date used by the time-based assertions. */
 function at(hours, minutes) {
   return new Date(2026, 0, 15, hours, minutes, 30);
@@ -1143,16 +1164,25 @@ test('the preview card is set in the wallpaper’s Outfit face and band inks', (
   assert.notEqual(fontStart, -1, 'WallpaperFont is missing');
   const font = swift.slice(fontStart, swift.indexOf('\n}\n', fontStart));
   assert.match(font, /CTFontManagerRegisterFontsForURL/);
-  assert.match(font, /outfit-regular/);
-  assert.match(font, /outfit-semibold/);
-  assert.match(font, /\.custom\(semiboldName, size: size\)/);
-  assert.match(font, /\.custom\(regularName, size: size\)/);
+  // Every bundled face is registered and asked for by PostScript name, not just
+  // Outfit: a preset has to preview in its own file rather than the system face.
+  assert.match(font, /\.custom\(faces\.semibold, size: size\)/);
+  assert.match(font, /\.custom\(faces\.regular, size: size\)/);
+  BUNDLED_FONTS.forEach(({ family, slug, postScript }) => {
+    assert.match(
+      font,
+      new RegExp(`"${family}": \\("${slug}", "${postScript}-Regular", "${postScript}-SemiBold"\\)`),
+      `${family} must map to its bundled files and PostScript names`
+    );
+  });
 
   const launch = memberBody(swift, 'func applicationDidFinishLaunching(');
   assert.match(launch, /WallpaperFont\.register\(\)/, 'register before the popover can open');
 
-  ['outfit-regular.ttf', 'outfit-semibold.ttf'].forEach((file) => {
-    assert.ok(fs.existsSync(path.join(ROOT, 'assets', 'fonts', file)), `missing preview font ${file}`);
+  BUNDLED_FONTS.forEach(({ regular, semibold }) => {
+    [regular, semibold].forEach((file) => {
+      assert.ok(fs.existsSync(path.join(ROOT, file)), `missing preview font ${file}`);
+    });
   });
 });
 
@@ -1448,11 +1478,9 @@ test('host manifests point at index.html and the shipped assets exist', () => {
     livelyInfo.FileName,
     livelyInfo.Thumbnail,
     'script.js',
-    'style.css',
-    'assets/fonts/outfit-latin.woff2',
-    'assets/fonts/outfit-regular.ttf',
-    'assets/fonts/outfit-semibold.ttf'
+    'style.css'
   ]
+    .concat(BUNDLED_FONTS.flatMap((font) => [font.woff2, font.regular, font.semibold]))
     .concat(DynaWall.BUNDLED_PHOTOS)
     .forEach((asset) => {
       assert.ok(fs.existsSync(path.join(ROOT, asset)), `missing asset: ${asset}`);
@@ -2062,14 +2090,99 @@ test('both native hosts ship the same font pipeline', () => {
 
 group('Typography');
 
-test('the only webfont is the vendored Outfit face', () => {
+test('the only webfonts are the four bundled faces', () => {
   const css = fs.readFileSync(path.join(ROOT, 'style.css'), 'utf8');
   const faces = css.match(/@font-face/g) || [];
-  assert.equal(faces.length, 1, 'expected exactly one @font-face rule');
-  assert.match(css, /font-family:\s*"Outfit"/);
-  assert.match(css, /url\("assets\/fonts\/outfit-latin\.woff2"\)/);
-  assert.match(css, /font-weight:\s*100 900/, 'the variable axis covers every weight');
+  assert.equal(faces.length, BUNDLED_FONTS.length, 'one @font-face rule per bundled family');
   assert.match(css, /--font-sans:\s*"Outfit"/, 'Outfit leads the font stack');
+
+  BUNDLED_FONTS.forEach(({ family, woff2, regular, semibold, license }) => {
+    assert.ok(
+      css.includes(`font-family: "${family}"`),
+      `style.css must declare ${family}`
+    );
+    assert.ok(
+      css.includes(`url("${woff2}") format("woff2")`),
+      `${family} must load ${woff2}`
+    );
+    [regular, semibold, license].forEach((file) => {
+      assert.ok(fs.existsSync(path.join(ROOT, file)), `missing bundled font file ${file}`);
+    });
+  });
+
+  // The variable axes: Outfit, Google Sans Flex and Geist run the full range, while
+  // Space Grotesk stops at 700 — asking for more would synthesise a fake weight.
+  assert.match(css, /font-weight:\s*100 900/);
+  assert.match(css, /font-weight:\s*300 700/);
+});
+
+test('the typography hint cannot resize the popover', () => {
+  const swift = hostSwift();
+  const card = memberBody(swift, 'private var typographyCard: some View');
+
+  // The popover is resized from the measured content height (PopoverHeightKey →
+  // popover.contentSize), so a hint that wrapped for a longer family name grew the
+  // panel and moved every card under it the moment that chip was clicked. It is one
+  // line now, and a long name truncates instead of wrapping.
+  assert.match(card, /Text\(preferences\.fontFamilyHint\)\s*\n\s*\.font\(\.system\(size: 9\.5\)\)/);
+  assert.match(card, /\.lineLimit\(1\)\s*\n\s*\.truncationMode\(\.middle\)/);
+  assert.ok(!/\.lineLimit\(2\)[\s\S]{0,80}fontFamilyHint/.test(card), 'the hint must not wrap');
+
+  // The bundled sentence is the same for all four faces — no family name spliced in —
+  // so clicking between chips cannot change the line at all.
+  const hint = memberBody(swift, 'var fontFamilyHint: String');
+  const bundled = hint.slice(hint.indexOf('isBundled(family)'), hint.indexOf('switch family'));
+  assert.match(bundled, /return "Bundled with DynaWall — no install, no download\."/);
+  assert.ok(!bundled.includes('\\(family)'), 'the bundled hint must not interpolate the family name');
+
+  // Windows grows its cards the same way, so both of its hints are constant too (the
+  // imported case above them does name the file, which is a deliberate one-off).
+  const form = readText('windows/SettingsForm.cs');
+  const update = memberBody(form, 'private void UpdateFontHint()');
+  assert.match(update, /fontHint\.Text = "Bundled with DynaWall — every other family falls back to Outfit\."/);
+  assert.match(update, /fontHint\.Text = "A system font from this PC — missing families fall back to Outfit\."/);
+  const familyHints = update.slice(update.indexOf('IsBundledFontFamily(Preferences.FontFamily)'));
+  assert.ok(
+    !familyHints.includes('$"'),
+    'an interpolated hint re-wraps when the family name changes length'
+  );
+});
+
+test('the bundled four are the only presets on every host', () => {
+  assert.deepEqual(
+    [...DynaWall.BUNDLED_FONT_FAMILIES],
+    ['Outfit', 'Google Sans Flex', 'Space Grotesk', 'Geist'],
+    'Outfit stays first: it is the default every stack ends on'
+  );
+
+  const swift = hostSwift();
+  assert.match(
+    swift,
+    /static let bundledFamilies = \["Outfit", "Google Sans Flex", "Space Grotesk", "Geist"\]/
+  );
+  // The chips come from that list, so a preset can never point at a face the
+  // bundle does not ship (a system font lives in the Font Book menu instead).
+  assert.match(swift, /private static let fontPresets: \[String\] = WallpaperFont\.bundledFamilies/);
+  assert.match(swift, /static func isBundled\(_ family: String\) -> Bool/);
+
+  const preferences = readText('windows/Preferences.cs');
+  assert.match(
+    preferences,
+    /internal static readonly string\[\] BundledFontFamilies =\s*\{ "Outfit", "Google Sans Flex", "Space Grotesk", "Geist" \}/
+  );
+  assert.match(preferences, /internal static bool IsBundledFontFamily\(string\? family\)/);
+
+  // The quick picks are the same four, not a hand-written list that can drift.
+  const form = readText('windows/SettingsForm.cs');
+  assert.match(form, /private static readonly string\[\] FontPresets = Preferences\.BundledFontFamilies/);
+
+  // Both host manifests name them, for anyone editing the property by hand.
+  const lively = readText('LivelyProperties.json');
+  const project = readText('project.json');
+  BUNDLED_FONTS.forEach(({ family }) => {
+    assert.ok(lively.includes(family), `LivelyProperties.json must mention ${family}`);
+    assert.ok(project.includes(family), `project.json must mention ${family}`);
+  });
 });
 
 test('nothing in the wallpaper reaches the network', () => {

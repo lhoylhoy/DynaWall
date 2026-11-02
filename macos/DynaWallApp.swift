@@ -445,12 +445,12 @@ enum HexColor {
 
 /// The preview card's copy of the wallpaper's typeface.
 ///
-/// WebKit loads the vendored `outfit-latin.woff2` through `@font-face`; AppKit has
-/// no equivalent CSS bridge. `outfit-regular.ttf` and `outfit-semibold.ttf` are
-/// static instances generated from that exact variable face — same glyphs, same
+/// WebKit loads the vendored `*-latin.woff2` files through `@font-face`; AppKit has
+/// no equivalent CSS bridge. The static `*-regular.ttf` / `*-semibold.ttf` instances
+/// beside them were generated from those exact variable faces — same glyphs, same
 /// outlines — and are registered with CoreText for the popover. Without them the
-/// preview would be set in SF Rounded while the desktop is set in Outfit, which
-/// is precisely the mismatch the preview exists to avoid.
+/// preview would be set in SF Rounded while the desktop is set in a bundled face,
+/// which is precisely the mismatch the preview exists to avoid.
 ///
 /// The same registry serves the user's own typography: a family installed in Font
 /// Book is addressed by name, and an imported font file (`.ttf`/`.otf`/`.ttc`) is
@@ -462,9 +462,24 @@ enum WallpaperFont {
     /// The face vendored with the app; every font stack ends here.
     static let defaultFamily = "Outfit"
 
-    /// One-click presets in the popover. `SF Pro` is the macOS system face rather
-    /// than an installed family, so `face(_:size:weight:)` asks for the system font.
-    static let presetFamilies = ["Outfit", "SF Pro", "New York", "SF Mono", "Avenir Next"]
+    /// The families that ship in `assets/fonts`, in preset order. These four render
+    /// identically on every host without an install: the page loads their WOFF2
+    /// through `@font-face`, and the preview card uses the static TTFs beside them.
+    /// Everything else the popover offers is a *system* font (Font Book) or an
+    /// imported file. Keep in sync with BUNDLED_FONT_FAMILIES in script.js and
+    /// Preferences.BundledFontFamilies in the Windows host.
+    static let bundledFamilies = ["Outfit", "Google Sans Flex", "Space Grotesk", "Geist"]
+
+    /// File stem and PostScript names per bundled family: the stem finds
+    /// `<stem>-regular.ttf` / `<stem>-semibold.ttf` in the bundle, and the
+    /// PostScript names give SwiftUI the exact weight instead of asking CoreText to
+    /// pick one from a family.
+    static let bundledFaces: [String: (stem: String, regular: String, semibold: String)] = [
+        "Outfit": ("outfit", "Outfit-Regular", "Outfit-SemiBold"),
+        "Google Sans Flex": ("google-sans-flex", "GoogleSansFlex-Regular", "GoogleSansFlex-SemiBold"),
+        "Space Grotesk": ("space-grotesk", "SpaceGrotesk-Regular", "SpaceGrotesk-SemiBold"),
+        "Geist": ("geist", "Geist-Regular", "Geist-SemiBold")
+    ]
 
     /// What "Add Font…" accepts. CoreText can only register the first three;
     /// WOFF/WOFF2 exist for the page's `FontFace` loader.
@@ -477,27 +492,27 @@ enum WallpaperFont {
     /// step with the popover, so the `Font.custom` calls stay one-liners.
     static var activeFamily: String = defaultFamily
 
-    private static let regularName = "Outfit-Regular"
-    private static let semiboldName = "Outfit-SemiBold"
-
     private static let registration: Bool = {
         var registered = false
-        for name in ["outfit-regular", "outfit-semibold"] {
-            guard let url = bundledURL(named: name) else {
-                dynaLog("preview font missing from bundle: \(name).ttf")
-                continue
-            }
-            var error: Unmanaged<CFError>?
-            if CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error) {
-                registered = true
-            } else if let error {
-                let description = String(describing: error.takeRetainedValue())
-                // A user-installed Outfit or a second registration is harmless:
-                // `Font.custom` will resolve the same face by name either way.
-                if description.localizedCaseInsensitiveContains("already") {
+        // Register every bundled face, not just Outfit: each preset previews in its
+        // own file. A family the user also installed registers as "already
+        // registered", which is harmless — `Font.custom` resolves the same name.
+        for faces in bundledFaces.values {
+            for name in ["\(faces.stem)-regular", "\(faces.stem)-semibold"] {
+                guard let url = bundledURL(named: name) else {
+                    dynaLog("preview font missing from bundle: \(name).ttf")
+                    continue
+                }
+                var error: Unmanaged<CFError>?
+                if CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error) {
                     registered = true
-                } else {
-                    dynaLog("preview font \(name) failed to register: \(description)")
+                } else if let error {
+                    let description = String(describing: error.takeRetainedValue())
+                    if description.localizedCaseInsensitiveContains("already") {
+                        registered = true
+                    } else {
+                        dynaLog("preview font \(name) failed to register: \(description)")
+                    }
                 }
             }
         }
@@ -511,26 +526,30 @@ enum WallpaperFont {
 
     /// Wallpaper greeting face: the chosen family at 600, Outfit when unset.
     ///
-    /// Avenir Next (a geometric sans that ships with macOS) is the fallback if the
-    /// bundled faces cannot be registered, so a damaged bundle still gets a closer
-    /// match than the default system face.
+    /// A bundled family asks for its vendored SemiBold PostScript name, so the weight
+    /// is the real file rather than a synthesised one; a system family gets the
+    /// closest face CoreText can find. Avenir Next (a geometric sans that ships with
+    /// macOS) backs up the bundled faces if registration fails, so a damaged bundle
+    /// still lands closer than the default system face.
     static func semibold(size: CGFloat, family: String = "") -> Font {
-        if let resolved = customFamily(family) {
-            return face(resolved, size: size, weight: .semibold)
+        let resolved = resolvedFamily(family)
+        if let faces = bundledFace(resolved) {
+            return registration
+                ? .custom(faces.semibold, size: size)
+                : .custom("AvenirNext-DemiBold", size: size)
         }
-        return registration
-            ? .custom(semiboldName, size: size)
-            : .custom("AvenirNext-DemiBold", size: size)
+        return face(resolved, size: size, weight: .semibold)
     }
 
     /// Wallpaper subtitle face: the chosen family at 400, Outfit when unset.
     static func regular(size: CGFloat, family: String = "") -> Font {
-        if let resolved = customFamily(family) {
-            return face(resolved, size: size, weight: .regular)
+        let resolved = resolvedFamily(family)
+        if let faces = bundledFace(resolved) {
+            return registration
+                ? .custom(faces.regular, size: size)
+                : .custom("AvenirNext-Regular", size: size)
         }
-        return registration
-            ? .custom(regularName, size: size)
-            : .custom("AvenirNext-Regular", size: size)
+        return face(resolved, size: size, weight: .regular)
     }
 
     /// CSS `letter-spacing` is in `em`; SwiftUI's `.tracking` is in points.
@@ -540,12 +559,29 @@ enum WallpaperFont {
 
     // MARK: Family resolution
 
-    /// `nil` means "set this in the bundled Outfit face".
-    private static func customFamily(_ explicit: String) -> String? {
-        let candidate = explicit.isEmpty ? activeFamily : explicit
-        let family = normalizedFamily(candidate)
-        guard family.caseInsensitiveCompare(defaultFamily) != .orderedSame else { return nil }
-        return family
+    /// The family the card should use — never empty, `Outfit` when unset.
+    private static func resolvedFamily(_ explicit: String) -> String {
+        normalizedFamily(explicit.isEmpty ? activeFamily : explicit)
+    }
+
+    /// Whether `family` is one of the four faces shipped in `assets/fonts`.
+    static func isBundled(_ family: String) -> Bool {
+        bundledFace(normalizedFamily(family)) != nil
+    }
+
+    /// The bundled faces behind a family name, or `nil` for a system/imported
+    /// family. Matching ignores case so a hand-edited `geist` still finds the file.
+    private static func bundledFace(
+        _ family: String
+    ) -> (stem: String, regular: String, semibold: String)? {
+        if let exact = bundledFaces[family] {
+            return exact
+        }
+        let key = family.lowercased()
+        for (name, faces) in bundledFaces where name.lowercased() == key {
+            return faces
+        }
+        return nil
     }
 
     /// Trim and drop the characters that could break a CSS font stack or a
@@ -561,7 +597,8 @@ enum WallpaperFont {
         return stripped.isEmpty ? defaultFamily : stripped
     }
 
-    /// Build a face for a family that is not the bundled Outfit.
+    /// Build a face for a family that brings no `@font-face` of its own: a system
+    /// family, or an imported one already registered with CoreText.
     ///
     /// `SF Pro` is the macOS UI face, which is not addressable as an installed
     /// family, so it resolves through `.system`. `Font.custom` falls back to the
@@ -1367,9 +1404,15 @@ final class WallpaperPreferences: ObservableObject {
         if !importedFontName.isEmpty {
             return "\(family) · imported from \(importedFontName)"
         }
+        if WallpaperFont.isBundled(family) {
+            // The same sentence for all four, with no family name spliced in: the
+            // popover follows the measured content height, so a hint that wrapped for
+            // a longer name ("Google Sans Flex ships with DynaWall — no install, no
+            // download." is 297 pt of the 288 pt the card has) would resize the whole
+            // panel the moment that chip was clicked.
+            return "Bundled with DynaWall — no install, no download."
+        }
         switch family.lowercased() {
-        case "outfit":
-            return "Outfit ships with DynaWall — no install, no download."
         case "sf pro", "system sans":
             return "SF Pro is the macOS system face."
         case "new york":
@@ -1379,7 +1422,7 @@ final class WallpaperPreferences: ObservableObject {
         case "avenir next":
             return "Avenir Next is the geometric sans macOS ships."
         default:
-            return "\(family) is applied to the greeting and subtitle."
+            return "\(family) is a system font on this Mac."
         }
     }
 
@@ -2326,15 +2369,38 @@ final class DesktopWindowController: NSObject, ObservableObject {
         (function () {
           var greeting = document.getElementById("greeting");
           var subtitle = document.getElementById("subtitle");
+          // The first family of the computed stack is what the page actually asked
+          // for; checking *that* face, rather than a hard-coded Outfit, is what tells
+          // a bundled face apart from a stack that quietly fell through to the tail.
+          var family = greeting
+            ? getComputedStyle(greeting).fontFamily.split(",")[0].replace(/["']/g, "").trim()
+            : "";
           return {
             greeting: greeting ? greeting.textContent.trim() : "",
             subtitle: subtitle ? subtitle.textContent.trim() : "",
             subtitleHidden: subtitle ? getComputedStyle(subtitle).display === "none" : null,
             background: getComputedStyle(document.body).backgroundColor,
             theme: document.documentElement.getAttribute("data-theme") || "",
-            fontFamily: greeting ? getComputedStyle(greeting).fontFamily.split(",")[0].replace(/["']/g, "").trim() : "",
+            fontFamily: family,
             fontSize: greeting ? getComputedStyle(greeting).fontSize : "",
-            fontLoaded: document.fonts ? document.fonts.check("16px Outfit") : null,
+            // Same text, same size: a different width means a different face actually
+            // shaped the line, so a bundled family can be told apart from a stack that
+            // silently fell through to its tail.
+            greetingWidth: greeting ? Math.round(greeting.getBoundingClientRect().width) : 0,
+            // The status of the @font-face behind the family ("loaded" once the bytes
+            // parsed), or null when the family brings no face with it — a system font,
+            // or a name nothing in this page or the OS can resolve. `fonts.check()`
+            // cannot answer this: it returns true for a family it has never heard of.
+            fontFaceStatus: (function () {
+              if (!document.fonts || !family) return null;
+              var status = null;
+              document.fonts.forEach(function (face) {
+                if (face.family.replace(/["']/g, "").toLowerCase() === family.toLowerCase()) {
+                  status = face.status;
+                }
+              });
+              return status;
+            })(),
             slideshowOn: document.body.classList.contains("has-photo"),
             photoLayers: document.querySelectorAll("img.photo").length,
             photoSrc: (function () {
@@ -2360,7 +2426,7 @@ final class DesktopWindowController: NSObject, ObservableObject {
                 dynaLog("subtitle: \(subtitle.isEmpty ? "<empty>" : subtitle) hidden=\(Self.describe(state["subtitleHidden"]))")
                 dynaLog("background: \(state["background"] as? String ?? "<unknown>")")
                 dynaLog("palette: \(state["theme"] as? String ?? "<unknown>") (mode: \(self.preferences.themeMode))")
-                dynaLog("font: \(state["fontFamily"] as? String ?? "<unknown>") @ \(state["fontSize"] as? String ?? "?") Outfit=\(Self.describe(state["fontLoaded"]))")
+                dynaLog("font: \(state["fontFamily"] as? String ?? "<unknown>") @ \(state["fontSize"] as? String ?? "?") width=\(Self.describe(state["greetingWidth"])) face=\(Self.describe(state["fontFaceStatus"]))")
                 let photoSrc = state["photoSrc"] as? String ?? ""
                 dynaLog("slideshow: on=\(Self.describe(state["slideshowOn"])) photo=\(photoSrc.isEmpty ? "<none>" : photoSrc) size=\(state["photoSize"] as? String ?? "?") layers=\(Self.describe(state["photoLayers"]))")
                 dynaLog("photo collection: \(self.preferences.photoCollection.label) sync=\(self.preferences.photoSync ? "time-of-day" : "off")")
@@ -2731,16 +2797,10 @@ struct SettingsPopoverView: View {
 
     // MARK: Typography
 
-    /// The one-click presets. Each entry is a real family name so the page's stack,
-    /// the preview card and an installed font all agree on what "New York" means;
-    /// `SF Pro` is the exception the renderer resolves to the system face.
-    private static let fontPresets: [(label: String, family: String)] = [
-        ("Outfit", "Outfit"),
-        ("SF Pro", "SF Pro"),
-        ("New York", "New York"),
-        ("SF Mono", "SF Mono"),
-        ("Avenir", "Avenir Next")
-    ]
+    /// The one-click presets: exactly the four faces DynaWall ships. Everything else
+    /// is a system font (the menu below) or an imported file, which is why the chips
+    /// are not a list of what happens to be installed.
+    private static let fontPresets: [String] = WallpaperFont.bundledFamilies
 
     private var fontFamilyBinding: Binding<String> {
         Binding(
@@ -2753,21 +2813,28 @@ struct SettingsPopoverView: View {
         card(systemImage: "textformat.alt", title: "Typography") {
             VStack(alignment: .leading, spacing: 8) {
                 LazyVGrid(
-                    columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3),
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 2),
                     spacing: 6
                 ) {
-                    ForEach(Self.fontPresets, id: \.family) { preset in
-                        fontPresetChip(preset.label, family: preset.family)
+                    ForEach(Self.fontPresets, id: \.self) { family in
+                        fontPresetChip(family)
                     }
                 }
                 HStack(spacing: 6) {
                     systemFontMenu
                     addFontButton
                 }
+                // One line, always. The popover resizes itself to the measured content
+                // height, so a hint that wrapped for a longer family name would grow the
+                // panel and move every card below it the moment that chip was clicked. A
+                // long name is trimmed in the middle instead, and the full line is on
+                // hover.
                 Text(preferences.fontFamilyHint)
                     .font(.system(size: 9.5))
                     .foregroundColor(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(preferences.fontFamilyHint)
                 if let message = fontNotice.message {
                     Text(message)
                         .font(.system(size: 9.5))
@@ -2779,21 +2846,23 @@ struct SettingsPopoverView: View {
     }
 
     /// A preset chip drawn *in its own face*, so the choice previews itself.
-    private func fontPresetChip(_ label: String, family: String) -> some View {
+    private func fontPresetChip(_ family: String) -> some View {
         let selected = preferences.fontFamily.caseInsensitiveCompare(family) == .orderedSame
         return Button {
             selectFontFamily(family)
         } label: {
             HStack(spacing: 4) {
-                Text(label)
+                Text(family)
                     .font(WallpaperFont.semibold(size: 11, family: family))
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
                 Spacer(minLength: 0)
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 8, weight: .bold))
-                }
+                // Reserved whether or not this chip is the selected one: a checkmark
+                // that appeared out of nowhere would squeeze the label and make the
+                // grid twitch as the pointer moved between chips.
+                Image(systemName: "checkmark")
+                    .font(.system(size: 8, weight: .bold))
+                    .opacity(selected ? 1 : 0)
             }
             .foregroundColor(selected ? .accentColor : .primary)
             .padding(.horizontal, 7)

@@ -100,7 +100,11 @@
     slideshowShuffle: 'dynawall.slideshowShuffle',
     kenBurns: 'dynawall.kenBurns',
     photoSync: 'dynawall.photoSync',
-    fontFamily: 'dynawall.fontFamily'
+    fontFamily: 'dynawall.fontFamily',
+    // Widget state, cached locally because it is the user's choice and not a host
+    // setting: the city they looked up and whether they read the card in °C or °F.
+    weatherPlace: 'dynawall.weatherPlace',
+    weatherUnit: 'dynawall.weatherUnit'
     // `photos` and `customFont` are deliberately not cached: the host re-sends them
     // on every load (the font file as a data URL read from the imported copy).
   });
@@ -969,6 +973,494 @@
   }
 
   /* ----------------------------------------------------------------------- *
+   * Widgets — constellations, cards, and the one network call
+   * ------------------------------------------------------------------------ */
+
+  /**
+   * The four satellites around the greeting. `id` is the `data-widget` of the
+   * button in index.html and the key of a renderer below; `title`/`caption` are the
+   * card header. A test asserts the markup and this list agree.
+   */
+  const WIDGETS = Object.freeze([
+    Object.freeze({ id: 'music', title: 'YouTube Music', caption: 'Stations and mixes' }),
+    Object.freeze({ id: 'news', title: 'Google News', caption: 'Today’s front page, by desk' }),
+    Object.freeze({ id: 'youtube', title: 'YouTube', caption: 'Trending, or a search' }),
+    Object.freeze({ id: 'weather', title: 'Weather', caption: 'Now, and the next hours' })
+  ]);
+
+  /**
+   * Every remote host this page can name, and nothing else — split by what the
+   * page does with it, because that distinction is the whole network policy here.
+   *
+   *   `WIDGET_FETCH_HOSTS` — the page itself calls these, and only after the weather
+   *   card is opened. Open-Meteo is keyless, CORS-enabled and free for
+   *   non-commercial use, and Google has no keyless weather endpoint at all, which
+   *   is why the forecast is the one live card.
+   *
+   *   `WIDGET_LINK_HOSTS` — handed to the operating system's default browser through
+   *   the native bridge. The page never fetches them, never frames them and never
+   *   loads their images, so no YouTube or Google News code runs inside the
+   *   wallpaper and nothing is requested while a card is closed.
+   *
+   * tests/verify.cjs asserts this list is exactly the set of hosts script.js
+   * mentions, so a new address cannot appear without being declared here — and the
+   * wallpaper's own chrome (greeting, palette, fonts, photos) stays proof-positive
+   * network-free.
+   */
+  const WIDGET_FETCH_HOSTS = Object.freeze(['api.open-meteo.com', 'geocoding-api.open-meteo.com']);
+  const WIDGET_LINK_HOSTS = Object.freeze([
+    'music.youtube.com',
+    'www.youtube.com',
+    'news.google.com'
+  ]);
+  const WIDGET_REMOTE_HOSTS = Object.freeze(WIDGET_FETCH_HOSTS.concat(WIDGET_LINK_HOSTS));
+
+  const YOUTUBE_MUSIC_HOME = 'https://music.youtube.com/';
+  const YOUTUBE_HOME = 'https://www.youtube.com/';
+  const GOOGLE_NEWS_HOME = 'https://news.google.com/';
+  const OPEN_METEO_FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
+  const OPEN_METEO_GEOCODING_URL = 'https://geocoding-api.open-meteo.com/v1/search';
+
+  /** Longest string any widget will echo back into the page. */
+  const MAX_WIDGET_TEXT = 120;
+  /** A forecast older than this is refreshed the next time the card is opened. */
+  const WEATHER_FRESH_MS = 10 * 60 * 1000;
+  /** How long a forecast request may take before the card offers a retry. */
+  const WEATHER_TIMEOUT_MS = 9000;
+  /** Extra pixels around a satellite that still count as hovering it. */
+  const HIT_PADDING = 6;
+
+  /** Trim a value to something a card can print, or `''`. */
+  function clipText(value, maxLength) {
+    if (value === undefined || value === null) return '';
+    const text = String(value).replace(/\s+/g, ' ').trim();
+    const limit =
+      Number.isFinite(Number(maxLength)) && Number(maxLength) > 0 ? Number(maxLength) : MAX_WIDGET_TEXT;
+    return text.length > limit ? text.slice(0, limit) : text;
+  }
+
+  /** Append `params` to `base` as an encoded query string, skipping empty values. */
+  function withQuery(base, params) {
+    const parts = [];
+    Object.keys(params || {}).forEach(function (key) {
+      const value = params[key];
+      if (value === undefined || value === null || value === '') return;
+      // Commas separate the multi-value fields Open-Meteo takes (`current=a,b,c`);
+      // they read better unescaped in a log or a proxy trace and every parser
+      // treats `%2C` and `,` identically. Everything else is percent-encoded.
+      const encoded = encodeURIComponent(value).replace(/%2C/g, ',');
+      parts.push(encodeURIComponent(key) + '=' + encoded);
+    });
+    if (parts.length === 0) return base;
+    return base + (base.indexOf('?') === -1 ? '?' : '&') + parts.join('&');
+  }
+
+  /** A YouTube Music search, or the home page when the term is empty. */
+  function buildYouTubeMusicSearchUrl(query) {
+    const term = clipText(query, MAX_WIDGET_TEXT);
+    return term ? withQuery(YOUTUBE_MUSIC_HOME + 'search', { q: term }) : YOUTUBE_MUSIC_HOME;
+  }
+
+  /** A YouTube search, or the home page when the term is empty. */
+  function buildYouTubeSearchUrl(query) {
+    const term = clipText(query, MAX_WIDGET_TEXT);
+    return term ? withQuery(YOUTUBE_HOME + 'results', { search_query: term }) : YOUTUBE_HOME;
+  }
+
+  /** The trending feed, narrowed to a region when one is known. */
+  function buildYouTubeTrendingUrl(regionCode) {
+    const region = clipText(regionCode, 2).toUpperCase();
+    return region
+      ? withQuery(YOUTUBE_HOME + 'feed/trending', { gl: region })
+      : YOUTUBE_HOME + 'feed/trending';
+  }
+
+  /** A Google News desk (`''` = the front page) — there is no API to call. */
+  function buildGoogleNewsUrl(topic) {
+    const term = clipText(topic, MAX_WIDGET_TEXT);
+    if (!term) return GOOGLE_NEWS_HOME;
+    return withQuery(GOOGLE_NEWS_HOME + 'search', {
+      q: term,
+      hl: 'en-US',
+      gl: 'US',
+      ceid: 'US:en'
+    });
+  }
+
+  /** `celsius` unless the card has been switched to Fahrenheit. */
+  function normalizeTemperatureUnit(unit) {
+    return unit === 'fahrenheit' ? 'fahrenheit' : 'celsius';
+  }
+
+  /** "en-GB" → "GB": the region YouTube's trending feed is asked for. */
+  function regionCodeFromLocale(locale) {
+    const match = /[-_]([A-Za-z]{2})\b/.exec(String(locale || ''));
+    return match ? match[1].toUpperCase() : 'US';
+  }
+
+  /**
+   * The Open-Meteo forecast request for one place.
+   *
+   * Everything the card draws is asked for in one call — current conditions, six
+   * hourly steps and today's high/low — because the API costs nothing but the user
+   * still pays for it in latency. `timezone=auto` is what makes the hourly labels
+   * the *place's* hours instead of the machine's.
+   */
+  function buildWeatherForecastUrl(options) {
+    const opts = options || {};
+    const unit = normalizeTemperatureUnit(opts.unit);
+    return withQuery(OPEN_METEO_FORECAST_URL, {
+      latitude: Number(opts.latitude),
+      longitude: Number(opts.longitude),
+      current:
+        'temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m',
+      hourly: 'temperature_2m,weather_code,precipitation_probability',
+      daily: 'temperature_2m_max,temperature_2m_min',
+      timezone: 'auto',
+      forecast_days: 2,
+      temperature_unit: unit,
+      wind_speed_unit: unit === 'fahrenheit' ? 'mph' : 'kmh'
+    });
+  }
+
+  /** The Open-Meteo place search behind the card's city field. */
+  function buildGeocodingUrl(name) {
+    return withQuery(OPEN_METEO_GEOCODING_URL, {
+      name: clipText(name, 80),
+      count: 6,
+      language: 'en',
+      format: 'json'
+    });
+  }
+
+  /**
+   * WMO 4677 present-weather codes → the label and the glyph the card draws.
+   *
+   * Grouped the way the code table is: 0–3 clear through overcast, 45/48 fog,
+   * 51–57 drizzle, 61–67 rain, 71–77 snow, 80–82 showers, 85/86 snow showers,
+   * 95–99 thunderstorm. An unknown code from a newer API version falls through to
+   * `WMO_FALLBACK`, because inventing "sunny" out of a number we do not know is
+   * exactly the kind of guess a weather card must not make.
+   */
+  const WMO_CONDITIONS = Object.freeze({
+    0: Object.freeze({ label: 'Clear sky', glyph: 'clear' }),
+    1: Object.freeze({ label: 'Mainly clear', glyph: 'clear' }),
+    2: Object.freeze({ label: 'Partly cloudy', glyph: 'partly' }),
+    3: Object.freeze({ label: 'Overcast', glyph: 'cloud' }),
+    45: Object.freeze({ label: 'Fog', glyph: 'fog' }),
+    48: Object.freeze({ label: 'Freezing fog', glyph: 'fog' }),
+    51: Object.freeze({ label: 'Light drizzle', glyph: 'rain' }),
+    53: Object.freeze({ label: 'Drizzle', glyph: 'rain' }),
+    55: Object.freeze({ label: 'Heavy drizzle', glyph: 'rain' }),
+    56: Object.freeze({ label: 'Freezing drizzle', glyph: 'rain' }),
+    57: Object.freeze({ label: 'Freezing drizzle', glyph: 'rain' }),
+    61: Object.freeze({ label: 'Light rain', glyph: 'rain' }),
+    63: Object.freeze({ label: 'Rain', glyph: 'rain' }),
+    65: Object.freeze({ label: 'Heavy rain', glyph: 'rain' }),
+    66: Object.freeze({ label: 'Freezing rain', glyph: 'rain' }),
+    67: Object.freeze({ label: 'Freezing rain', glyph: 'rain' }),
+    71: Object.freeze({ label: 'Light snow', glyph: 'snow' }),
+    73: Object.freeze({ label: 'Snow', glyph: 'snow' }),
+    75: Object.freeze({ label: 'Heavy snow', glyph: 'snow' }),
+    77: Object.freeze({ label: 'Snow grains', glyph: 'snow' }),
+    80: Object.freeze({ label: 'Light showers', glyph: 'rain' }),
+    81: Object.freeze({ label: 'Showers', glyph: 'rain' }),
+    82: Object.freeze({ label: 'Violent showers', glyph: 'rain' }),
+    85: Object.freeze({ label: 'Snow showers', glyph: 'snow' }),
+    86: Object.freeze({ label: 'Heavy snow showers', glyph: 'snow' }),
+    95: Object.freeze({ label: 'Thunderstorm', glyph: 'storm' }),
+    96: Object.freeze({ label: 'Thunderstorm with hail', glyph: 'storm' }),
+    99: Object.freeze({ label: 'Thunderstorm with hail', glyph: 'storm' })
+  });
+
+  const WMO_FALLBACK = Object.freeze({ label: 'Unsettled', glyph: 'cloud' });
+
+  /** `2` → `{ label: 'Partly cloudy', glyph: 'partly' }`. */
+  function describeWmoCode(code) {
+    const value = Number(code);
+    const entry = Number.isFinite(value) ? WMO_CONDITIONS[Math.round(value)] : null;
+    return entry
+      ? { label: entry.label, glyph: entry.glyph }
+      : { label: WMO_FALLBACK.label, glyph: WMO_FALLBACK.glyph };
+  }
+
+  /** 21.4 → `"21°"`; the unit lives in the metric row so the big number stays big. */
+  function formatTemperature(value) {
+    const number = Number(value);
+    return Number.isFinite(number) ? Math.round(number) + '°' : '—';
+  }
+
+  /** `"2026-01-15T14:00"` → `"14:00"`, read from the string so no timezone drifts in. */
+  function hourLabel(value) {
+    const match = /T(\d{2}):(\d{2})/.exec(String(value || ''));
+    if (!match) return '';
+    return match[1] + ':00';
+  }
+
+  /** `"just now"`, `"4 min ago"`, `"2 h ago"` — a card is opened far more often than refreshed. */
+  function relativeTime(timestamp, now) {
+    const then = Number(timestamp);
+    if (!Number.isFinite(then) || then <= 0) return 'never';
+    const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now();
+    const elapsed = Math.max(0, reference - then);
+    const minutes = Math.floor(elapsed / 60000);
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return minutes + ' min ago';
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours + ' h ago';
+    return Math.floor(hours / 24) + ' d ago';
+  }
+
+  /** Index of the first hourly entry at or after the current hour (ISO sorts lexically). */
+  function indexOfHour(times, currentTime) {
+    const needle = String(currentTime || '').slice(0, 13); // YYYY-MM-DDTHH
+    for (let index = 0; index < times.length; index += 1) {
+      if (String(times[index]).slice(0, 13) >= needle) return index;
+    }
+    return 0;
+  }
+
+  /**
+   * Normalise an Open-Meteo forecast into the shape the card draws, or `null` when
+   * the payload is not a forecast at all — the caller then shows the error state
+   * instead of a card full of dashes.
+   *
+   * Six hourly steps, not twenty-four: the strip has to stay on one line without a
+   * scrollbar on a 360 px window. Today's high/low comes from `daily`, which is
+   * why `forecast_days=2` is requested — the second day covers the six hours after
+   * midnight.
+   */
+  function parseWeatherPayload(payload, options) {
+    if (!payload || typeof payload !== 'object') return null;
+    const current = payload.current || payload.current_weather;
+    if (!current || !Number.isFinite(Number(current.temperature_2m))) return null;
+
+    const unit = normalizeTemperatureUnit(options && options.unit);
+    const condition = describeWmoCode(current.weather_code);
+    const hourly = payload.hourly || {};
+    const times = Array.isArray(hourly.time) ? hourly.time : [];
+    const temperatures = Array.isArray(hourly.temperature_2m) ? hourly.temperature_2m : [];
+    const codes = Array.isArray(hourly.weather_code) ? hourly.weather_code : [];
+    const precipitation = Array.isArray(hourly.precipitation_probability)
+      ? hourly.precipitation_probability
+      : [];
+
+    const start = indexOfHour(times, current.time);
+    const hours = [];
+    for (let index = start; index < times.length && hours.length < 6; index += 1) {
+      const chance = Number(precipitation[index]);
+      hours.push({
+        time: String(times[index]),
+        hour: hourLabel(times[index]),
+        temperature: formatTemperature(temperatures[index]),
+        label: describeWmoCode(codes[index]).label,
+        precipitation: Number.isFinite(chance) ? Math.round(chance) : null,
+        isNow: hours.length === 0
+      });
+    }
+
+    const daily = payload.daily || {};
+    const highs = Array.isArray(daily.temperature_2m_max) ? daily.temperature_2m_max : [];
+    const lows = Array.isArray(daily.temperature_2m_min) ? daily.temperature_2m_min : [];
+    const humidity = Number(current.relative_humidity_2m);
+    const wind = Number(current.wind_speed_10m);
+
+    // The highest chance in the six hours on screen: "will I need a coat" is one
+    // number, and a per-hour percentage is already in the strip.
+    let rainChance = null;
+    hours.forEach(function (hour) {
+      if (hour.precipitation === null) return;
+      rainChance = rainChance === null ? hour.precipitation : Math.max(rainChance, hour.precipitation);
+    });
+
+    return {
+      temperature: formatTemperature(current.temperature_2m),
+      apparent: formatTemperature(current.apparent_temperature),
+      high: formatTemperature(highs[0]),
+      low: formatTemperature(lows[0]),
+      humidity: Number.isFinite(humidity) ? Math.round(humidity) + '%' : '—',
+      wind: Number.isFinite(wind)
+        ? Math.round(wind) + (unit === 'fahrenheit' ? ' mph' : ' km/h')
+        : '—',
+      rain: rainChance === null ? '—' : rainChance + '%',
+      isDay: Number(current.is_day) !== 0,
+      code: Number(current.weather_code),
+      label: condition.label,
+      glyph: condition.glyph,
+      unit: unit,
+      unitSuffix: unit === 'fahrenheit' ? '°F' : '°C',
+      hours: hours
+    };
+  }
+
+  /** `{ results: [...] }` → the plain place list the picker rows render. */
+  function parseGeocodingResults(payload) {
+    const results = payload && Array.isArray(payload.results) ? payload.results : [];
+    const places = [];
+    results.slice(0, 6).forEach(function (entry) {
+      if (!entry || typeof entry !== 'object') return;
+      const latitude = Number(entry.latitude);
+      const longitude = Number(entry.longitude);
+      const name = clipText(entry.name, 80);
+      if (!name || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
+      const region = clipText(entry.admin1, 60);
+      const country = clipText(entry.country, 60);
+      places.push({
+        id: String(entry.id || name + '@' + latitude + ',' + longitude),
+        name: name,
+        region: region,
+        country: country,
+        latitude: latitude,
+        longitude: longitude,
+        label: [name, region, country].filter(Boolean).join(' · ')
+      });
+    });
+    return places;
+  }
+
+  /* ----------------------------------------------------------------------- *
+   * Widget plumbing
+   * ------------------------------------------------------------------------ */
+
+  /** The place the weather card last showed, or `null` if it never had one. */
+  function readWeatherPlace(storage) {
+    if (!storage) return null;
+    try {
+      const raw = storage.getItem(STORAGE_KEYS.weatherPlace);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const latitude = Number(parsed && parsed.latitude);
+      const longitude = Number(parsed && parsed.longitude);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+      return {
+        name: clipText(parsed.name, 80) || 'Selected place',
+        region: clipText(parsed.region, 60),
+        country: clipText(parsed.country, 60),
+        latitude: latitude,
+        longitude: longitude
+      };
+    } catch (error) {
+      return null; // A cleared or hand-edited cache is "no place", not a crash.
+    }
+  }
+
+  function writeWeatherPlace(storage, place) {
+    if (!storage || !place) return;
+    try {
+      storage.setItem(
+        STORAGE_KEYS.weatherPlace,
+        JSON.stringify({
+          name: place.name,
+          region: place.region || '',
+          country: place.country || '',
+          latitude: place.latitude,
+          longitude: place.longitude
+        })
+      );
+    } catch (error) {
+      /* Private mode; the card still works for this session. */
+    }
+  }
+
+  function readWeatherUnit(storage) {
+    try {
+      return normalizeTemperatureUnit(storage && storage.getItem(STORAGE_KEYS.weatherUnit));
+    } catch (error) {
+      return 'celsius';
+    }
+  }
+
+  function writeWeatherUnit(storage, unit) {
+    try {
+      if (storage) storage.setItem(STORAGE_KEYS.weatherUnit, normalizeTemperatureUnit(unit));
+    } catch (error) {
+      /* Private mode. */
+    }
+  }
+
+  /**
+   * `fetch` with a hard timeout, used by the weather card and nothing else.
+   *
+   * Only ever called after the card is opened, so a wallpaper nobody touches makes
+   * no request at all. `credentials: 'omit'` keeps the request anonymous — it
+   * carries no cookie from this app, because there is nothing to authenticate.
+   */
+  function fetchJson(win, url, timeoutMs) {
+    if (typeof win.fetch !== 'function') {
+      return Promise.reject(new Error('This host cannot reach the network.'));
+    }
+    const Controller = typeof win.AbortController === 'function' ? win.AbortController : null;
+    const controller = Controller ? new Controller() : null;
+    const timer = win.setTimeout(function () {
+      if (controller) controller.abort();
+    }, timeoutMs || WEATHER_TIMEOUT_MS);
+    const options = controller
+      ? { signal: controller.signal, credentials: 'omit' }
+      : { credentials: 'omit' };
+
+    return win.fetch(url, options).then(
+      function (response) {
+        win.clearTimeout(timer);
+        if (!response.ok) throw new Error('The service answered ' + response.status + '.');
+        return response.json();
+      },
+      function (error) {
+        win.clearTimeout(timer);
+        throw error;
+      }
+    );
+  }
+
+  /** Turn whatever the network threw into a sentence the card can show. */
+  function describeFetchError(error) {
+    if (error && error.name === 'AbortError') return 'The service took too long to answer.';
+    if (error && typeof error.message === 'string' && error.message) return error.message;
+    return 'The request failed.';
+  }
+
+  /**
+   * Hand a URL to the operating system.
+   *
+   * The macOS host exposes `dynawallOpenURL`, the Windows/WebView2 host reads a
+   * `dynawall:open-url` web message, and a plain browser or Lively gets a new tab.
+   * Only `https:` is ever forwarded, so a malformed catalogue entry cannot hand the
+   * shell something it would rather not open. The page itself never navigates: the
+   * page *is* the desktop.
+   */
+  function openExternal(win, url) {
+    const target = String(url || '');
+    if (!win || !/^https:\/\/[^\s]+$/.test(target)) return false;
+
+    const webkitHandlers = win.webkit && win.webkit.messageHandlers;
+    if (webkitHandlers && webkitHandlers.dynawallOpenURL) {
+      try {
+        webkitHandlers.dynawallOpenURL.postMessage(target);
+        return true;
+      } catch (error) {
+        /* Fall through to the next host. */
+      }
+    }
+
+    const webview = win.chrome && win.chrome.webview;
+    if (webview && typeof webview.postMessage === 'function') {
+      try {
+        webview.postMessage({ type: 'dynawall:open-url', url: target });
+        return true;
+      } catch (error) {
+        /* Fall through to the browser. */
+      }
+    }
+
+    if (typeof win.open !== 'function') return false;
+    try {
+      win.open(target, '_blank', 'noopener');
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /* ----------------------------------------------------------------------- *
    * Runtime
    * ------------------------------------------------------------------------ */
 
@@ -1731,6 +2223,8 @@
   const LIVELY_SUSPEND = 'suspend';
 
   let appRef = null;
+  /** The widget controller, or `null` when the page has no satellites to wire. */
+  let widgetsRef = null;
   const pendingUpdates = [];
   const pendingActions = [];
   /** A host may suspend the wallpaper before the app exists (document-start). */
@@ -1798,6 +2292,912 @@
     };
   }
 
+  /** YouTube Music stations — searches, because YouTube Music has no public API. */
+  const MUSIC_STATIONS = Object.freeze([
+    Object.freeze({ title: 'Deep focus', meta: 'Instrumental mixes for long work', query: 'deep focus' }),
+    Object.freeze({ title: 'Lo-fi beats', meta: 'Slow, warm, no vocals', query: 'lofi beats' }),
+    Object.freeze({ title: 'Coding mode', meta: 'Synth, house and driving beats', query: 'coding playlist' }),
+    Object.freeze({ title: 'Jazz in the background', meta: 'Standards and café trios', query: 'jazz background' }),
+    Object.freeze({ title: 'Piano and rain', meta: 'Quiet keys for reading', query: 'piano rain' })
+  ]);
+
+  /** The Google News desks the card offers; `''` is the front page itself. */
+  const NEWS_DESKS = Object.freeze([
+    Object.freeze({ title: 'Top stories', meta: 'The front page as Google ranks it', query: '' }),
+    Object.freeze({ title: 'Technology', meta: 'Hardware, software and the industry', query: 'technology' }),
+    Object.freeze({ title: 'World', meta: 'Global reporting as it lands', query: 'world news' }),
+    Object.freeze({ title: 'Business', meta: 'Markets, deals and the economy', query: 'business' }),
+    Object.freeze({ title: 'Science', meta: 'Space, climate and research', query: 'science' })
+  ]);
+
+  /**
+   * Weather glyphs, as SVG path data in a 24×24 box.
+   *
+   * Inline paths rather than four image files: the card must render the same in a
+   * host with no network, no extra request and no second asset to keep in sync.
+   */
+  const WEATHER_GLYPHS = Object.freeze({
+    clear:
+      '<circle cx="12" cy="12" r="4.1"/>' +
+      '<path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6"/>',
+    partly:
+      '<circle cx="8.1" cy="8.2" r="2.9"/>' +
+      '<path d="M8.1 2.6v1.5M2.6 8.2h1.5M4.2 4.3l1 1M12.1 4.3l-1 1"/>' +
+      '<path d="M17.9 19.6H9.6a4.3 4.3 0 0 1 .4-8.6 5.4 5.4 0 0 1 10.2 1.5 3.6 3.6 0 0 1-2.3 7.1Z"/>',
+    cloud:
+      '<path d="M17.4 18.6H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z"/>',
+    rain:
+      '<path d="M17.4 15.6H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z"/>' +
+      '<path d="M9 19l-1 2M13 19l-1 2M17 19l-1 2"/>',
+    snow:
+      '<path d="M17.4 15.6H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z"/>' +
+      '<path d="M9 19v2M8.1 19.5l1.8 1M9.9 19.5l-1.8 1M15 19v2M14.1 19.5l1.8 1M15.9 19.5l-1.8 1"/>',
+    fog:
+      '<path d="M17.4 14.6H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z"/>' +
+      '<path d="M5 20h14M8 22.5h8"/>',
+    storm:
+      '<path d="M17.4 15H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z"/>' +
+      '<path d="M13.4 17.5l-3 3.5h3l-1.4 3"/>'
+  });
+
+  /**
+   * Six cities the weather card can be pointed at with one click.
+   *
+   * The native desktop never gives the page the keyboard — the wallpaper window is not
+   * allowed to become key, which is what keeps every keystroke going to the app you are
+   * actually using — so a card that could only be pointed at a place by typing would be
+   * a dead end there. Coordinates come from the same geocoder the search uses, so a
+   * picked city and a searched one are the same shape.
+   */
+  const WEATHER_CITIES = Object.freeze([
+    Object.freeze({
+      name: 'London',
+      region: 'England',
+      country: 'United Kingdom',
+      latitude: 51.5074,
+      longitude: -0.1278
+    }),
+    Object.freeze({
+      name: 'New York',
+      region: 'New York',
+      country: 'United States',
+      latitude: 40.7128,
+      longitude: -74.006
+    }),
+    Object.freeze({
+      name: 'San Francisco',
+      region: 'California',
+      country: 'United States',
+      latitude: 37.7749,
+      longitude: -122.4194
+    }),
+    Object.freeze({
+      name: 'São Paulo',
+      region: 'São Paulo',
+      country: 'Brazil',
+      latitude: -23.5505,
+      longitude: -46.6333
+    }),
+    Object.freeze({
+      name: 'Tokyo',
+      region: 'Tokyo',
+      country: 'Japan',
+      latitude: 35.6895,
+      longitude: 139.6917
+    }),
+    Object.freeze({
+      name: 'Sydney',
+      region: 'New South Wales',
+      country: 'Australia',
+      latitude: -33.8688,
+      longitude: 151.2093
+    })
+  ]);
+
+  /** The arrow that marks a row as leaving the wallpaper for the browser. */
+  const ARROW_MARKUP =
+    '<svg class="widget-row-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>';
+
+  function weatherGlyphMarkup(name) {
+    const paths = WEATHER_GLYPHS[name] || WEATHER_GLYPHS.cloud;
+    return '<svg class="widget-weather-glyph" viewBox="0 0 24 24" aria-hidden="true">' + paths + '</svg>';
+  }
+
+  /* ----------------------------------------------------------------------- *
+   * Widget controller
+   * ------------------------------------------------------------------------ */
+
+  /**
+   * Wire the four satellites to the frosted card.
+   *
+   * One controller for every provider, because the parts that matter — which card
+   * is open, who had focus, where the native host may take a click, Escape and
+   * click-outside — are shared. The providers below only paint into the card body.
+   *
+   * Returns `null` when the page has no satellites at all (an older index.html, a
+   * host page that stripped them): a wallpaper without widgets is still a
+   * wallpaper, and the greeting must not fail because of a missing button.
+   */
+  function createWidgets(win, doc) {
+    const bar = doc.getElementById('widget-bar');
+    const backdrop = doc.getElementById('widget-backdrop');
+    const modal = doc.getElementById('widget-modal');
+    const body = doc.getElementById('widget-modal-body');
+    const titleNode = doc.getElementById('widget-modal-title');
+    const captionNode = doc.getElementById('widget-modal-caption');
+    const badgeNode = doc.getElementById('widget-modal-badge');
+    const closeNode = doc.getElementById('widget-modal-close');
+    if (!bar || !backdrop || !modal || !body || !titleNode || !closeNode) return null;
+
+    const buttons = Array.prototype.slice.call(bar.querySelectorAll('.widget-btn'));
+    if (buttons.length === 0) return null;
+
+    const storage = getStorage(win);
+    const state = {
+      activeId: '',
+      lastFocus: null,
+      hitFrame: 0,
+      weather: {
+        place: readWeatherPlace(storage),
+        unit: readWeatherUnit(storage),
+        data: null,
+        // idle · empty · searching · choosing · loading · ready · error
+        status: 'idle',
+        error: '',
+        query: '',
+        matches: [],
+        fetchedAt: 0,
+        token: 0
+      }
+    };
+
+    function widgetById(id) {
+      for (let index = 0; index < WIDGETS.length; index += 1) {
+        if (WIDGETS[index].id === id) return WIDGETS[index];
+      }
+      return null;
+    }
+
+    function el(tag, className, text) {
+      const node = doc.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined && text !== null) node.textContent = String(text);
+      return node;
+    }
+
+    /** A row of text under a micro label; `label` is optional. */
+    function section(label, child) {
+      const wrapper = el('section', 'widget-section');
+      if (label) wrapper.appendChild(el('p', 'widget-label', label));
+      if (child) wrapper.appendChild(child);
+      return wrapper;
+    }
+
+    function note(text) {
+      return el('p', 'widget-note', text);
+    }
+
+    /** The loading/empty/error line: same box, so a failed fetch does not resize the card. */
+    function stateRow(text, options) {
+      const settings = options || {};
+      const row = el('p', 'widget-state' + (settings.error ? ' widget-state--error' : ''));
+      if (settings.busy) row.appendChild(el('span', 'widget-spinner'));
+      row.appendChild(el('span', null, text));
+      return row;
+    }
+
+    /**
+     * A row that opens `url` in the default browser. The page never navigates
+     * itself, and the arrow is the promise that the destination is elsewhere.
+     */
+    function actionRow(title, meta, url) {
+      const button = el('button', 'widget-row');
+      button.type = 'button';
+      const text = el('span', 'widget-row-text');
+      text.appendChild(el('span', 'widget-row-title', title));
+      if (meta) text.appendChild(el('span', 'widget-row-meta', meta));
+      button.appendChild(text);
+      button.insertAdjacentHTML('beforeend', ARROW_MARKUP);
+      button.addEventListener('click', function () {
+        openExternal(win, url);
+      });
+      return button;
+    }
+
+    function rowList(rows) {
+      const list = el('div', 'widget-rows');
+      rows.forEach(function (row) {
+        list.appendChild(row);
+      });
+      return list;
+    }
+
+    /* --- native hit-testing ------------------------------------------------ */
+
+    /**
+     * Tell the host where the page is willing to take a click.
+     *
+     * The wallpaper window ignores the mouse entirely (`ignoresMouseEvents` on
+     * macOS, a click-through desktop layer on Windows), which is what keeps Finder
+     * drag-select, right-click, desktop icons and Mission Control working. That also
+     * means the page never sees the cursor, so it cannot notice a hover by itself:
+     * the host watches the pointer and only needs the rectangles that should
+     * intercept a click. They travel as viewport CSS pixels, inflated by
+     * `HIT_PADDING` so the rim of a button — and its 0.3 rem drift — does not
+     * flicker in and out.
+     *
+     * While a card is open the whole viewport is reported, because the backdrop is
+     * itself a click target: clicking anywhere outside the card closes it.
+     */
+    function publishHitRegions() {
+      const handlers = win.webkit && win.webkit.messageHandlers;
+      const webkit = handlers && handlers.dynawallInteractivity;
+      const webview = win.chrome && win.chrome.webview;
+      const webview2 = webview && typeof webview.postMessage === 'function';
+      if (!webkit && !webview2) return;
+
+      const open = Boolean(state.activeId);
+      const width = win.innerWidth || 0;
+      const height = win.innerHeight || 0;
+      const regions = [];
+
+      if (open) {
+        regions.push([0, 0, width, height]);
+      } else {
+        buttons.forEach(function (button) {
+          const rect = button.getBoundingClientRect();
+          if (!rect || rect.width <= 0 || rect.height <= 0) return;
+          regions.push([
+            rect.left - HIT_PADDING,
+            rect.top - HIT_PADDING,
+            rect.width + HIT_PADDING * 2,
+            rect.height + HIT_PADDING * 2
+          ]);
+        });
+      }
+
+      const payload = { open: open, width: width, height: height, regions: regions };
+      if (webkit) {
+        try {
+          webkit.postMessage(payload);
+        } catch (error) {
+          /* A page that lost its host mid-flight has nothing to tell. */
+        }
+      }
+      if (webview2) {
+        try {
+          // WebView2 takes one message shape per channel, so the type rides along.
+          webview.postMessage({
+            type: 'dynawall:interactivity',
+            open: open,
+            width: width,
+            height: height,
+            regions: regions
+          });
+        } catch (error) {
+          /* Same here. */
+        }
+      }
+    }
+
+    /**
+     * Replay a click the host caught on our behalf.
+     *
+     * The desktop layer stays click-through, so the page never receives a real
+     * pointer event; the host watches the mouse, keeps every click that belongs to
+     * the desktop, and hands back the ones that land on a reported rectangle. The
+     * point arrives in CSS pixels from the top-left of the viewport.
+     */
+    function clickAt(x, y) {
+      const px = Number(x);
+      const py = Number(y);
+      if (!isFinite(px) || !isFinite(py)) return false;
+      if (!doc || typeof doc.elementFromPoint !== 'function') return false;
+
+      const node = doc.elementFromPoint(px, py);
+      if (!node || typeof node.dispatchEvent !== 'function') return false;
+
+      // A synthetic click has no default action: focus the control by hand, so a
+      // field in the weather card takes the keystrokes the host forwards and the
+      // arrow keys still walk the link rows.
+      if (typeof node.focus === 'function') {
+        try {
+          node.focus({ preventScroll: true });
+        } catch (error) {
+          /* Older WebKit rejects the options bag; focusing is not load-bearing. */
+        }
+      }
+
+      const init = { bubbles: true, cancelable: true, clientX: px, clientY: py, view: win };
+      let event;
+      if (typeof win.MouseEvent === 'function') {
+        event = new win.MouseEvent('click', init);
+      } else {
+        event = doc.createEvent('MouseEvents');
+        event.initMouseEvent(
+          'click', true, true, win, 1, px, py, px, py, false, false, false, false, 0, null
+        );
+      }
+      node.dispatchEvent(event);
+      return true;
+    }
+
+    function scheduleHitRegions() {
+      if (state.hitFrame) return;
+      const defer =
+        typeof win.requestAnimationFrame === 'function'
+          ? win.requestAnimationFrame
+          : function (callback) {
+              return win.setTimeout(callback, 16);
+            };
+      state.hitFrame = defer(function () {
+        state.hitFrame = 0;
+        publishHitRegions();
+      });
+    }
+
+    /* --- open & close ------------------------------------------------------ */
+
+    /** The satellite's own glyph, cloned into the card header. */
+    function badgeMarkupFor(id) {
+      for (let index = 0; index < buttons.length; index += 1) {
+        const button = buttons[index];
+        if (button.getAttribute('data-widget') !== id) continue;
+        const glyph = button.querySelector('svg');
+        return glyph ? glyph.outerHTML : '';
+      }
+      return '';
+    }
+
+    function openWidget(id) {
+      const widget = widgetById(id);
+      if (!widget) return false;
+      if (state.activeId === id) return true;
+
+      state.activeId = id;
+      state.lastFocus = doc.activeElement;
+
+      titleNode.textContent = widget.title;
+      if (captionNode) captionNode.textContent = widget.caption;
+      if (badgeNode) badgeNode.innerHTML = badgeMarkupFor(id);
+      buttons.forEach(function (button) {
+        button.setAttribute(
+          'aria-expanded',
+          button.getAttribute('data-widget') === id ? 'true' : 'false'
+        );
+      });
+
+      backdrop.classList.add('is-open');
+      backdrop.setAttribute('aria-hidden', 'false');
+      renderWidget(id);
+      scheduleHitRegions();
+
+      // The dialog itself takes focus: Tab then starts at the close button and a
+      // screen reader announces the card before its contents.
+      try {
+        modal.focus({ preventScroll: true });
+      } catch (error) {
+        try {
+          modal.focus();
+        } catch (ignored) {
+          /* A host that refuses focus; the card still works with the mouse. */
+        }
+      }
+      return true;
+    }
+
+    function closeWidget() {
+      if (!state.activeId) return false;
+      state.activeId = '';
+      backdrop.classList.remove('is-open');
+      backdrop.setAttribute('aria-hidden', 'true');
+      buttons.forEach(function (button) {
+        button.setAttribute('aria-expanded', 'false');
+      });
+      // A closed card must not keep a fetched forecast, a half-typed city or a
+      // focused field in the heap: the body is rebuilt on the next open.
+      clearBody();
+      scheduleHitRegions();
+
+      const previous = state.lastFocus;
+      state.lastFocus = null;
+      if (previous && typeof previous.focus === 'function') {
+        try {
+          previous.focus({ preventScroll: true });
+        } catch (error) {
+          try {
+            previous.focus();
+          } catch (ignored) {
+            /* Nothing left to restore. */
+          }
+        }
+      }
+      return true;
+    }
+
+    function clearBody() {
+      while (body.firstChild) body.removeChild(body.firstChild);
+    }
+
+    /* --- keyboard & focus -------------------------------------------------- */
+
+    /** Keep Tab inside the open card: nothing behind it is reachable while it is up. */
+    function trapFocus(event) {
+      const focusables = Array.prototype.slice
+        .call(
+          modal.querySelectorAll(
+            'button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+          )
+        )
+        .filter(function (node) {
+          return node.offsetParent !== null || node === doc.activeElement;
+        });
+      if (focusables.length === 0) return;
+
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = doc.activeElement;
+      const inside = modal.contains(active);
+
+      if (event.shiftKey && (active === first || !inside)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !inside)) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    function onKeyDown(event) {
+      if (!state.activeId) return;
+      const key = event.key;
+      if (key === 'Escape' || key === 'Esc') {
+        event.preventDefault();
+        closeWidget();
+        return;
+      }
+      if (key === 'Tab') trapFocus(event);
+    }
+
+    /* --- providers --------------------------------------------------------- */
+
+    function renderWidget(id) {
+      clearBody();
+      if (id === 'music') renderMusic();
+      else if (id === 'news') renderNews();
+      else if (id === 'youtube') renderYouTube();
+      else if (id === 'weather') renderWeather();
+    }
+
+    function renderMusic() {
+      body.appendChild(
+        section(
+          'Stations',
+          rowList(
+            MUSIC_STATIONS.map(function (station) {
+              return actionRow(station.title, station.meta, buildYouTubeMusicSearchUrl(station.query));
+            })
+          )
+        )
+      );
+      body.appendChild(
+        section(
+          'Library',
+          rowList([
+            actionRow('Open YouTube Music', 'music.youtube.com', YOUTUBE_MUSIC_HOME),
+            actionRow(
+              'Liked music',
+              'Everything you have thumbed up',
+              withQuery(YOUTUBE_MUSIC_HOME + 'playlist', { list: 'LM' })
+            )
+          ])
+        )
+      );
+      body.appendChild(
+        note(
+          'YouTube Music publishes no API and ships no embeddable player, so a station opens in your browser. The wallpaper never frames YouTube or loads its artwork.'
+        )
+      );
+    }
+
+    function renderNews() {
+      body.appendChild(
+        section(
+          'Desks',
+          rowList(
+            NEWS_DESKS.map(function (desk) {
+              return actionRow(desk.title, desk.meta, buildGoogleNewsUrl(desk.query));
+            })
+          )
+        )
+      );
+      body.appendChild(
+        note(
+          'Google publishes no News API, and its RSS feed cannot be read from a local page, so each desk opens today’s Google News page in your browser rather than imitating a reader.'
+        )
+      );
+    }
+
+    function youtubeSearchForm() {
+      const form = el('form', 'widget-field');
+      const input = el('input', 'widget-input');
+      input.type = 'search';
+      input.placeholder = 'Search YouTube';
+      input.setAttribute('aria-label', 'Search YouTube');
+      input.setAttribute('autocomplete', 'off');
+      input.spellcheck = false;
+
+      const submit = el('button', 'widget-submit', 'Search');
+      submit.type = 'submit';
+
+      form.appendChild(input);
+      form.appendChild(submit);
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        const term = clipText(input.value, MAX_WIDGET_TEXT);
+        if (!term) {
+          input.focus();
+          return;
+        }
+        openExternal(win, buildYouTubeSearchUrl(term));
+      });
+      return form;
+    }
+
+    function renderYouTube() {
+      const region = regionCodeFromLocale(win.navigator ? win.navigator.language : '');
+      body.appendChild(
+        section(
+          'Jump to',
+          rowList([
+            actionRow(
+              'Trending now',
+              'What YouTube is pushing in your region',
+              buildYouTubeTrendingUrl(region)
+            ),
+            actionRow('Music', 'Charts, videos and live sessions', buildYouTubeSearchUrl('music')),
+            actionRow('Live', 'Streams happening right now', buildYouTubeSearchUrl('live')),
+            actionRow('Watch later', 'Your saved queue', YOUTUBE_HOME + 'playlist?list=WL')
+          ])
+        )
+      );
+      body.appendChild(section('Search', youtubeSearchForm()));
+      body.appendChild(
+        note(
+          'Playback happens in your browser: a YouTube player embedded in a local page is refused by the player itself, so a card that claimed to play here would only ever fail.'
+        )
+      );
+    }
+
+    /* --- weather ----------------------------------------------------------- */
+
+    function placeLabel(place) {
+      if (!place) return '';
+      return [place.name, place.region, place.country].filter(Boolean).join(' · ');
+    }
+
+    /**
+     * The weather card — the only provider with a request of its own, and it runs
+     * when the card is opened: never on load, never on a timer. The place and the
+     * unit belong to the user and live in localStorage; the forecast itself is kept
+     * for ten minutes in memory, so flipping between cards does not re-ask.
+     */
+    function renderWeather() {
+      const weather = state.weather;
+      const wrapper = el('div', 'widget-weather');
+
+      if (weather.status === 'searching') {
+        wrapper.appendChild(stateRow('Looking for “' + weather.query + '”…', { busy: true }));
+      } else if (weather.status === 'loading') {
+        wrapper.appendChild(stateRow('Reading the sky…', { busy: true }));
+      } else if (weather.status === 'error') {
+        wrapper.appendChild(stateRow(weather.error, { error: true }));
+        if (weather.place) {
+          const retry = el('button', 'widget-submit', 'Try again');
+          retry.type = 'button';
+          retry.addEventListener('click', function () {
+            loadWeather(true);
+          });
+          wrapper.appendChild(retry);
+        }
+      } else if (weather.data && weather.place) {
+        wrapper.appendChild(weatherNow(weather.data));
+        wrapper.appendChild(el('p', 'widget-weather-place', placeLabel(weather.place)));
+        wrapper.appendChild(metricGrid(weather.data));
+        wrapper.appendChild(hourStrip(weather.data));
+      } else if (weather.place) {
+        wrapper.appendChild(stateRow('No forecast for ' + placeLabel(weather.place) + ' yet.'));
+      } else {
+        wrapper.appendChild(stateRow('Search for a city to see its weather.'));
+      }
+
+      wrapper.appendChild(weather.status === 'choosing' ? placeChoices() : weatherSearchForm());
+      // A place has to be pickable without a keyboard: the native desktop never lets
+      // the page take focus, so nothing can be typed into the field above.
+      if (!weather.place && weather.status !== 'choosing') {
+        wrapper.appendChild(section('Popular cities', placeRowList(WEATHER_CITIES)));
+      }
+      wrapper.appendChild(unitChips());
+      wrapper.appendChild(weatherFootnote());
+      body.appendChild(wrapper);
+
+      // First open with a saved place: ask now, and never again while it is fresh.
+      if (weather.status === 'idle') loadWeather(false);
+    }
+
+    function loadWeather(force) {
+      const weather = state.weather;
+      if (!weather.place) {
+        weather.status = 'empty';
+        return false;
+      }
+
+      const fresh = weather.data && Date.now() - weather.fetchedAt < WEATHER_FRESH_MS;
+      if (fresh && !force) {
+        weather.status = 'ready';
+        if (state.activeId === 'weather') renderWidget('weather');
+        return false;
+      }
+
+      const token = (weather.token += 1);
+      weather.status = 'loading';
+      weather.error = '';
+      weather.matches = [];
+      if (state.activeId === 'weather') renderWidget('weather');
+
+      fetchJson(win, buildWeatherForecastUrl(weather.place), WEATHER_TIMEOUT_MS)
+        .then(function (payload) {
+          if (token !== weather.token) return;
+          const data = parseWeatherPayload(payload, { unit: weather.unit });
+          if (data) {
+            weather.data = data;
+            weather.fetchedAt = Date.now();
+            weather.status = 'ready';
+          } else {
+            // A closed card still keeps whatever arrived, so reopening is instant.
+            weather.status = 'error';
+            weather.error = 'The forecast service returned something unexpected.';
+          }
+          if (state.activeId === 'weather') renderWidget('weather');
+        })
+        .catch(function (error) {
+          if (token !== weather.token) return;
+          weather.status = 'error';
+          weather.error = describeFetchError(error);
+          if (state.activeId === 'weather') renderWidget('weather');
+        });
+      return true;
+    }
+
+    function searchPlaces(rawName) {
+      const name = clipText(rawName, 80);
+      if (!name) return false;
+
+      const weather = state.weather;
+      const token = (weather.token += 1);
+      weather.status = 'searching';
+      weather.query = name;
+      weather.error = '';
+      weather.matches = [];
+      if (state.activeId === 'weather') renderWidget('weather');
+
+      fetchJson(win, buildGeocodingUrl(name), WEATHER_TIMEOUT_MS)
+        .then(function (payload) {
+          if (token !== weather.token) return;
+          const places = parseGeocodingResults(payload);
+          if (places.length === 0) {
+            weather.status = 'error';
+            weather.error = 'No place called “' + name + '”. Try the country as well.';
+          } else if (places.length === 1) {
+            selectPlace(places[0]);
+            return;
+          } else {
+            weather.matches = places;
+            weather.status = 'choosing';
+          }
+          if (state.activeId === 'weather') renderWidget('weather');
+        })
+        .catch(function (error) {
+          if (token !== weather.token) return;
+          weather.status = 'error';
+          weather.error = describeFetchError(error);
+          if (state.activeId === 'weather') renderWidget('weather');
+        });
+      return true;
+    }
+
+    function selectPlace(place) {
+      const weather = state.weather;
+      weather.place = place;
+      weather.matches = [];
+      weather.query = '';
+      weather.data = null;
+      weather.fetchedAt = 0;
+      writeWeatherPlace(storage, place);
+      loadWeather(true);
+    }
+
+    function weatherNow(data) {
+      const now = el('div', 'widget-weather-now');
+      now.insertAdjacentHTML('beforeend', weatherGlyphMarkup(data.glyph));
+
+      const reading = el('div', 'widget-weather-reading');
+      reading.appendChild(el('span', 'widget-weather-temp', data.temperature));
+      reading.appendChild(el('span', 'widget-weather-summary', data.label));
+      reading.appendChild(
+        el(
+          'span',
+          'widget-weather-summary',
+          'Feels like ' + data.apparent + ' · H ' + data.high + ' / L ' + data.low
+        )
+      );
+      now.appendChild(reading);
+      return now;
+    }
+
+    function metricGrid(data) {
+      const grid = el('div', 'widget-weather-metrics');
+      [
+        ['Humidity', data.humidity],
+        ['Wind', data.wind],
+        ['Rain', data.rain]
+      ].forEach(function (pair) {
+        const cell = el('div', 'widget-metric');
+        cell.appendChild(el('span', 'widget-metric-value', pair[1]));
+        cell.appendChild(el('span', 'widget-metric-label', pair[0]));
+        grid.appendChild(cell);
+      });
+      return grid;
+    }
+
+    function hourStrip(data) {
+      const strip = el('div', 'widget-hours');
+      data.hours.forEach(function (hour) {
+        const cell = el('div', 'widget-hour' + (hour.isNow ? ' is-now' : ''));
+        cell.title = hour.hour + ' · ' + hour.label;
+        cell.appendChild(el('span', null, hour.hour));
+        cell.appendChild(el('span', 'widget-hour-temp', hour.temperature));
+        cell.appendChild(el('span', null, hour.precipitation === null ? '' : hour.precipitation + '%'));
+        strip.appendChild(cell);
+      });
+      return strip;
+    }
+
+    function weatherSearchForm() {
+      const form = el('form', 'widget-field');
+      const input = el('input', 'widget-input');
+      input.type = 'search';
+      input.placeholder = state.weather.place ? 'Another city' : 'City or town';
+      input.setAttribute('aria-label', 'City or town');
+      input.setAttribute('autocomplete', 'off');
+      input.spellcheck = false;
+
+      const submit = el('button', 'widget-submit', 'Find');
+      submit.type = 'submit';
+
+      form.appendChild(input);
+      form.appendChild(submit);
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        searchPlaces(input.value);
+      });
+      return form;
+    }
+
+    function placeChoices() {
+      return section('Places', placeRowList(state.weather.matches));
+    }
+
+    /** One clickable row per place: a searched one, or one from the starter list. */
+    function placeRowList(places) {
+      const list = el('div', 'widget-rows');
+      places.forEach(function (place) {
+        const button = el('button', 'widget-row');
+        button.type = 'button';
+        const text = el('span', 'widget-row-text');
+        text.appendChild(el('span', 'widget-row-title', place.name));
+        const meta = [place.region, place.country].filter(Boolean).join(' · ');
+        if (meta) text.appendChild(el('span', 'widget-row-meta', meta));
+        button.appendChild(text);
+        button.addEventListener('click', function () {
+          selectPlace(place);
+        });
+        list.appendChild(button);
+      });
+      return list;
+    }
+
+    function unitChips() {
+      const chips = el('div', 'widget-chips');
+      [
+        ['celsius', 'Celsius'],
+        ['fahrenheit', 'Fahrenheit']
+      ].forEach(function (pair) {
+        const chip = el('button', 'widget-chip', pair[1]);
+        chip.type = 'button';
+        chip.setAttribute('aria-pressed', state.weather.unit === pair[0] ? 'true' : 'false');
+        chip.addEventListener('click', function () {
+          if (state.weather.unit === pair[0]) return;
+          state.weather.unit = pair[0];
+          writeWeatherUnit(storage, pair[0]);
+          // The cached readings are in the old unit; ask again rather than relabel.
+          state.weather.fetchedAt = 0;
+          loadWeather(true);
+        });
+        chips.appendChild(chip);
+      });
+      return section('Units', chips);
+    }
+
+    function weatherFootnote() {
+      if (state.weather.data) {
+        return note(
+          'Open-Meteo · updated ' +
+            relativeTime(state.weather.fetchedAt) +
+            ' · the only request this wallpaper ever makes'
+        );
+      }
+      return note('Forecast by Open-Meteo: keyless, free, and the only thing the wallpaper ever fetches.');
+    }
+
+    /* --- wiring ------------------------------------------------------------ */
+
+    buttons.forEach(function (button) {
+      button.addEventListener('click', function (event) {
+        event.preventDefault();
+        const id = button.getAttribute('data-widget') || '';
+        if (state.activeId === id) {
+          closeWidget();
+          return;
+        }
+        openWidget(id);
+      });
+    });
+
+    if (closeNode) {
+      closeNode.addEventListener('click', function () {
+        closeWidget();
+      });
+    }
+
+    // Clicking the dimmed wallpaper outside the card closes it, like a native
+    // panel; a click inside the card must not bubble out and dismiss it.
+    backdrop.addEventListener('click', function (event) {
+      if (event.target === backdrop) closeWidget();
+    });
+    modal.addEventListener('click', function (event) {
+      event.stopPropagation();
+    });
+
+    doc.addEventListener('keydown', onKeyDown);
+    win.addEventListener('resize', scheduleHitRegions);
+
+    // The entrance slides and scales `.wallpaper-content` for 900 ms, so the
+    // satellite rectangles measured before it settled sit a few pixels off.
+    // Re-measure when that transition lands — once, not on every frame.
+    const contentNode = doc.getElementById('content');
+    if (contentNode) {
+      contentNode.addEventListener('transitionend', function (event) {
+        if (event.target === contentNode) scheduleHitRegions();
+      });
+    }
+    scheduleHitRegions();
+
+    return {
+      /** `true` while a card is on screen. */
+      isOpen: function () {
+        return Boolean(state.activeId);
+      },
+      /** The id of the open card, or `''`. */
+      activeId: function () {
+        return state.activeId;
+      },
+      open: openWidget,
+      close: closeWidget,
+      clickAt: clickAt
+    };
+  }
+
   /* ----------------------------------------------------------------------- *
    * Exposed API (console debugging + headless verification)
    * ------------------------------------------------------------------------ */
@@ -1854,7 +3254,62 @@
     persistConfig: persistConfig,
     resolveConfig: resolveConfig,
     mapLivelyProperty: mapLivelyProperty,
-    mapWallpaperEngineProperties: mapWallpaperEngineProperties
+    mapWallpaperEngineProperties: mapWallpaperEngineProperties,
+
+    /* Widgets. The catalogue, the hosts the popups are allowed to name, and the
+       pure half of every provider — URL building and payload parsing — so the
+       headless tests can check them without a DOM or a network. */
+    WIDGETS: WIDGETS,
+    WIDGET_FETCH_HOSTS: WIDGET_FETCH_HOSTS,
+    WIDGET_LINK_HOSTS: WIDGET_LINK_HOSTS,
+    WIDGET_REMOTE_HOSTS: WIDGET_REMOTE_HOSTS,
+    WEATHER_FRESH_MS: WEATHER_FRESH_MS,
+    WMO_CONDITIONS: WMO_CONDITIONS,
+    MUSIC_STATIONS: MUSIC_STATIONS,
+    NEWS_DESKS: NEWS_DESKS,
+    WEATHER_CITIES: WEATHER_CITIES,
+    WEATHER_GLYPHS: WEATHER_GLYPHS,
+    clipText: clipText,
+    withQuery: withQuery,
+    buildYouTubeMusicSearchUrl: buildYouTubeMusicSearchUrl,
+    buildYouTubeSearchUrl: buildYouTubeSearchUrl,
+    buildYouTubeTrendingUrl: buildYouTubeTrendingUrl,
+    buildGoogleNewsUrl: buildGoogleNewsUrl,
+    buildWeatherForecastUrl: buildWeatherForecastUrl,
+    buildGeocodingUrl: buildGeocodingUrl,
+    normalizeTemperatureUnit: normalizeTemperatureUnit,
+    regionCodeFromLocale: regionCodeFromLocale,
+    describeWmoCode: describeWmoCode,
+    formatTemperature: formatTemperature,
+    hourLabel: hourLabel,
+    relativeTime: relativeTime,
+    indexOfHour: indexOfHour,
+    parseWeatherPayload: parseWeatherPayload,
+    parseGeocodingResults: parseGeocodingResults,
+    readWeatherPlace: readWeatherPlace,
+    writeWeatherPlace: writeWeatherPlace,
+    readWeatherUnit: readWeatherUnit,
+    writeWeatherUnit: writeWeatherUnit,
+    openExternal: openExternal,
+
+    /** Open a card from the console or from a host script. */
+    openWidget: function (id) {
+      return widgetsRef ? widgetsRef.open(id) : false;
+    },
+    /** Close whatever card is open. */
+    closeWidget: function () {
+      return widgetsRef ? widgetsRef.close() : false;
+    },
+    /**
+     * The host's way in: replay a click at viewport CSS pixels (`x`, `y`).
+     *
+     * Both desktop hosts keep the wallpaper click-through — the desktop owns the
+     * mouse — so a click on a satellite is caught outside the page and handed back
+     * here.
+     */
+    clickAt: function (x, y) {
+      return widgetsRef ? widgetsRef.clickAt(x, y) : false;
+    }
   });
 
   global.DynaWall = DynaWall;
@@ -1873,6 +3328,15 @@
       app.start();
       appRef = app;
       installBridges(window);
+
+      // The satellites are wired after the wallpaper itself is running: a card must
+      // never be able to stop the greeting, so a failure here leaves a perfectly
+      // good wallpaper with four inert buttons instead of a blank screen.
+      try {
+        widgetsRef = createWidgets(window, document);
+      } catch (error) {
+        widgetsRef = null;
+      }
 
       // The seed is folded into the configuration above; drop the global so the
       // snapshot does not sit in the heap for the lifetime of the wallpaper.

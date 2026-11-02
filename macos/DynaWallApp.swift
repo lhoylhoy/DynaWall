@@ -1111,6 +1111,79 @@ final class PhotoEventLogger: NSObject, WKScriptMessageHandler {
     }
 }
 
+// MARK: - Widget bridge
+
+/// The rectangles, in viewport CSS pixels, the page is willing to take a click in.
+///
+/// The wallpaper window never takes mouse events (the desktop keeps its drag-select,
+/// right-click and icons), so the page has no cursor to react to and cannot know
+/// where a satellite is. It reports the rectangles instead, and the host decides
+/// which clicks belong to a card.
+struct WidgetHitArea {
+    /// Whether a card is on screen. While one is, the whole viewport is a target:
+    /// the backdrop closes the card.
+    let isOpen: Bool
+    let regions: [CGRect]
+
+    static let closed = WidgetHitArea(isOpen: false, regions: [])
+
+    func contains(_ point: CGPoint) -> Bool {
+        regions.contains { $0.contains(point) }
+    }
+}
+
+/// Answers the page's two widget calls: "these rectangles may take a click" and "the
+/// user picked a link — open it in their browser".
+final class WidgetMessageHandler: NSObject, WKScriptMessageHandler {
+    /// Called with the web view that reported, and the area it now accepts clicks in.
+    var onRegions: ((WKWebView, WidgetHitArea) -> Void)?
+    /// Called with an `https` URL the user asked for.
+    var onOpenURL: ((String) -> Void)?
+
+    static let interactivityName = "dynawallInteractivity"
+    static let openURLName = "dynawallOpenURL"
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        if message.name == Self.openURLName {
+            // The page built the URL itself, so the host refuses anything that is not
+            // a plain `https` address: no `file:`, no `javascript:`, no app scheme.
+            guard let target = message.body as? String, Self.isBrowserURL(target) else {
+                dynaLog("refused to open a non-https link from the page")
+                return
+            }
+            onOpenURL?(target)
+            return
+        }
+
+        guard message.name == Self.interactivityName,
+              let webView = message.webView,
+              let payload = message.body as? [String: Any] else { return }
+
+        let raw = payload["regions"] as? [[Any]] ?? []
+        let regions: [CGRect] = raw.compactMap { entry in
+            guard entry.count >= 4,
+                  let x = (entry[0] as? NSNumber)?.doubleValue,
+                  let y = (entry[1] as? NSNumber)?.doubleValue,
+                  let width = (entry[2] as? NSNumber)?.doubleValue,
+                  let height = (entry[3] as? NSNumber)?.doubleValue else { return nil }
+            return CGRect(x: x, y: y, width: width, height: height)
+        }
+        onRegions?(webView, WidgetHitArea(isOpen: payload["open"] as? Bool ?? false, regions: regions))
+    }
+
+    /// Only a real `https` address with a host is ever handed to the browser.
+    static func isBrowserURL(_ target: String) -> Bool {
+        guard let url = URL(string: target),
+              url.scheme?.lowercased() == "https",
+              let host = url.host,
+              !host.isEmpty else { return false }
+        return true
+    }
+}
+
 // MARK: - Launch at login
 
 /// Manages registration of DynaWall as a macOS login item (startup app).
@@ -1906,6 +1979,11 @@ final class DesktopWindowController: NSObject, ObservableObject {
         var pushedPhotos: [String]?
         /// The imported font data URL the page already has (nil = never pushed).
         var pushedFont: String?
+        /// Rectangles (viewport CSS pixels) the page will take a click in, as last
+        /// reported. Empty means the wallpaper is purely decorative right now.
+        var hitArea = WidgetHitArea.closed
+        /// Whether this display has already logged that its widgets came up.
+        var loggedWidgets = false
         /// Occlusion notifications are registered per window and removed with it.
         var observers: [NSObjectProtocol] = []
 
@@ -1945,6 +2023,10 @@ final class DesktopWindowController: NSObject, ObservableObject {
     private let dataStore = WKWebsiteDataStore.nonPersistent()
     private let photoLogger = PhotoEventLogger()
     private lazy var photoSchemeHandler = PhotoSchemeHandler(library: photoLibrary)
+    /// Carries the widget rectangles up from every page and the browser open back down.
+    private let widgetBridge = WidgetMessageHandler()
+    /// The system-wide mouse watch that forwards desktop clicks into the cards.
+    private var clickMonitor: Any?
 
     /// Typing in the popover updates the wallpaper live; a short coalescing window
     /// keeps the web app's greeting cross-fade smooth while keys are pressed.
@@ -1988,12 +2070,33 @@ final class DesktopWindowController: NSObject, ObservableObject {
                 self.scheduleThemeTimer()
             }
         }
+        // The page's widget side: where it accepts a click, and where it sends the
+        // browser when the user picks a link. Both arrive from any display, so the
+        // web view identifies which one reported.
+        widgetBridge.onRegions = { [weak self] webView, area in
+            guard let self, let entry = self.entry(for: webView) else { return }
+            entry.hitArea = area
+            // One line per display the first time the page reports its satellites: it
+            // is the only honest proof that the cards came up at all.
+            if !entry.loggedWidgets, !area.regions.isEmpty {
+                entry.loggedWidgets = true
+                dynaLog("widgets: \(area.regions.count) clickable region(s) reported")
+            }
+        }
+        widgetBridge.onOpenURL = { target in
+            guard let url = URL(string: target) else { return }
+            dynaLog("opening \(url.host ?? "link") in the default browser")
+            NSWorkspace.shared.open(url)
+        }
     }
 
     // MARK: Lifecycle
 
     func start() {
         observeSystemEvents()
+        // Cards answer to clicks that the desktop owns, so the mouse is watched from
+        // the moment the wallpaper exists.
+        startClickMonitor()
         // The standard folder has to exist before the first scan, and a fresh
         // install is seeded from the bundled wallpapers so the app has something
         // to show before the user picks anything.
@@ -2007,6 +2110,7 @@ final class DesktopWindowController: NSObject, ObservableObject {
 
     /// Stop everything: timer, observers and web views. Called on termination.
     func stop() {
+        stopClickMonitor()
         themeTimer?.invalidate()
         themeTimer = nil
         for observer in themeObservers {
@@ -2156,6 +2260,8 @@ final class DesktopWindowController: NSObject, ObservableObject {
             // through it this controller) reachable from WebKit's content controller.
             let controller = entry.webView.configuration.userContentController
             controller.removeScriptMessageHandler(forName: "dynawallPhoto")
+            controller.removeScriptMessageHandler(forName: WidgetMessageHandler.interactivityName)
+            controller.removeScriptMessageHandler(forName: WidgetMessageHandler.openURLName)
             controller.removeAllUserScripts()
             entry.webView.stopLoading()
             entry.webView.navigationDelegate = nil
@@ -2163,6 +2269,90 @@ final class DesktopWindowController: NSObject, ObservableObject {
             entry.window.contentView = nil
         }
         windows.removeAll()
+    }
+
+    // MARK: Widget clicks
+
+    /// Watch the mouse so a click can reach a card without the desktop giving up its own.
+    ///
+    /// The desktop-level window keeps `ignoresMouseEvents = true`: that is what leaves
+    /// Finder drag-select, right-click, `⌃`-click, the icons, Mission Control and
+    /// hot corners exactly as they were. The page, in turn, never sees a pointer, so
+    /// the host has to notice the click itself and replay it in the page. Three rules
+    /// keep that from stealing anything:
+    ///
+    /// - the event is only observed, never consumed — the desktop still gets every click;
+    /// - a click on another app's window, the Dock, or our own popover is ignored;
+    /// - a click outside the rectangles the page reported is ignored, so empty
+    ///   wallpaper behaves precisely as it did before widgets existed.
+    ///
+    /// Mouse monitors need no accessibility grant. If the system ever withholds one,
+    /// `clickMonitor` stays `nil` and the wallpaper is simply decorative again.
+    private func startClickMonitor() {
+        guard clickMonitor == nil else { return }
+        clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in
+            self?.forwardDesktopClick(at: NSEvent.mouseLocation)
+        }
+        if clickMonitor == nil {
+            dynaLog("no mouse monitor: wallpaper widgets stay decorative")
+        }
+    }
+
+    private func stopClickMonitor() {
+        if let clickMonitor {
+            NSEvent.removeMonitor(clickMonitor)
+        }
+        clickMonitor = nil
+    }
+
+    /// Replay one desktop click into the page that owns that point, if any.
+    private func forwardDesktopClick(at point: CGPoint) {
+        // Paused wallpaper, or the user is clicking our own menu bar popover: not a
+        // click on the desktop at all.
+        guard !isPaused, !NSApp.isActive else { return }
+
+        for entry in windows {
+            let frame = entry.window.frame
+            guard entry.window.isVisible, frame.contains(point) else { continue }
+
+            // CSS pixels are points here: the page is never zoomed and the window
+            // covers its display at native scale.
+            let local = CGPoint(x: point.x - frame.minX, y: frame.maxY - point.y)
+            guard entry.hitArea.contains(local) else { continue }
+            guard !isCovered(byAnotherAppAt: point) else { continue }
+
+            let script = "window.DynaWall && window.DynaWall.clickAt(\(local.x), \(local.y));"
+            entry.webView.evaluateJavaScript(script) { _, error in
+                if let error {
+                    dynaLog("widget click failed: \(error.localizedDescription)")
+                }
+            }
+            return
+        }
+    }
+
+    /// `true` when a normal window of another app sits at `point`, so the click there
+    /// belongs to that app and must not be replayed into the wallpaper.
+    ///
+    /// Layer 0 is the layer of ordinary app windows; the menu bar, the Dock, the
+    /// desktop icons and the wallpaper itself are all elsewhere, and the window list
+    /// below only asks "is something in front of the desktop here?".
+    private func isCovered(byAnotherAppAt point: CGPoint) -> Bool {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            // No window list: assume the desktop is not ours to click.
+            return true
+        }
+
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        for info in list {
+            guard (info[kCGWindowLayer as String] as? Int) == 0 else { continue }
+            guard (info[kCGWindowOwnerPID as String] as? pid_t) != ownPID else { continue }
+            guard let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { continue }
+            if rect.contains(point) { return true }
+        }
+        return false
     }
 
     private static func signature() -> [String] {
@@ -2192,6 +2382,10 @@ final class DesktopWindowController: NSObject, ObservableObject {
         // Photos live outside the bundle, so they are served through a private scheme.
         configuration.setURLSchemeHandler(photoSchemeHandler, forURLScheme: PhotoLibrary.scheme)
         configuration.userContentController.add(photoLogger, name: "dynawallPhoto")
+        // Widgets: the page says which rectangles may take a click and asks for the
+        // browser when the user picks a link.
+        configuration.userContentController.add(widgetBridge, name: WidgetMessageHandler.interactivityName)
+        configuration.userContentController.add(widgetBridge, name: WidgetMessageHandler.openURLName)
         // First paint = the user's wallpaper. `script.js` reads this seed while it
         // resolves its configuration, so there is no built-in copy to cross-fade
         // (and no reason to hold the window back while that swap happens).

@@ -1,4 +1,5 @@
 using System.Drawing;
+using System.Globalization;
 using System.Windows.Forms;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
@@ -18,6 +19,12 @@ internal sealed class WallpaperWindow : Form
     private readonly WallpaperController owner;
     private readonly WebView2 webView;
     private bool suspended;
+
+    /// <summary>Where this wallpaper sits on the virtual desktop, in screen pixels.</summary>
+    private Rectangle screenBounds = Rectangle.Empty;
+
+    /// <summary>Rectangles (CSS pixels) the page will take a click in, as last reported.</summary>
+    private WidgetHitArea hitArea = WidgetHitArea.Closed;
 
     /// <summary>
     /// The font payload this display already holds (<c>null</c> = nothing sent yet).
@@ -47,6 +54,12 @@ internal sealed class WallpaperWindow : Form
 
     internal bool IsReady { get; private set; }
 
+    /// <summary>Where this wallpaper sits on the virtual desktop, in screen pixels.</summary>
+    internal Rectangle ScreenBounds => screenBounds;
+
+    /// <summary>What the page last said it would take a click in.</summary>
+    internal WidgetHitArea HitArea => hitArea;
+
     internal IntPtr DesktopParent => IsHandleCreated ? DesktopHost.Parent(Handle) : IntPtr.Zero;
 
     protected override bool ShowWithoutActivation => true;
@@ -65,6 +78,12 @@ internal sealed class WallpaperWindow : Form
     /// <summary>Parent the window to the wallpaper layer and start the page.</summary>
     internal void AttachToDesktop(IntPtr host, Rectangle bounds)
     {
+        // The click watch works in screen pixels, so remember where this display's
+        // wallpaper landed once it is attached.
+        var origin = DesktopHost.GetOrigin(host);
+        screenBounds = new Rectangle(
+            origin.X + bounds.X, origin.Y + bounds.Y, bounds.Width, bounds.Height);
+
         // Show off-screen first: Show() is what makes WinForms mark the form (and the
         // WebView2 child) visible, and WebView2 only renders inside a visible window.
         // The window is reparented below, so the off-screen spot is never painted.
@@ -124,6 +143,9 @@ internal sealed class WallpaperWindow : Form
 
             core.NavigationCompleted += OnNavigationCompleted;
             core.ProcessFailed += OnProcessFailed;
+            // Widgets: the page reports where it accepts a click and asks for the
+            // browser when the user picks a link.
+            core.WebMessageReceived += OnWebMessage;
             core.Navigate($"https://{PhotoLibrary.BundledHost}/index.html");
 
             Log.Write($"web view starting on display {owner.DisplayLabel(this)} ({Bounds.Width}×{Bounds.Height})");
@@ -137,6 +159,73 @@ internal sealed class WallpaperWindow : Form
     private void OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
     {
         Log.Write($"web view process failed: {e.ProcessFailedKind}");
+    }
+
+    /// <summary>
+    /// The page's widget calls arrive here: the rectangles it accepts a click in, and
+    /// the links it wants the browser to take.
+    /// </summary>
+    private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        string json;
+        try
+        {
+            json = e.WebMessageAsJson;
+        }
+        catch (Exception)
+        {
+            // The document went away between the post and this callback.
+            return;
+        }
+
+        WidgetBridge.Read(json, out var area, out var url);
+        if (area is not null) hitArea = area;
+        if (url is not null) OpenInBrowser(url);
+    }
+
+    /// <summary>
+    /// Replay a click the desktop caught, at CSS pixels from the page's top-left corner.
+    ///
+    /// A card can only be dismissed by clicking outside it, and only the page knows
+    /// where "outside" is, so the point travels through exactly as a real click would.
+    /// </summary>
+    internal void ReplayClick(PointF point)
+    {
+        var core = ReadyCore();
+        if (core is null) return;
+
+        var script = string.Concat(
+            "window.DynaWall && window.DynaWall.clickAt(",
+            point.X.ToString("0.##", CultureInfo.InvariantCulture),
+            ", ",
+            point.Y.ToString("0.##", CultureInfo.InvariantCulture),
+            ");");
+
+        try
+        {
+            _ = core.ExecuteScriptAsync(script);
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"widget click failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Hand an <c>https</c> link to the default browser; the wallpaper never navigates.</summary>
+    private static void OpenInBrowser(string url)
+    {
+        try
+        {
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
+            {
+                UseShellExecute = true
+            });
+            Log.Write("opening a widget link in the default browser");
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"could not open the browser: {ex.Message}");
+        }
     }
 
     private async void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)

@@ -77,6 +77,48 @@ internal static class DesktopHost
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool GetWindowRect(IntPtr window, out Rect rect);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        internal int X;
+        internal int Y;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr WindowFromPoint(NativePoint point);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int GetClassName(IntPtr window, System.Text.StringBuilder name, int count);
+
+    /// <summary>
+    /// <c>true</c> when the window under <paramref name="point"/> belongs to the desktop
+    /// layer — the icon view, the wallpaper <c>WorkerW</c> or <c>Progman</c> — rather than
+    /// to an application. A click that lands here is the desktop's to give away; a click
+    /// on an app window is never replayed into the wallpaper.
+    /// </summary>
+    internal static bool IsDesktopAt(Point point)
+    {
+        var current = WindowFromPoint(new NativePoint { X = point.X, Y = point.Y });
+
+        // The icon view sits a couple of levels below the top-level desktop window, so
+        // walk up the chain instead of only inspecting the window under the cursor.
+        for (var depth = 0; depth < 6 && current != IntPtr.Zero; depth += 1)
+        {
+            var name = new System.Text.StringBuilder(64);
+            if (GetClassName(current, name, name.Capacity) > 0)
+            {
+                var className = name.ToString();
+                if (className is "Progman" or "WorkerW" or "SHELLDLL_DefView") return true;
+            }
+
+            var parent = GetParent(current);
+            if (parent == IntPtr.Zero) return false;
+            current = parent;
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// The window that sits directly behind the desktop icons, or <see cref="IntPtr.Zero"/>
     /// when Explorer is not running yet. <paramref name="spawn"/> is false for the

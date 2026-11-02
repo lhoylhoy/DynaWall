@@ -29,6 +29,111 @@
         <h1 class="greeting" id="greeting">Good day, Developer.</h1>
 
         <p class="subtitle" id="subtitle">What are we building today?</p>
+
+        <!-- Orbital constellation: four white satellites around the greeting.
+             The orbit itself is pointer-transparent, so only the buttons are hit
+             targets — script.js measures them and tells the native host where the
+             cursor may click, which is what keeps the rest of the desktop on the
+             Finder (drag-select, right-click, Mission Control). -->
+        <nav class="widget-orbit" id="widget-bar" aria-label="Desktop widgets">
+          <button
+            type="button"
+            class="widget-btn"
+            id="widget-btn-music"
+            data-widget="music"
+            title="YouTube Music"
+            aria-label="YouTube Music"
+            aria-haspopup="dialog"
+            aria-controls="widget-modal"
+            aria-expanded="false"
+          >
+            <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+              <path d="M9 17.5V5.2l11-1.9v12.2" />
+              <circle cx="6.2" cy="17.6" r="2.8" />
+              <circle cx="17.2" cy="15.5" r="2.8" />
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            class="widget-btn"
+            id="widget-btn-news"
+            data-widget="news"
+            title="Google News"
+            aria-label="Google News"
+            aria-haspopup="dialog"
+            aria-controls="widget-modal"
+            aria-expanded="false"
+          >
+            <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+              <path d="M4 21.5h15.2a2.3 2.3 0 0 0 2.3-2.3V4.3A1.8 1.8 0 0 0 19.7 2.5H8.3A1.8 1.8 0 0 0 6.5 4.3v15a2.2 2.2 0 0 1-2.2 2.2Zm0 0a2.3 2.3 0 0 1-2.3-2.3v-8.4a1.5 1.5 0 0 1 1.5-1.5h3.3" />
+              <path d="M17.6 13.6V6.4h-7.4v7.2Z" />
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            class="widget-btn"
+            id="widget-btn-youtube"
+            data-widget="youtube"
+            title="YouTube"
+            aria-label="YouTube"
+            aria-haspopup="dialog"
+            aria-controls="widget-modal"
+            aria-expanded="false"
+          >
+            <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+              <path d="M2.6 16.9a23.6 23.6 0 0 1 0-9.8 2.4 2.4 0 0 1 1.7-1.7 51.6 51.6 0 0 1 15.4 0 2.4 2.4 0 0 1 1.7 1.7 23.6 23.6 0 0 1 0 9.8 2.4 2.4 0 0 1-1.7 1.7 51.6 51.6 0 0 1-15.4 0 2.4 2.4 0 0 1-1.7-1.7Z" />
+              <path d="M10.2 15.1V8.9l5.3 3.1Z" fill="currentColor" stroke-linejoin="round" />
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            class="widget-btn"
+            id="widget-btn-weather"
+            data-widget="weather"
+            title="Weather"
+            aria-label="Weather"
+            aria-haspopup="dialog"
+            aria-controls="widget-modal"
+            aria-expanded="false"
+          >
+            <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+              <path d="M17.4 18.6H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z" />
+            </svg>
+          </button>
+        </nav>
+      </div>
+
+      <!-- Frosted-glass widget viewport. Always in the DOM, only visible once a
+           satellite is pressed: `aria-hidden` and `visibility: hidden` keep the
+           closed card out of the accessibility tree and out of the tab order. -->
+      <div class="widget-backdrop" id="widget-backdrop" aria-hidden="true">
+        <div
+          class="widget-modal"
+          id="widget-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="widget-modal-title"
+          aria-describedby="widget-modal-caption"
+          tabindex="-1"
+        >
+          <header class="widget-modal-header">
+            <span class="widget-modal-badge" id="widget-modal-badge" aria-hidden="true"></span>
+            <div class="widget-modal-heading">
+              <h2 class="widget-modal-title" id="widget-modal-title">Widget</h2>
+              <p class="widget-modal-caption" id="widget-modal-caption"></p>
+            </div>
+            <button type="button" class="widget-modal-close" id="widget-modal-close" aria-label="Close widget">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          </header>
+
+          <div class="widget-modal-body" id="widget-modal-body"></div>
+        </div>
       </div>
     </main>
   </body>

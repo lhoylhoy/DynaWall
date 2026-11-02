@@ -115,6 +115,42 @@
   --photo-fade-duration: 1200ms;
   /* Slow on purpose: a palette change is a change of light, not a UI event. */
   --theme-fade-duration: 2400ms;
+
+  /* Widgets — the white satellites orbiting the greeting and the frosted card
+     they open.
+
+     These stay deliberately neutral instead of following the band: the icons are
+     paper-white on every palette (that contrast is the whole point), and the card
+     is a smoked-glass surface with one white ink, so a photo behind it can never
+     tint the text. Only the shadow is band-independent, and only because a
+     desktop widget has to read as a separate surface rather than as part of the
+     wallpaper. */
+  --widget-size: clamp(2.3rem, 2.5vw, 2.75rem);
+  --widget-out-x: clamp(1.5rem, 3.2vw, 3.25rem);
+  --widget-out-y: clamp(1.35rem, 3vw, 2.9rem);
+  --widget-face: rgba(255, 255, 255, 0.055);
+  --widget-face-hover: rgba(255, 255, 255, 0.125);
+  --widget-face-active: rgba(255, 255, 255, 0.18);
+  --widget-border: rgba(255, 255, 255, 0.14);
+  --widget-border-hover: rgba(255, 255, 255, 0.3);
+  --widget-ink: #ffffff;
+  --widget-shadow:
+    0 1px 2px rgba(1, 4, 9, 0.35),
+    0 10px 30px rgba(1, 4, 9, 0.26);
+  /* The frosted sheet: 26 px of blur over a 72% dark tint, so a bright photo
+     behind the card still reads as a backdrop and not as content. */
+  --glass-tint: rgba(13, 17, 23, 0.72);
+  --glass-tint-edge: rgba(255, 255, 255, 0.16);
+  --glass-blur: 26px;
+  --glass-radius: clamp(1.05rem, 1.5vw, 1.4rem);
+  --glass-shadow:
+    0 2px 6px rgba(1, 4, 9, 0.4),
+    0 28px 70px rgba(1, 4, 9, 0.5);
+  /* A short settle rather than a bounce: the card drops the last few pixels and
+     stops, which is what makes it feel like it was placed rather than thrown. */
+  --ease-settle: cubic-bezier(0.16, 1, 0.3, 1);
+  --widget-open-duration: 280ms;
+  --widget-close-duration: 180ms;
 }
 
 /* ---------------------------------------------------------------------------
@@ -510,6 +546,759 @@ body.has-photo .subtitle {
 }
 
 /* ---------------------------------------------------------------------------
+   Widget satellites
+   Four white glyphs floating around the greeting: music at the top left, news at
+   the top right, YouTube bottom left, weather bottom right. They are absolutely
+   positioned inside `.wallpaper-content` (which is `position: relative`), so they
+   never take part in the greeting's column layout and can sit just outside the
+   text block without ever overlapping it — the offsets are measured from the
+   corners of the text itself, not from the viewport.
+
+   The orbit is pointer-transparent and only the buttons opt back in. That matters
+   for the native hosts: script.js reports each button's rectangle to macOS, which
+   keeps the rest of the desktop click-through, so the wallpaper never steals a
+   Finder drag-select just because a widget happens to be nearby.
+   --------------------------------------------------------------------------- */
+
+.widget-orbit {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.widget-btn {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  width: var(--widget-size);
+  height: var(--widget-size);
+  padding: 0;
+  margin: 0;
+  border: 1px solid var(--widget-border);
+  border-radius: 50%;
+  background-color: var(--widget-face);
+  color: var(--widget-ink);
+  box-shadow: var(--widget-shadow);
+  /* The blur is what makes the satellites sit *on* the wallpaper instead of being
+     pasted over it: a bright photo behind the button softens into the glass. */
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+  pointer-events: auto;
+  cursor: pointer;
+  opacity: 0.8;
+  /* Three independent properties so nothing has to fight: `translate` places the
+     button, `scale` answers the pointer and `transform` carries the ambient
+     drift. A single `transform` would let the hover transition cancel the loop. */
+  transition:
+    opacity 220ms var(--ease-out),
+    scale 220ms var(--ease-out),
+    background-color 220ms var(--ease-out),
+    border-color 220ms var(--ease-out),
+    box-shadow 220ms var(--ease-out);
+  animation: widget-drift var(--widget-drift-duration, 13s) ease-in-out infinite alternate;
+  animation-delay: var(--widget-drift-delay, 0s);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.widget-icon {
+  /* The glyph is stroked, not filled: one hairline weight reads as "icon" at 20 px
+     and stays crisp on a Retina display without a second asset. */
+  width: 46%;
+  height: 46%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The four corners. Each button is placed at its corner of the text block and then
+   pushed outwards, so the satellites hug the greeting whatever the greeting's
+   width turns out to be. */
+.widget-btn[data-widget="music"] {
+  top: 0;
+  left: 0;
+  translate: calc(-1 * var(--widget-out-x)) calc(-1 * var(--widget-out-y));
+  --widget-drift-x: 0.16rem;
+  --widget-drift-y: -0.3rem;
+}
+
+.widget-btn[data-widget="news"] {
+  top: 0;
+  right: 0;
+  translate: var(--widget-out-x) calc(-1 * var(--widget-out-y));
+  --widget-drift-x: -0.14rem;
+  --widget-drift-y: -0.34rem;
+  --widget-drift-delay: -3.6s;
+}
+
+.widget-btn[data-widget="youtube"] {
+  bottom: 0;
+  left: 0;
+  translate: calc(-1 * var(--widget-out-x)) var(--widget-out-y);
+  --widget-drift-x: 0.15rem;
+  --widget-drift-y: 0.28rem;
+  --widget-drift-delay: -7.1s;
+}
+
+.widget-btn[data-widget="weather"] {
+  bottom: 0;
+  right: 0;
+  translate: var(--widget-out-x) var(--widget-out-y);
+  --widget-drift-x: -0.16rem;
+  --widget-drift-y: 0.32rem;
+  --widget-drift-delay: -10.4s;
+}
+
+/* A quarter of a rem each way over thirteen seconds: alive when you look at it,
+   invisible when you do not. */
+@keyframes widget-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(var(--widget-drift-x, 0.1rem), var(--widget-drift-y, -0.3rem), 0);
+  }
+}
+
+.widget-btn:hover {
+  opacity: 1;
+  scale: 1.08;
+  background-color: var(--widget-face-hover);
+  border-color: var(--widget-border-hover);
+  box-shadow:
+    var(--widget-shadow),
+    0 0 0 4px rgba(255, 255, 255, 0.05),
+    0 0 22px rgba(255, 255, 255, 0.12);
+}
+
+.widget-btn:active {
+  scale: 0.96;
+  background-color: var(--widget-face-active);
+}
+
+.widget-btn:focus-visible {
+  opacity: 1;
+  outline: 2px solid rgba(255, 255, 255, 0.72);
+  outline-offset: 3px;
+}
+
+/* The satellite whose card is open: lit like a hover, so the icon bar and the
+   popup always read as one thing. */
+.widget-btn[aria-expanded="true"] {
+  opacity: 1;
+  scale: 1.06;
+  background-color: var(--widget-face-hover);
+  border-color: var(--widget-border-hover);
+}
+
+/* A covered desktop, a sleeping display or the menu bar's Pause: the drift stops
+   inside the compositor instead of asking for frames nobody can see. */
+html.is-suspended .widget-btn {
+  animation-play-state: paused;
+}
+
+/* ---------------------------------------------------------------------------
+   Frosted popup card
+   One viewport for every widget: the backdrop dims the wallpaper a little and
+   swallows the click that closes the card, and the modal is the smoked-glass sheet
+   the provider renders into. It is `visibility: hidden` rather than `display: none`
+   so the open and close transitions can actually run, and `aria-hidden` on the
+   backdrop keeps the closed card out of the accessibility tree.
+   --------------------------------------------------------------------------- */
+
+.widget-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: clamp(1rem, 4vh, 3rem);
+  background-color: rgba(1, 4, 9, 0.3);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--widget-close-duration) var(--ease-out),
+    visibility 0s linear var(--widget-close-duration);
+}
+
+.widget-backdrop.is-open {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity var(--widget-open-duration) var(--ease-out),
+    visibility 0s linear 0s;
+}
+
+.widget-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 31rem);
+  max-height: min(78vh, 36rem);
+  overflow: hidden;
+  border: 1px solid var(--glass-tint-edge);
+  border-radius: var(--glass-radius);
+  background-color: var(--glass-tint);
+  color: var(--text-primary);
+  box-shadow: var(--glass-shadow);
+  /* The one real frosted surface. 26 px is heavy enough that a sharp photo behind
+     the card turns into a wash instead of competing with the text. */
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(160%);
+  /* Closed state: a few pixels low and a touch small, so the card rises into place
+     as the backdrop fades in. */
+  transform: translate3d(0, 0.9rem, 0) scale(0.97);
+  opacity: 0;
+  transition:
+    transform var(--widget-close-duration) var(--ease-out),
+    opacity var(--widget-close-duration) var(--ease-out);
+  outline: none;
+}
+
+.widget-backdrop.is-open .widget-modal {
+  transform: translate3d(0, 0, 0) scale(1);
+  opacity: 1;
+  transition:
+    transform var(--widget-open-duration) var(--ease-settle),
+    opacity calc(var(--widget-open-duration) / 2) var(--ease-out);
+}
+
+.widget-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.95rem 1.1rem 0.8rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* The provider's own glyph, cloned from the satellite that opened the card. */
+.widget-modal-badge {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 2.05rem;
+  height: 2.05rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.06);
+  color: var(--widget-ink);
+}
+
+.widget-modal-badge svg {
+  width: 52%;
+  height: 52%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.widget-modal-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.widget-modal-title {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 0.98rem;
+  font-weight: 600;
+  letter-spacing: 0.005em;
+  line-height: 1.25;
+}
+
+.widget-modal-caption {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 400;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+.widget-modal-caption:empty {
+  display: none;
+}
+
+.widget-modal-close {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.85rem;
+  height: 1.85rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background-color: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    color 180ms var(--ease-out),
+    background-color 180ms var(--ease-out),
+    border-color 180ms var(--ease-out);
+}
+
+.widget-modal-close svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+}
+
+.widget-modal-close:hover {
+  border-color: rgba(255, 255, 255, 0.12);
+  background-color: rgba(255, 255, 255, 0.08);
+  color: var(--widget-ink);
+}
+
+.widget-modal-close:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.72);
+  outline-offset: 2px;
+}
+
+/* --- card contents ------------------------------------------------------- */
+
+.widget-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.05rem 1.1rem 1.15rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+
+.widget-modal-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.widget-modal-body::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.widget-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.widget-label {
+  margin: 0;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.widget-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.widget-chip {
+  padding: 0.34rem 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.045);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  font-weight: 400;
+  line-height: 1.2;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out),
+    color 160ms var(--ease-out);
+}
+
+.widget-chip:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  background-color: rgba(255, 255, 255, 0.11);
+}
+
+.widget-chip[aria-pressed="true"] {
+  border-color: rgba(255, 255, 255, 0.42);
+  background-color: rgba(255, 255, 255, 0.16);
+}
+
+.widget-chip:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.72);
+  outline-offset: 2px;
+}
+
+/* One pressable row per destination. The trailing arrow is what tells the reader
+   the destination is outside the wallpaper — every link in a card leaves for the
+   default browser, and pretending otherwise would be the one dishonest pixel in
+   the whole design. */
+.widget-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.widget-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid transparent;
+  border-radius: 0.75rem;
+  background-color: transparent;
+  color: inherit;
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background-color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out);
+}
+
+.widget-row:hover {
+  border-color: rgba(255, 255, 255, 0.1);
+  background-color: rgba(255, 255, 255, 0.07);
+}
+
+.widget-row:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.72);
+  outline-offset: 1px;
+}
+
+.widget-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.widget-row-title {
+  font-size: 0.87rem;
+  font-weight: 400;
+  line-height: 1.3;
+  color: var(--text-primary);
+}
+
+.widget-row-meta {
+  font-size: 0.74rem;
+  font-weight: 400;
+  line-height: 1.3;
+  color: var(--text-secondary);
+}
+
+.widget-row-arrow {
+  flex: 0 0 auto;
+  width: 0.95rem;
+  height: 0.95rem;
+  fill: none;
+  stroke: var(--text-secondary);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.75;
+}
+
+.widget-row:hover .widget-row-arrow {
+  stroke: var(--widget-ink);
+  opacity: 1;
+}
+
+.widget-note {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+/* Loading, empty and error are the same shape on purpose: the card never changes
+   size class, only its message, so a failed fetch does not make the popup jump. */
+.widget-state {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0;
+  padding: 0.85rem 0.2rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.widget-state--error {
+  color: #ffb4a8;
+}
+
+.widget-spinner {
+  flex: 0 0 auto;
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 1.6px solid rgba(255, 255, 255, 0.18);
+  border-top-color: rgba(255, 255, 255, 0.75);
+  border-radius: 50%;
+  animation: widget-spin 900ms linear infinite;
+}
+
+@keyframes widget-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+/* --- weather, tiles and the city search ---------------------------------- */
+
+.widget-weather {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.widget-weather-now {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.widget-weather-glyph {
+  flex: 0 0 auto;
+  width: 3.1rem;
+  height: 3.1rem;
+  fill: none;
+  stroke: var(--widget-ink);
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.92;
+}
+
+.widget-weather-reading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+}
+
+.widget-weather-temp {
+  font-family: var(--font-sans);
+  font-size: 2.05rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  color: var(--widget-ink);
+}
+
+.widget-weather-summary {
+  font-size: 0.82rem;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+.widget-weather-place {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.widget-weather-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.widget-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 0.7rem;
+  background-color: rgba(255, 255, 255, 0.04);
+}
+
+.widget-metric-value {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.widget-metric-label {
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.widget-hours {
+  display: flex;
+  gap: 0.3rem;
+  overflow-x: auto;
+  padding-bottom: 0.15rem;
+  scrollbar-width: none;
+}
+
+.widget-hours::-webkit-scrollbar {
+  display: none;
+}
+
+.widget-hour {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  flex: 1 0 auto;
+  min-width: 3.1rem;
+  padding: 0.45rem 0.3rem;
+  border: 1px solid transparent;
+  border-radius: 0.65rem;
+  background-color: rgba(255, 255, 255, 0.035);
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.widget-hour.is-now {
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--text-primary);
+}
+
+.widget-hour-temp {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.widget-field {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.widget-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.45rem 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 0.65rem;
+  background-color: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  line-height: 1.3;
+  /* `body` turns selection off so a drag on the wallpaper never paints blue over
+     the greeting; a text field the user is meant to type in has to opt back in. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.widget-input::placeholder {
+  color: var(--text-secondary);
+}
+
+.widget-input:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.34);
+  background-color: rgba(255, 255, 255, 0.09);
+}
+
+.widget-submit {
+  flex: 0 0 auto;
+  padding: 0.45rem 0.8rem;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 0.65rem;
+  background-color: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: background-color 160ms var(--ease-out), border-color 160ms var(--ease-out);
+}
+
+.widget-submit:hover {
+  border-color: rgba(255, 255, 255, 0.32);
+  background-color: rgba(255, 255, 255, 0.16);
+}
+
+.widget-submit:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.72);
+  outline-offset: 2px;
+}
+
+.widget-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.widget-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0.8rem;
+  background-color: rgba(255, 255, 255, 0.045);
+  color: inherit;
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 160ms var(--ease-out), border-color 160ms var(--ease-out);
+}
+
+.widget-tile:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+  background-color: rgba(255, 255, 255, 0.09);
+}
+
+.widget-tile:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.72);
+  outline-offset: 1px;
+}
+
+.widget-tile-title {
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+
+.widget-tile-meta {
+  font-size: 0.7rem;
+  line-height: 1.3;
+  color: var(--text-secondary);
+}
+
+/* Below this width there is no room beside the greeting for four satellites: they
+   would either overlap the text or leave the viewport. The constellation collapses
+   into one centred row under the subtitle, which is also the layout a phone gets. */
+@media (max-width: 720px) {
+  .widget-orbit {
+    position: static;
+    inset: auto;
+    display: flex;
+    justify-content: center;
+    gap: 0.7rem;
+    margin-top: 0.5rem;
+  }
+
+  .widget-btn {
+    position: static;
+    translate: none;
+    transform: none;
+    animation: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Responsive & accessibility
    --------------------------------------------------------------------------- */
 
@@ -552,6 +1341,32 @@ body.has-photo .subtitle {
 
   .photo.is-ken-burns {
     animation: none;
+  }
+
+  /* The satellites hold still, and the card is placed instead of rising into
+     place: the drift is ambient rather than information, and the popup's slide is
+     exactly the kind of movement this setting exists to remove. The loading ring
+     only slows down — a frozen spinner reads as a broken card. */
+  .widget-btn {
+    animation: none;
+    transform: none;
+  }
+
+  .widget-backdrop,
+  .widget-backdrop.is-open,
+  .widget-modal,
+  .widget-backdrop.is-open .widget-modal {
+    transition-duration: 1ms;
+    transition-delay: 0s;
+  }
+
+  .widget-modal,
+  .widget-backdrop.is-open .widget-modal {
+    transform: none;
+  }
+
+  .widget-spinner {
+    animation-duration: 2.4s;
   }
 
   /* The ambient aura is motion too: hold it at its brightest, still frame. */

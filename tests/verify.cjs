@@ -2302,11 +2302,434 @@ test('the bundled four stay the shared default but are hidden from the macOS dro
   });
 });
 
-test('nothing in the wallpaper reaches the network', () => {
-  ['style.css', 'script.js', 'index.html'].forEach((file) => {
+test('the wallpaper itself never reaches the network, and the widgets name only declared hosts', () => {
+  // The chrome — markup, styles, fonts, photos — stays proof-positive offline.
+  ['style.css', 'index.html'].forEach((file) => {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
     assert.ok(!/https?:\/\//.test(source), `${file} must not reference a remote URL`);
   });
+
+  // Every address in script.js has to belong to the widget catalogue, and every host
+  // the file names has to be declared: the declared list and the source can never
+  // drift apart in either direction.
+  const script = readText('script.js');
+  const hosts = new Set();
+  script.replace(/https?:\/\/([^/'"\s)]+)/g, (match, host) => {
+    hosts.add(host);
+    return match;
+  });
+  assert.deepEqual(
+    Array.from(hosts).sort(),
+    Array.from(DynaWall.WIDGET_REMOTE_HOSTS).sort(),
+    'script.js must name exactly the declared widget hosts'
+  );
+  DynaWall.WIDGET_LINK_HOSTS.forEach((host) => {
+    assert.ok(
+      !DynaWall.WIDGET_FETCH_HOSTS.includes(host),
+      `${host} cannot be both linked and fetched`
+    );
+  });
+
+  // Only the keyless Open-Meteo calls are made by the page, and only from the
+  // weather provider — never on load, never on a timer.
+  const fetches = Array.from(script.matchAll(/fetchJson\(win, (build\w+)/g)).map(
+    (match) => match[1]
+  );
+  assert.deepEqual(
+    fetches.sort(),
+    ['buildGeocodingUrl', 'buildWeatherForecastUrl'],
+    'the forecast and its city search are the only calls the page makes'
+  );
+
+  // Nothing frames, prefetches or hot-links a remote surface.
+  assert.ok(
+    !/<iframe|new Image\(|<img[^>]+https?:|<script[^>]+src="https?:/.test(script),
+    'no remote frames, images or scripts'
+  );
+  assert.ok(!/setInterval\(/.test(script), 'no polling: a card fetches when it is opened');
+});
+
+group('Widgets');
+
+test('every satellite in index.html has a widget, and every widget a satellite', () => {
+  const markup = readText('index.html');
+  const declared = Array.from(markup.matchAll(/data-widget="([a-z]+)"/g)).map((match) => match[1]);
+  assert.deepEqual(
+    declared,
+    DynaWall.WIDGETS.map((widget) => widget.id),
+    'the markup and the catalogue must list the same widgets, in the same order'
+  );
+  DynaWall.WIDGETS.forEach((widget) => {
+    assert.ok(
+      markup.includes(`id="widget-btn-${widget.id}"`),
+      `missing the satellite for ${widget.id}`
+    );
+    assert.ok(widget.title && widget.caption, `${widget.id} needs a card header`);
+  });
+
+  assert.match(markup, /role="dialog"/, 'the card is a dialog');
+  assert.match(markup, /aria-modal="true"/);
+  assert.match(markup, /id="widget-modal-close"/, 'a close button must exist');
+  assert.match(markup, /aria-labelledby="widget-modal-title"/);
+  assert.match(markup, /aria-controls="widget-modal"/);
+});
+
+test('the popup is inert until a satellite opens it', () => {
+  const markup = readText('index.html');
+  assert.match(markup, /id="widget-backdrop"[^>]*aria-hidden="true"/);
+  assert.equal((markup.match(/aria-expanded="false"/g) || []).length, DynaWall.WIDGETS.length);
+
+  const css = readText('style.css');
+  assert.match(
+    css,
+    /\.widget-backdrop\s*\{[^}]*visibility:\s*hidden[^}]*pointer-events:\s*none/,
+    'a closed card cannot be clicked or focused'
+  );
+  assert.match(
+    css,
+    /\.widget-backdrop\.is-open\s*\{[^}]*visibility:\s*visible[^}]*pointer-events:\s*auto/
+  );
+});
+
+test('the satellites are paper-white on every band', () => {
+  const css = readText('style.css');
+  assert.match(css, /--widget-ink:\s*#ffffff/, 'the glyphs are white, not band-tinted');
+  assert.match(css, /\.widget-btn\s*\{[^}]*color:\s*var\(--widget-ink\)/);
+  assert.match(css, /\.widget-btn\s*\{[^}]*pointer-events:\s*auto/);
+  assert.match(css, /\.widget-orbit\s*\{[^}]*pointer-events:\s*none/, 'only the buttons are targets');
+  assert.match(css, /backdrop-filter:\s*blur\(var\(--glass-blur\)\)/, 'the card is frosted');
+  assert.match(css, /\.widget-modal\s*\{[^}]*border-radius:\s*var\(--glass-radius\)/);
+});
+
+test('widget motion stops with the wallpaper and under reduced motion', () => {
+  const css = readText('style.css');
+  assert.match(css, /html\.is-suspended \.widget-btn\s*\{[^}]*animation-play-state:\s*paused/);
+
+  const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+  assert.match(reduced, /\.widget-btn/, 'the drift must stop');
+  assert.match(reduced, /\.widget-modal/, 'the card must not slide');
+  assert.ok(!/will-change/.test(reduced), 'reduced motion must not promote anything');
+});
+
+test('a click on the wallpaper is not a click on a widget', () => {
+  const script = readText('script.js');
+  assert.match(script, /handlers\.dynawallInteractivity/, 'the macOS host needs the rectangles');
+  assert.match(script, /dynawall:interactivity/, 'and so does the WebView2 host');
+  assert.match(script, /rect\.left - HIT_PADDING/, 'regions are per button, not the whole orbit');
+  assert.match(
+    script,
+    /regions\.push\(\[0, 0, width, height\]\)/,
+    'an open card owns the viewport, so a click outside it closes it'
+  );
+  assert.match(script, /dynawallOpenURL\.postMessage/, 'macOS opens the browser for us');
+  assert.match(script, /dynawall:open-url/, 'so does the WebView2 host');
+  assert.match(script, /clickAt: function/, 'the host replays a click through the API');
+});
+
+test('the widget URLs are built and encoded, not pasted', () => {
+  assert.equal(
+    DynaWall.buildYouTubeMusicSearchUrl('lo-fi & jazz'),
+    'https://music.youtube.com/search?q=lo-fi%20%26%20jazz'
+  );
+  assert.equal(DynaWall.buildYouTubeMusicSearchUrl('   '), 'https://music.youtube.com/');
+  assert.equal(
+    DynaWall.buildYouTubeSearchUrl('live'),
+    'https://www.youtube.com/results?search_query=live'
+  );
+  assert.equal(DynaWall.buildYouTubeTrendingUrl('gb'), 'https://www.youtube.com/feed/trending?gl=GB');
+  assert.equal(DynaWall.buildYouTubeTrendingUrl(''), 'https://www.youtube.com/feed/trending');
+  assert.equal(DynaWall.buildGoogleNewsUrl(''), 'https://news.google.com/');
+  assert.equal(
+    DynaWall.buildGoogleNewsUrl('world news'),
+    'https://news.google.com/search?q=world%20news&hl=en-US&gl=US&ceid=US%3Aen'
+  );
+  assert.equal(DynaWall.clipText('  a\n b  '), 'a b');
+  assert.equal(DynaWall.clipText('abcdef', 3), 'abc');
+});
+
+test('the forecast request asks for exactly what the card draws', () => {
+  const url = DynaWall.buildWeatherForecastUrl({
+    latitude: 51.5072,
+    longitude: -0.1276,
+    unit: 'celsius'
+  });
+  assert.ok(url.startsWith('https://api.open-meteo.com/v1/forecast?'));
+  [
+    'latitude=51.5072',
+    'longitude=-0.1276',
+    'timezone=auto',
+    'forecast_days=2',
+    'temperature_unit=celsius',
+    'wind_speed_unit=kmh',
+    'current=temperature_2m,relative_humidity_2m',
+    'hourly=temperature_2m,weather_code,precipitation_probability',
+    'daily=temperature_2m_max,temperature_2m_min'
+  ].forEach((part) => {
+    assert.ok(url.includes(part), `the forecast URL is missing ${part}`);
+  });
+
+  const imperial = DynaWall.buildWeatherForecastUrl({
+    latitude: 40.7,
+    longitude: -74,
+    unit: 'fahrenheit'
+  });
+  assert.ok(imperial.includes('temperature_unit=fahrenheit'));
+  assert.ok(imperial.includes('wind_speed_unit=mph'));
+  assert.equal(DynaWall.normalizeTemperatureUnit('kelvin'), 'celsius');
+
+  const geo = DynaWall.buildGeocodingUrl('  Zürich ');
+  assert.ok(geo.startsWith('https://geocoding-api.open-meteo.com/v1/search?'));
+  assert.ok(geo.includes('name=Z%C3%BCrich'));
+  assert.ok(geo.includes('count=6'));
+});
+
+test('the forecast parser reads the payload the card shows', () => {
+  const payload = {
+    current: {
+      time: '2026-01-15T14:30',
+      temperature_2m: 7.6,
+      relative_humidity_2m: 81,
+      apparent_temperature: 5.2,
+      is_day: 1,
+      weather_code: 61,
+      wind_speed_10m: 14.3
+    },
+    hourly: {
+      time: [
+        '2026-01-15T13:00',
+        '2026-01-15T14:00',
+        '2026-01-15T15:00',
+        '2026-01-15T16:00',
+        '2026-01-15T17:00',
+        '2026-01-15T18:00',
+        '2026-01-15T19:00'
+      ],
+      temperature_2m: [7.1, 7.6, 8, 8.4, 8.1, 7.2, 6.4],
+      weather_code: [3, 61, 61, 80, 3, 2, 1],
+      precipitation_probability: [10, 55, 70, 40, 15, 5, 0]
+    },
+    daily: { temperature_2m_max: [9.4], temperature_2m_min: [2.6] }
+  };
+
+  const data = DynaWall.parseWeatherPayload(payload, { unit: 'celsius' });
+  assert.equal(data.temperature, '8°');
+  assert.equal(data.apparent, '5°');
+  assert.equal(data.high, '9°');
+  assert.equal(data.low, '3°');
+  assert.equal(data.humidity, '81%');
+  assert.equal(data.wind, '14 km/h');
+  assert.equal(data.rain, '70%', 'the highest chance in the six hours on screen');
+  assert.equal(data.label, 'Light rain');
+  assert.equal(data.glyph, 'rain');
+  assert.equal(data.unitSuffix, '°C');
+  assert.equal(data.hours.length, 6, 'six hours fit the strip');
+  assert.equal(data.hours[0].hour, '14:00', 'the strip starts at the current hour');
+  assert.equal(data.hours[0].isNow, true);
+  assert.equal(data.hours[1].hour, '15:00');
+
+  assert.equal(DynaWall.parseWeatherPayload(null), null);
+  assert.equal(DynaWall.parseWeatherPayload({}), null);
+  assert.equal(DynaWall.parseWeatherPayload({ current: {} }), null, 'a payload without a temperature is not a forecast');
+  assert.equal(DynaWall.parseWeatherPayload({ current: { temperature_2m: 3 } }).hours.length, 0);
+});
+
+test('unknown weather codes are admitted, never guessed', () => {
+  assert.deepEqual(DynaWall.describeWmoCode(0), { label: 'Clear sky', glyph: 'clear' });
+  assert.deepEqual(DynaWall.describeWmoCode(95), { label: 'Thunderstorm', glyph: 'storm' });
+  assert.deepEqual(DynaWall.describeWmoCode(1234), { label: 'Unsettled', glyph: 'cloud' });
+  assert.deepEqual(DynaWall.describeWmoCode('nope'), { label: 'Unsettled', glyph: 'cloud' });
+  Object.keys(DynaWall.WEATHER_GLYPHS).forEach((name) => {
+    assert.match(DynaWall.WEATHER_GLYPHS[name], /^<(circle|path)/, `${name} has no artwork`);
+  });
+});
+
+test('a city can be picked without a keyboard', () => {
+  // The native desktop never gives the page focus, so the starter cities are the only
+  // way into the weather card there; they have to be real, usable coordinates.
+  assert.equal(DynaWall.WEATHER_CITIES.length, 6);
+  const names = new Set();
+  DynaWall.WEATHER_CITIES.forEach((city) => {
+    assert.ok(city.name && city.country, `${city.name || '?'} needs a name and a country`);
+    assert.ok(!names.has(city.name), `${city.name} is listed twice`);
+    names.add(city.name);
+    assert.ok(
+      Number.isFinite(city.latitude) && city.latitude >= -90 && city.latitude <= 90,
+      `${city.name} needs a real latitude`
+    );
+    assert.ok(
+      Number.isFinite(city.longitude) && city.longitude >= -180 && city.longitude <= 180,
+      `${city.name} needs a real longitude`
+    );
+    const url = DynaWall.buildWeatherForecastUrl({ ...city, unit: 'celsius' });
+    assert.ok(url.includes(`latitude=${city.latitude}`), `${city.name} must reach the API`);
+  });
+  // Half the world is south of the equator and east of Greenwich.
+  assert.ok(DynaWall.WEATHER_CITIES.some((city) => city.latitude < 0), 'the list is not all north');
+  assert.ok(DynaWall.WEATHER_CITIES.some((city) => city.longitude > 0), 'nor all west');
+});
+
+test('the city search keeps only places a forecast can be asked for', () => {
+  const places = DynaWall.parseGeocodingResults({
+    results: [
+      { id: 1, name: 'Lisbon', admin1: 'Lisbon', country: 'Portugal', latitude: 38.72, longitude: -9.14 },
+      { id: 2, name: 'Nowhere' },
+      null,
+      { id: 3, name: '  Lisbon  ', admin1: 'Ohio', country: 'United States', latitude: '40.77', longitude: '-80.62' }
+    ]
+  });
+  assert.equal(places.length, 2);
+  assert.equal(places[0].label, 'Lisbon · Lisbon · Portugal');
+  assert.equal(places[1].name, 'Lisbon');
+  assert.equal(places[1].latitude, 40.77, 'strings from JSON become numbers');
+  assert.deepEqual(DynaWall.parseGeocodingResults({}), []);
+  assert.deepEqual(DynaWall.parseGeocodingResults(null), []);
+});
+
+test('the weather place and unit survive a reload', () => {
+  const storage = fakeStorage();
+  DynaWall.writeWeatherPlace(storage, {
+    name: 'Lisbon',
+    region: 'Lisbon',
+    country: 'Portugal',
+    latitude: 38.72,
+    longitude: -9.14
+  });
+  const place = DynaWall.readWeatherPlace(storage);
+  assert.equal(place.name, 'Lisbon');
+  assert.equal(place.latitude, 38.72);
+
+  DynaWall.writeWeatherUnit(storage, 'fahrenheit');
+  assert.equal(DynaWall.readWeatherUnit(storage), 'fahrenheit');
+
+  // Anything hand-edited, truncated or from a future version means "no place yet",
+  // so the card asks where you are instead of throwing on load.
+  assert.equal(
+    DynaWall.readWeatherUnit(fakeStorage({ 'dynawall.weatherUnit': 'kelvin' })),
+    'celsius'
+  );
+  assert.equal(DynaWall.readWeatherPlace(fakeStorage({ 'dynawall.weatherPlace': '{oops' })), null);
+  assert.equal(DynaWall.readWeatherPlace(fakeStorage({ 'dynawall.weatherPlace': '{"name":"X"}' })), null);
+  assert.equal(DynaWall.readWeatherPlace(fakeStorage({ 'dynawall.weatherPlace': 'null' })), null);
+});
+
+test('relative timestamps and locale regions are read defensively', () => {
+  const now = 1_700_000_000_000;
+  assert.equal(DynaWall.relativeTime(now, now), 'just now');
+  assert.equal(DynaWall.relativeTime(now - 4 * 60_000, now), '4 min ago');
+  assert.equal(DynaWall.relativeTime(now - 2 * 3_600_000, now), '2 h ago');
+  assert.equal(DynaWall.relativeTime(now - 50 * 3_600_000, now), '2 d ago');
+  assert.equal(DynaWall.relativeTime(0, now), 'never');
+  assert.equal(DynaWall.hourLabel('2026-01-15T09:00'), '09:00');
+
+  assert.equal(DynaWall.regionCodeFromLocale('en-GB'), 'GB');
+  assert.equal(DynaWall.regionCodeFromLocale('pt_BR'), 'BR');
+  assert.equal(DynaWall.regionCodeFromLocale(''), 'US');
+  assert.equal(DynaWall.regionCodeFromLocale(undefined), 'US');
+
+  assert.equal(DynaWall.NEWS_DESKS[0].query, '', 'the first desk is the unfiltered front page');
+  DynaWall.NEWS_DESKS.forEach((desk) => {
+    assert.ok(
+      DynaWall.buildGoogleNewsUrl(desk.query).startsWith('https://news.google.com/'),
+      `${desk.title} must leave for Google News`
+    );
+  });
+  DynaWall.MUSIC_STATIONS.forEach((station) => {
+    assert.ok(
+      DynaWall.buildYouTubeMusicSearchUrl(station.query).startsWith('https://music.youtube.com/'),
+      `${station.title} must leave for YouTube Music`
+    );
+  });
+});
+
+test('the macOS host forwards desktop clicks into a card without taking any', () => {
+  const swift = hostSwift();
+
+  // The desktop keeps its mouse: this flag is why Finder, the icons, drag-select and
+  // the context menu behave exactly as they did before widgets existed.
+  assert.match(swift, /window\.ignoresMouseEvents = true/);
+  assert.match(
+    swift,
+    /NSEvent\.addGlobalMonitorForEvents\(matching: \[\.leftMouseDown\]\)/,
+    'the host observes clicks instead of receiving them'
+  );
+  assert.match(swift, /window\.DynaWall\.clickAt\(/, 'the click is replayed inside the page');
+  assert.match(swift, /guard !isPaused, !NSApp\.isActive else \{ return \}/, 'a paused wallpaper takes nothing');
+  assert.match(swift, /isCovered\(byAnotherAppAt:/, 'a click on an app window is never ours');
+  assert.match(swift, /entry\.hitArea\.contains\(local\)/, 'only the reported rectangles are ours');
+
+  // Both bridges are registered on every display and removed with it.
+  assert.match(swift, /add\(widgetBridge, name: WidgetMessageHandler\.interactivityName\)/);
+  assert.match(swift, /add\(widgetBridge, name: WidgetMessageHandler\.openURLName\)/);
+  assert.match(swift, /removeScriptMessageHandler\(forName: WidgetMessageHandler\.interactivityName\)/);
+  assert.match(swift, /removeScriptMessageHandler\(forName: WidgetMessageHandler\.openURLName\)/);
+
+  // Links leave the wallpaper for the user's browser, and only https does.
+  assert.match(swift, /NSWorkspace\.shared\.open\(url\)/);
+  assert.match(swift, /url\.scheme\?\.lowercased\(\) == "https"/);
+  // The watch goes away with the app instead of outliving it.
+  assert.match(swift, /func stop\(\) \{\n        stopClickMonitor\(\)/);
+  assert.match(swift, /NSEvent\.removeMonitor\(clickMonitor\)/);
+});
+
+test('the Windows host forwards desktop clicks into a card without taking any', () => {
+  const clicks = fs.readFileSync(path.join(ROOT, 'windows/DesktopClicks.cs'), 'utf8');
+  const host = fs.readFileSync(path.join(ROOT, 'windows/DesktopHost.cs'), 'utf8');
+  const window = fs.readFileSync(path.join(ROOT, 'windows/WallpaperWindow.cs'), 'utf8');
+  const controller = fs.readFileSync(path.join(ROOT, 'windows/WallpaperController.cs'), 'utf8');
+
+  // A low-level watch that never consumes: every click is passed straight on, so the
+  // desktop keeps drag-select, right-click, icons and the context menu.
+  assert.match(clicks, /WhMouseLl/);
+  assert.match(clicks, /CallNextHookEx\(hook, code, wParam, lParam\)/);
+  assert.match(clicks, /UnhookWindowsHookEx/);
+  assert.match(clicks, /LlmhfInjected/, 'automation is not the user');
+
+  // Only a click on the desktop layer, inside a rectangle the page reported, is replayed.
+  assert.match(host, /WindowFromPoint/);
+  assert.match(host, /internal static bool IsDesktopAt\(Point point\)/);
+  assert.match(controller, /if \(!DesktopHost\.IsDesktopAt\(point\)\) return;/);
+  assert.match(controller, /window\.HitArea\.Contains\(local\.X, local\.Y\)/);
+  assert.match(window, /window\.DynaWall && window\.DynaWall\.clickAt\(/);
+
+  // The page's two calls: the rectangles, and the browser.
+  assert.match(window, /core\.WebMessageReceived \+= OnWebMessage/);
+  assert.match(window, /WidgetBridge\.Read\(json, out var area, out var url\)/);
+  assert.match(window, /UseShellExecute = true/);
+  const bridge = fs.readFileSync(path.join(ROOT, 'windows/WidgetBridge.cs'), 'utf8');
+  assert.match(bridge, /dynawall:interactivity/);
+  assert.match(bridge, /dynawall:open-url/);
+  assert.match(bridge, /uri\.Scheme == Uri\.UriSchemeHttps/, 'only https reaches the browser');
+});
+
+test('only https leaves the wallpaper for the browser', () => {
+  const opened = [];
+  const win = {
+    open: function (url, target, features) {
+      opened.push([url, target, features]);
+      return {};
+    }
+  };
+  assert.equal(DynaWall.openExternal(win, 'https://example.com/x'), true);
+  assert.equal(DynaWall.openExternal(win, 'javascript:alert(1)'), false);
+  assert.equal(DynaWall.openExternal(win, 'http://example.com'), false, 'plain http is refused');
+  assert.equal(DynaWall.openExternal(win, ''), false);
+  assert.equal(DynaWall.openExternal(null, 'https://example.com'), false);
+  assert.deepEqual(opened, [['https://example.com/x', '_blank', 'noopener']]);
+
+  // Inside a host the page hands the URL up instead: the WebView2 embedder fires a
+  // navigation event and macOS answers a script message. Both are declared.
+  const posted = [];
+  const hosted = {
+    webkit: {
+      messageHandlers: {
+        dynawallOpenURL: {
+          postMessage: (url) => posted.push(url)
+        }
+      }
+    }
+  };
+  assert.equal(DynaWall.openExternal(hosted, 'https://news.google.com/'), true);
+  assert.deepEqual(posted, ['https://news.google.com/']);
 });
 
 test('display type is tracked, lead and balanced deliberately', () => {

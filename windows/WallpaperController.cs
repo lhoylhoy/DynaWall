@@ -58,6 +58,11 @@ internal sealed class WallpaperController : IDisposable
             SystemEvents.PowerModeChanged += OnPowerModeChanged;
             watchdog.Start();
 
+            // Desktop clicks never reach the wallpaper layer, so the widgets answer to
+            // a system-wide watch that passes every click on untouched.
+            DesktopClicks.Clicked += OnDesktopClick;
+            DesktopClicks.Start();
+
             Log.Write($"started with {Screen.AllScreens.Length} display(s); settings at {AppPaths.PreferencesFile}");
         }
         catch (WebView2RuntimeNotFoundException)
@@ -279,6 +284,33 @@ internal sealed class WallpaperController : IDisposable
         });
     }
 
+    /// <summary>
+    /// Replay one desktop click into the page that owns that point, if any.
+    ///
+    /// Three filters keep the desktop exactly as it was: a suspended wallpaper takes
+    /// nothing; a click on an app window, the tray or our own settings window is never
+    /// touched; and a click outside the rectangles the page reported is ignored, so
+    /// empty wallpaper behaves precisely as it did before widgets existed.
+    /// </summary>
+    private void OnDesktopClick(Point point)
+    {
+        if (disposed || IsSuspended) return;
+        if (!DesktopHost.IsDesktopAt(point)) return;
+
+        foreach (var window in windows)
+        {
+            if (window.IsDisposed || !window.ScreenBounds.Contains(point)) continue;
+
+            // CSS pixels are screen pixels here: the page is never zoomed and the window
+            // covers its display at native scale.
+            var local = new PointF(point.X - window.ScreenBounds.X, point.Y - window.ScreenBounds.Y);
+            if (!window.HitArea.Contains(local.X, local.Y)) continue;
+
+            window.ReplayClick(local);
+            return;
+        }
+    }
+
     private void RunOnUiThread(Action action)
     {
         if (disposed) return;
@@ -302,6 +334,9 @@ internal sealed class WallpaperController : IDisposable
 
         watchdog.Stop();
         watchdog.Dispose();
+
+        DesktopClicks.Clicked -= OnDesktopClick;
+        DesktopClicks.Stop();
 
         try
         {

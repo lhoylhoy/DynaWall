@@ -194,6 +194,7 @@ test('defaults win when every layer is empty', () => {
     slideshowInterval: 15,
     slideshowShuffle: true,
     kenBurns: true,
+    photoSync: true,
     photos: []
   });
 });
@@ -214,6 +215,7 @@ test('layers resolve independently per field', () => {
     slideshowInterval: 45,
     slideshowShuffle: true,
     kenBurns: false,
+    photoSync: true,
     photos: []
   });
 });
@@ -317,12 +319,13 @@ test('slideshow defaults keep the wallpaper minimal', () => {
   assert.equal(DynaWall.DEFAULT_CONFIG.slideshowInterval, 15);
   assert.equal(DynaWall.DEFAULT_CONFIG.slideshowShuffle, true);
   assert.equal(DynaWall.DEFAULT_CONFIG.kenBurns, true);
+  assert.equal(DynaWall.DEFAULT_CONFIG.photoSync, true, 'photos follow the clock by default');
   assert.deepEqual(DynaWall.DEFAULT_CONFIG.photos, []);
 });
 
 test('the photo list is never cached, the other slideshow keys are', () => {
   assert.equal(DynaWall.STORAGE_KEYS.photos, undefined);
-  ['slideshow', 'slideshowInterval', 'slideshowShuffle', 'kenBurns'].forEach((field) => {
+  ['slideshow', 'slideshowInterval', 'slideshowShuffle', 'kenBurns', 'photoSync'].forEach((field) => {
     assert.ok(DynaWall.STORAGE_KEYS[field], `missing storage key for ${field}`);
   });
 });
@@ -431,6 +434,252 @@ test('query aliases cover the slideshow', () => {
 });
 
 /* -------------------------------------------------------------------------- *
+ * Time-synced photos
+ * -------------------------------------------------------------------------- */
+
+group('Photo collections & filename classification');
+
+/** The curated Golden Gate set, keyed by the band each file should land in. */
+const GOLDEN_GATE_FILES = {
+  light: 'images/iClarified-macOS-27-Golden-Gate-Wallpaper-5K-Light.jpg',
+  day: 'images/iClarified-macOS-27-Golden-Gate-Day-Wallpaper.jpg',
+  sunset: 'images/iClarified-macOS-27-Golden-Gate-Sunset-Wallpaper.jpg',
+  evening: 'images/iClarified-macOS-27-Golden-Gate-Evening-Wallpaper.jpg',
+  night: 'images/iClarified-macOS-27-Golden-Gate-Night-Wallpaper.jpg',
+  dark: 'images/iClarified-macOS-27-Golden-Gate-Wallpaper-5K-Dark.jpg'
+};
+
+test('the bundled collections are curated and complete', () => {
+  assert.equal(DynaWall.GOLDEN_GATE_PHOTOS.length, 6);
+  assert.equal(DynaWall.ABSTRACT_PHOTOS.length, 6);
+  assert.deepEqual(
+    DynaWall.BUNDLED_PHOTOS,
+    DynaWall.GOLDEN_GATE_PHOTOS.concat(DynaWall.ABSTRACT_PHOTOS),
+    'bundled photos are the two curated sets, Golden Gate first'
+  );
+  // The folder also holds 4K/5K/HEIC duplicates; the collection must not repeat them.
+  assert.equal(new Set(DynaWall.BUNDLED_PHOTOS).size, DynaWall.BUNDLED_PHOTOS.length);
+  assert.deepEqual(Object.values(GOLDEN_GATE_FILES), DynaWall.GOLDEN_GATE_PHOTOS);
+});
+
+test('Golden Gate wallpapers land in the four time-of-day bands', () => {
+  const buckets = DynaWall.classifyPhotos(DynaWall.GOLDEN_GATE_PHOTOS);
+  assert.deepEqual(buckets.dawn, [GOLDEN_GATE_FILES.light], 'Light is the dawn picture');
+  assert.deepEqual(buckets.day, [GOLDEN_GATE_FILES.day]);
+  assert.deepEqual(buckets.dusk, [GOLDEN_GATE_FILES.sunset, GOLDEN_GATE_FILES.evening]);
+  assert.deepEqual(buckets.night, [GOLDEN_GATE_FILES.night, GOLDEN_GATE_FILES.dark]);
+});
+
+test('abstract wallpapers land in the four time-of-day bands', () => {
+  const buckets = DynaWall.classifyPhotos(DynaWall.ABSTRACT_PHOTOS);
+  assert.deepEqual(buckets.dawn, ['images/04-mint-fog.jpg', 'images/05-candy-sky.jpg']);
+  assert.deepEqual(buckets.day, ['images/02-solar-flare.jpg', 'images/03-deep-ocean.jpg']);
+  assert.deepEqual(buckets.dusk, ['images/01-neon-dusk.jpg']);
+  assert.deepEqual(buckets.night, ['images/06-graphite.jpg']);
+});
+
+test('a Light/Dark pair without a day photo shows the light one at noon', () => {
+  const pair = ['images/Dynawall-5K-Light.jpg', 'images/Dynawall-5K-Dark.jpg'];
+  const buckets = DynaWall.classifyPhotos(pair);
+  assert.deepEqual(buckets.day, ['images/Dynawall-5K-Light.jpg']);
+  assert.deepEqual(buckets.night, ['images/Dynawall-5K-Dark.jpg']);
+  assert.deepEqual(buckets.dawn, []);
+  // With a real day photo in the set the same file becomes the dawn picture.
+  const withDay = DynaWall.classifyPhotos(pair.concat([GOLDEN_GATE_FILES.day]));
+  assert.deepEqual(withDay.day, [GOLDEN_GATE_FILES.day]);
+  assert.deepEqual(withDay.dawn, ['images/Dynawall-5K-Light.jpg']);
+});
+
+test('host scheme URLs are classified by their filename', () => {
+  const urls = [
+    'dynawall-photo://photo/0/iClarified-macOS-27-Golden-Gate-Night-Wallpaper.jpg',
+    'dynawall-photo://photo/1/iClarified-macOS-27-Golden-Gate-Day-Wallpaper.jpg',
+    'dynawall-photo://photo/2/Dyna%20Wall%20Sunset%20Study.jpg',
+    'dynawall-photo://photo/3'
+  ];
+  const buckets = DynaWall.classifyPhotos(urls);
+  assert.deepEqual(buckets.night, [urls[0]]);
+  assert.deepEqual(buckets.day, [urls[1]]);
+  assert.deepEqual(buckets.dusk, [urls[2]], 'percent-encoded names are decoded first');
+  // An old-style host URL carries no filename, so it is dealt out, not dropped.
+  assert.deepEqual(buckets.dawn, [urls[3]]);
+  assert.equal(DynaWall.photoBasename(urls[2]), 'dyna wall sunset study.jpg');
+  assert.equal(DynaWall.photoBasename(urls[3]), '3');
+  assert.equal(DynaWall.photoBasename('images/04-mint-fog.jpg?v=2'), '04-mint-fog.jpg');
+  assert.equal(DynaWall.photoBasename(undefined), '');
+});
+
+test('untagged folders are dealt across the four bands in order', () => {
+  const custom = ['a.jpg', 'b.jpg', 'c.jpg', 'd.jpg', 'e.jpg'];
+  const buckets = DynaWall.classifyPhotos(custom);
+  assert.deepEqual(buckets.dawn, ['a.jpg', 'e.jpg']);
+  assert.deepEqual(buckets.day, ['b.jpg']);
+  assert.deepEqual(buckets.dusk, ['c.jpg']);
+  assert.deepEqual(buckets.night, ['d.jpg']);
+  assert.deepEqual(DynaWall.classifyPhotos('nope'), { dawn: [], day: [], dusk: [], night: [] });
+});
+
+test('a band with no photos falls back to the nearest adjacent band', () => {
+  const golden = DynaWall.GOLDEN_GATE_PHOTOS;
+  assert.deepEqual(DynaWall.getPhotosForSlot(golden, 'dusk'), [
+    GOLDEN_GATE_FILES.sunset,
+    GOLDEN_GATE_FILES.evening
+  ]);
+  const dayOnly = ['images/02-solar-flare.jpg'];
+  assert.deepEqual(DynaWall.getPhotosForSlot(dayOnly, 'night'), dayOnly, 'night leans on day');
+  assert.deepEqual(DynaWall.getPhotosForSlot(dayOnly, 'dawn'), dayOnly, 'dawn leans on day first');
+  assert.deepEqual(DynaWall.getPhotosForSlot(dayOnly, 'dusk'), dayOnly, 'dusk leans on day first');
+  assert.deepEqual(DynaWall.getPhotosForSlot(golden, 'unknown'), golden, 'no band = no filter');
+  assert.deepEqual(DynaWall.getPhotosForSlot([], 'day'), []);
+});
+
+group('photoSync configuration');
+
+test('time-of-day photo sync is on by default and cached', () => {
+  assert.equal(DynaWall.DEFAULT_CONFIG.photoSync, true);
+  assert.equal(DynaWall.STORAGE_KEYS.photoSync, 'dynawall.photoSync');
+});
+
+test('photoSync resolves from IPC, URL, storage and both manifests', () => {
+  assert.deepEqual(DynaWall.mapLivelyProperty('photoSync', 'false'), {
+    field: 'photoSync',
+    value: false
+  });
+  assert.deepEqual(DynaWall.mapLivelyProperty('photoSync', 'on'), {
+    field: 'photoSync',
+    value: true
+  });
+  assert.equal(DynaWall.mapLivelyProperty('photoSync', 'sometimes'), null);
+  assert.deepEqual(DynaWall.mapWallpaperEngineProperties({ photosync: { value: false } }), [
+    { field: 'photoSync', value: false }
+  ]);
+  assert.deepEqual(DynaWall.parseQueryParams('?photoSync=true'), { photoSync: true });
+  assert.equal(DynaWall.parseQueryParams('?photosync=off').photoSync, false);
+  assert.equal(DynaWall.parseQueryParams('?timeSync=yes').photoSync, true);
+  assert.equal(DynaWall.parseQueryParams('?dynamicPhotos=1').photoSync, true);
+  assert.deepEqual(DynaWall.readStoredConfig(fakeStorage({ 'dynawall.photoSync': 'false' })), {
+    photoSync: false
+  });
+
+  const config = DynaWall.resolveConfig({
+    ipc: { photoSync: false },
+    url: { photoSync: true },
+    storage: { photoSync: true },
+    defaults: DynaWall.DEFAULT_CONFIG
+  });
+  assert.equal(config.photoSync, false, 'IPC wins');
+
+  const lively = readJson('LivelyProperties.json');
+  assert.equal(lively.photoSync.type, 'checkbox');
+  assert.equal(lively.photoSync.value, DynaWall.DEFAULT_CONFIG.photoSync);
+
+  const project = readJson('project.json');
+  assert.equal(project.general.properties.photosync.type, 'bool');
+  assert.equal(project.general.properties.photosync.value, DynaWall.DEFAULT_CONFIG.photoSync);
+  const orders = Object.keys(project.general.properties).map(
+    (key) => project.general.properties[key].order
+  );
+  assert.equal(new Set(orders).size, orders.length, 'project.json orders stay unique');
+});
+
+group('Time-synced slideshow');
+
+test('the photo band follows the clock unless a palette pins it', () => {
+  assert.equal(DynaWall.resolvePhotoBand('auto', at(6, 0)), 'dawn');
+  assert.equal(DynaWall.resolvePhotoBand('auto', at(12, 0)), 'day');
+  assert.equal(DynaWall.resolvePhotoBand('custom', at(18, 30)), 'dusk');
+  assert.equal(DynaWall.resolvePhotoBand('auto', at(22, 0)), 'night');
+  assert.equal(DynaWall.resolvePhotoBand('night', at(12, 0)), 'night', 'a pinned band wins');
+  assert.equal(DynaWall.resolvePhotoBand('dawn', at(22, 0)), 'dawn');
+});
+
+test('crossing a band edge swaps the photo pool', () => {
+  const golden = DynaWall.GOLDEN_GATE_PHOTOS;
+  const pool = (hours) =>
+    DynaWall.getPhotosForSlot(golden, DynaWall.resolvePhotoBand('auto', at(hours, 30)));
+  assert.deepEqual(pool(6), [GOLDEN_GATE_FILES.light]);
+  assert.deepEqual(pool(12), [GOLDEN_GATE_FILES.day]);
+  assert.deepEqual(pool(18), [GOLDEN_GATE_FILES.sunset, GOLDEN_GATE_FILES.evening]);
+  assert.deepEqual(pool(22), [GOLDEN_GATE_FILES.night, GOLDEN_GATE_FILES.dark]);
+  // 16:59 and 17:00 are different pictures — the cross-fade is the visible change.
+  assert.notDeepEqual(pool(16), pool(17));
+});
+
+test('a band change restarts the rotation without clearing the layers', () => {
+  const script = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  // The band has to be part of the signature, otherwise applySlideshow() would
+  // short-circuit on 17:00 and leave the daytime photo on screen all evening.
+  assert.match(script, /`band:\$\{activePhotoBand\(\) \|\| 'all'\}`/);
+
+  const body = (start) => {
+    const from = script.indexOf(start);
+    assert.notEqual(from, -1, `${start} is missing`);
+    return script.slice(from, script.indexOf('\n    }', from));
+  };
+
+  const applySlideshow = body('function applySlideshow()');
+  assert.equal(
+    (applySlideshow.match(/clearPhotos\(\)/g) || []).length,
+    1,
+    'only the disabled branch may empty the layers'
+  );
+  assert.match(applySlideshow, /if \(!enabled\) \{\s*clearPhotos\(\);/);
+  assert.match(applySlideshow, /state\.photoToken \+= 1/, 'a stale decode must be dropped');
+  assert.match(applySlideshow, /paintPhoto\(start, sources\)/);
+
+  // The clock crossing an edge repaints the palette and the photo in one tick.
+  const checkTheme = body('function checkTheme()');
+  assert.match(checkTheme, /applyTheme\(\);\s*(\/\/[^\n]*\n\s*)*applySlideshow\(\);/);
+});
+
+test('the macOS host mirrors the curated collections and the photo actions', () => {
+  const swift = fs.readFileSync(path.join(ROOT, 'macos', 'DynaWallApp.swift'), 'utf8');
+  // Every curated picture is spelled out in the host, so bundled mode never sweeps
+  // the 4K/5K/HEIC duplicates sitting in the same folder.
+  DynaWall.BUNDLED_PHOTOS.forEach((photo) => {
+    const name = photo.split('/').pop();
+    assert.ok(swift.includes(name), `DynaWallApp.swift is missing the curated photo ${name}`);
+  });
+  assert.match(swift, /case goldenGate/, 'PhotoCollection.goldenGate is missing');
+  assert.match(swift, /case abstract/, 'PhotoCollection.abstract is missing');
+  // The scheme URL keeps the filename, and the handler only reads the index segment.
+  assert.ok(swift.includes('://photo/\\(index)/'), 'scheme URLs must carry the filename');
+  assert.ok(swift.includes('encodePathSegment'), 'filenames must be percent-encoded');
+  assert.match(swift, /split\(separator: "\/", omittingEmptySubsequences: true\)/);
+  // Settings reach the page through the same bridge Lively uses.
+  assert.match(swift, /static let photoSync = "photoSyncTimeOfDay"/);
+  assert.match(swift, /livelyPropertyListener\("photoSync",/);
+  assert.match(swift, /livelyPropertyListener\("nextPhoto", true\)/);
+  assert.match(swift, /func nextPhoto\(\)/);
+});
+
+test('nextPhoto is a host action, never a cached setting', () => {
+  assert.equal(DynaWall.isLivelyAction('nextPhoto'), true);
+  assert.equal(DynaWall.isLivelyAction(' photoSync '), false);
+  assert.equal(DynaWall.isLivelyAction(undefined), false);
+  assert.equal(DynaWall.mapLivelyProperty('nextPhoto', true), null, 'actions carry no field');
+  assert.equal(DynaWall.STORAGE_KEYS.nextPhoto, undefined);
+  assert.equal(DynaWall.DEFAULT_CONFIG.nextPhoto, undefined);
+  assert.equal(typeof DynaWall.nextPhoto, 'function');
+  assert.equal(DynaWall.nextPhoto(), false, 'nothing to advance without a page');
+});
+
+test('stepping the pool wraps, shuffles and never repeats a photo', () => {
+  assert.equal(DynaWall.stepPhotoIndex(0, -1, false), -1);
+  assert.equal(DynaWall.stepPhotoIndex(1, -1, false), 0, 'a lone photo is its own next');
+  assert.equal(DynaWall.stepPhotoIndex(4, 0, false), 1);
+  assert.equal(DynaWall.stepPhotoIndex(4, 3, false), 0, 'sequential order wraps');
+  assert.equal(DynaWall.stepPhotoIndex(4, -1, false), 0, 'a fresh pool starts at its first photo');
+  assert.equal(DynaWall.stepPhotoIndex(4, 2, true, () => 0), 0);
+  const sequence = [0.34, 0.9]; // 1 is the current photo, 2 is the next
+  let calls = 0;
+  const random = () => sequence[Math.min(calls++, sequence.length - 1)];
+  assert.equal(DynaWall.stepPhotoIndex(3, 1, true, random), 2);
+  assert.equal(calls, 2, 'shuffle retries instead of repeating the current photo');
+  assert.equal(DynaWall.stepPhotoIndex(3, -1, true, () => 0), 0);
+});
+
+/* --------------------------------------------------------------------------
  * Time-aware palette
  * -------------------------------------------------------------------------- */
 
@@ -655,6 +904,7 @@ test('Lively defaults match the built-in defaults', () => {
   );
   assert.equal(livelyProperties.slideshowShuffle.value, DynaWall.DEFAULT_CONFIG.slideshowShuffle);
   assert.equal(livelyProperties.kenBurns.value, DynaWall.DEFAULT_CONFIG.kenBurns);
+  assert.equal(livelyProperties.photoSync.value, DynaWall.DEFAULT_CONFIG.photoSync);
 });
 
 test('the theme control ships in both host manifests', () => {
@@ -726,6 +976,7 @@ test('Wallpaper Engine defaults match the built-in defaults', () => {
   );
   assert.equal(properties.slideshowshuffle.value, DynaWall.DEFAULT_CONFIG.slideshowShuffle);
   assert.equal(properties.kenburns.value, DynaWall.DEFAULT_CONFIG.kenBurns);
+  assert.equal(properties.photosync.value, DynaWall.DEFAULT_CONFIG.photoSync);
 });
 
 test('host manifests point at index.html and the shipped assets exist', () => {

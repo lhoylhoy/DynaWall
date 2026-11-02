@@ -44,6 +44,11 @@
     "type": "checkbox",
     "value": false
   },
+  "photoSync": {
+    "text": "Match photos to time of day",
+    "type": "checkbox",
+    "value": true
+  },
   "slideshowInterval": {
     "text": "Rotate every (minutes)",
     "type": "slider",

@@ -13,6 +13,13 @@
  * (the macOS app) hands the page its resolved list on every load and the page
  * falls back to the photos bundled in `images/` when no host speaks up.
  *
+ * Time-synced photos: with `photoSync` on (the default) the slideshow only
+ * rotates through photos whose filename names the band active right now —
+ * dawn/day/dusk/night, or the palette pinned in the host — so the picture on the
+ * desktop matches the light outside. Crossing a band edge (clock or popover)
+ * restarts the rotation on the new band's photos and cross-fades to them;
+ * `nextPhoto` skips ahead on demand.
+ *
  * Time awareness: the greeting period (morning/afternoon/evening) and the palette
  * (dawn/day/dusk/night) are both read from the same clock and re-evaluated
  * together every 30 s, on wake and on focus. `theme` pins a single palette
@@ -38,6 +45,8 @@
     slideshowInterval: 15, // minutes between photos
     slideshowShuffle: true,
     kenBurns: true,
+    // Only show photos whose filename matches the active time-of-day band.
+    photoSync: true,
     // Sources injected by the macOS host (absolute scheme URLs); empty = bundled set.
     photos: []
   });
@@ -50,12 +59,28 @@
     slideshow: 'dynawall.slideshow',
     slideshowInterval: 'dynawall.slideshowInterval',
     slideshowShuffle: 'dynawall.slideshowShuffle',
-    kenBurns: 'dynawall.kenBurns'
+    kenBurns: 'dynawall.kenBurns',
+    photoSync: 'dynawall.photoSync'
     // `photos` is deliberately not cached: the host re-sends it on every load.
   });
 
-  /** The photos that ship with the wallpaper, used when no host list arrives. */
-  const BUNDLED_PHOTOS = Object.freeze([
+  /**
+   * The curated Golden Gate scene: one 5K JPEG per time of day, in the order the
+   * clock walks through them. The `images/` folder also holds 4K, HEIC and plain
+   * Light/Dark duplicates of the same six pictures, which is exactly why the
+   * collection is a fixed list rather than "every JPEG in the folder".
+   */
+  const GOLDEN_GATE_PHOTOS = Object.freeze([
+    'images/iClarified-macOS-27-Golden-Gate-Wallpaper-5K-Light.jpg',
+    'images/iClarified-macOS-27-Golden-Gate-Day-Wallpaper.jpg',
+    'images/iClarified-macOS-27-Golden-Gate-Sunset-Wallpaper.jpg',
+    'images/iClarified-macOS-27-Golden-Gate-Evening-Wallpaper.jpg',
+    'images/iClarified-macOS-27-Golden-Gate-Night-Wallpaper.jpg',
+    'images/iClarified-macOS-27-Golden-Gate-Wallpaper-5K-Dark.jpg'
+  ]);
+
+  /** The six generated abstract wallpapers; their names carry the band too. */
+  const ABSTRACT_PHOTOS = Object.freeze([
     'images/01-neon-dusk.jpg',
     'images/02-solar-flare.jpg',
     'images/03-deep-ocean.jpg',
@@ -63,6 +88,9 @@
     'images/05-candy-sky.jpg',
     'images/06-graphite.jpg'
   ]);
+
+  /** The photos that ship with the wallpaper, used when no host list arrives. */
+  const BUNDLED_PHOTOS = Object.freeze(GOLDEN_GATE_PHOTOS.concat(ABSTRACT_PHOTOS));
 
   /** Slideshow bounds, in minutes. */
   const INTERVAL_MIN_MINUTES = 1;
@@ -81,6 +109,43 @@
   const THEMES = Object.freeze(['dawn', 'day', 'dusk', 'night']);
   /** Shorthands people type in a URL; all mean "follow the clock". */
   const THEME_ALIASES = Object.freeze({ time: 'auto', clock: 'auto', dynamic: 'auto' });
+
+  /**
+   * Filename tokens per time-of-day band. Matching is a plain substring test on
+   * the lowercased basename, so `...-Golden-Gate-Day-Wallpaper.jpg` lands in
+   * `day` and `04-mint-fog.jpg` in `dawn`. `golden-gate` deliberately matches
+   * nothing, which is what keeps the six variants of one scene apart.
+   */
+  const PHOTO_BAND_KEYWORDS = Object.freeze({
+    dawn: Object.freeze(['dawn', 'sunrise', 'morning', 'mint-fog', 'candy-sky']),
+    day: Object.freeze([
+      'day',
+      'daylight',
+      'noon',
+      'midday',
+      'solar-flare',
+      'deep-ocean',
+      'wallpaper-4k'
+    ]),
+    dusk: Object.freeze(['dusk', 'sunset', 'evening', 'twilight', 'neon-dusk']),
+    night: Object.freeze(['night', 'midnight', 'dark', 'graphite'])
+  });
+
+  /**
+   * macOS's Light/Dark pair names no hour: the light wallpaper is the dawn one
+   * when the same set also has a real `day` photo, and the daytime one when it
+   * does not (a lone `-Light.jpg` would otherwise never be shown between 09:00
+   * and 17:00).
+   */
+  const LIGHT_PHOTO_KEYWORD = 'light';
+
+  /** Where a band looks when the library simply has nothing for it. */
+  const BAND_FALLBACKS = Object.freeze({
+    dawn: Object.freeze(['day', 'night', 'dusk']),
+    day: Object.freeze(['dawn', 'dusk', 'night']),
+    dusk: Object.freeze(['day', 'night', 'dawn']),
+    night: Object.freeze(['dusk', 'dawn', 'day'])
+  });
 
   /** How often the clock is re-read: greeting period and palette (30 seconds). */
   const CLOCK_REFRESH_MS = 30 * 1000;
@@ -261,6 +326,120 @@
     return photos.slice(0, MAX_PHOTOS);
   }
 
+  /* ----------------------------------------------------------------------- *
+   * Photo classification (time-of-day bands)
+   * ------------------------------------------------------------------------ */
+
+  /**
+   * Last path segment of a photo source, lowercased. Handles a relative path
+   * (`images/04-mint-fog.jpg`) and a host scheme URL
+   * (`dynawall-photo://photo/2/iClarified-…-Night-Wallpaper.jpg`), which is what
+   * lets bundled and user-selected folders be classified the same way.
+   */
+  function photoBasename(source) {
+    if (typeof source !== 'string' || source === '') return '';
+    const withoutQuery = source.split(/[?#]/)[0];
+    const segments = withoutQuery.split('/');
+    let name = segments[segments.length - 1] || '';
+    try {
+      name = decodeURIComponent(name);
+    } catch (error) {
+      /* A malformed escape is not worth a crash; classify the raw segment. */
+    }
+    return name.trim().toLowerCase();
+  }
+
+  /** Bands named by a filename, in THEMES order (that order breaks ties). */
+  function photoBandsInName(name) {
+    if (!name) return [];
+    return THEMES.filter((band) =>
+      PHOTO_BAND_KEYWORDS[band].some((token) => name.indexOf(token) !== -1)
+    );
+  }
+
+  /**
+   * Bucket a photo list into the four bands, keeping library order.
+   *
+   * Filenames that name several bands (`neon-dusk`) take the first one in THEMES
+   * order; `light` is resolved against the rest of the set (see
+   * LIGHT_PHOTO_KEYWORD). Photos with no recognisable token at all are dealt out
+   * across the four bands round-robin, so an untagged folder still gives every
+   * hour a wallpaper instead of an empty screen.
+   */
+  function classifyPhotos(photos) {
+    const buckets = {};
+    THEMES.forEach((band) => {
+      buckets[band] = [];
+    });
+    if (!Array.isArray(photos)) return buckets;
+
+    const list = photos.filter((photo) => typeof photo === 'string' && photo !== '');
+    const hasDayPhoto = list.some(
+      (photo) => photoBandsInName(photoBasename(photo)).indexOf('day') !== -1
+    );
+    let untagged = 0;
+
+    list.forEach((photo) => {
+      const name = photoBasename(photo);
+      const bands = photoBandsInName(name);
+      if (bands.length > 0) {
+        buckets[bands[0]].push(photo);
+        return;
+      }
+      if (name.indexOf(LIGHT_PHOTO_KEYWORD) !== -1) {
+        buckets[hasDayPhoto ? 'dawn' : 'day'].push(photo);
+        return;
+      }
+      buckets[THEMES[untagged % THEMES.length]].push(photo);
+      untagged += 1;
+    });
+
+    return buckets;
+  }
+
+  /**
+   * Which band's photos belong on screen: a pinned palette (`dawn`…`night`) or,
+   * for `auto`/`custom`, whatever band the clock is in.
+   */
+  function resolvePhotoBand(theme, date) {
+    return THEMES.indexOf(theme) === -1 ? getThemeSlot(date) : theme;
+  }
+
+  /**
+   * The photos for one band. A band the library has nothing for falls back to
+   * the nearest adjacent band (night → dusk → dawn → day, and so on) rather than
+   * leaving the desktop bare; an unknown slot means "no filtering at all".
+   */
+  function getPhotosForSlot(photos, slot) {
+    if (THEMES.indexOf(slot) === -1) return Array.isArray(photos) ? photos.slice() : [];
+
+    const buckets = classifyPhotos(photos);
+    if (buckets[slot].length > 0) return buckets[slot];
+
+    const fallbacks = BAND_FALLBACKS[slot];
+    for (let index = 0; index < fallbacks.length; index += 1) {
+      if (buckets[fallbacks[index]].length > 0) return buckets[fallbacks[index]];
+    }
+    return [];
+  }
+
+  /**
+   * Index of the next photo in a pool of `count`. Sequential order steps forward
+   * and wraps; shuffle never repeats `current`. `current` of -1 means "nothing on
+   * screen yet" and starts the pool from its first photo.
+   */
+  function stepPhotoIndex(count, current, shuffle, random) {
+    if (!(count > 0)) return -1;
+    if (count === 1) return 0;
+    const pick = typeof random === 'function' ? random : Math.random;
+    if (shuffle) {
+      let index = current;
+      while (index === current) index = Math.floor(pick() * count);
+      return Math.min(count - 1, Math.max(0, index));
+    }
+    return current < 0 || current >= count ? 0 : (current + 1) % count;
+  }
+
   function normalizeFieldValue(field, rawValue) {
     switch (field) {
       case 'firstName':
@@ -271,6 +450,7 @@
       case 'slideshow':
       case 'slideshowShuffle':
       case 'kenBurns':
+      case 'photoSync':
         return parseBoolean(rawValue);
       case 'bgColor':
         return normalizeColor(rawValue);
@@ -307,7 +487,10 @@
     slideshowinterval: 'slideshowInterval',
     shuffle: 'slideshowShuffle',
     slideshowshuffle: 'slideshowShuffle',
-    kenburns: 'kenBurns'
+    kenburns: 'kenBurns',
+    photosync: 'photoSync',
+    timesync: 'photoSync',
+    dynamicphotos: 'photoSync'
   });
 
   const LIVELY_FIELDS = Object.freeze({
@@ -319,6 +502,8 @@
     slideshowInterval: 'slideshowInterval',
     slideshowShuffle: 'slideshowShuffle',
     kenBurns: 'kenBurns',
+    // Time-of-day photo bands; the macOS host's "Match time of day" toggle.
+    photoSync: 'photoSync',
     // The macOS host reuses this key to hand the page its resolved photo list.
     photos: 'photos'
   });
@@ -331,7 +516,8 @@
     slideshow: 'slideshow',
     slideshowinterval: 'slideshowInterval',
     slideshowshuffle: 'slideshowShuffle',
-    kenburns: 'kenBurns'
+    kenburns: 'kenBurns',
+    photosync: 'photoSync'
   });
 
   function ownLookup(map, key) {
@@ -484,6 +670,8 @@
       pendingGreeting: null,
       photoIndex: -1,
       photoLayer: 0,
+      // The pool the photo on screen came from: a band's list, or the whole library.
+      photoPool: [],
       photoTimer: 0,
       photoFailures: 0,
       photoToken: 0,
@@ -581,6 +769,25 @@
       return custom && custom.length > 0 ? custom : BUNDLED_PHOTOS;
     }
 
+    /**
+     * The band whose photos should be on screen. `''` turns time sync off, a
+     * pinned palette (`dawn`…`night`) keeps its own band, and `auto`/`custom`
+     * follow the clock — the same band the palette is painted with.
+     */
+    function activePhotoBand() {
+      if (!state.config.photoSync) return '';
+      return resolvePhotoBand(state.config.theme, new Date());
+    }
+
+    /** The active band's photos, or the whole library when sync is off. */
+    function activePhotoSources() {
+      const sources = photoSources();
+      const band = activePhotoBand();
+      if (!band) return sources;
+      const banded = getPhotosForSlot(sources, band);
+      return banded.length > 0 ? banded : sources;
+    }
+
     function slideshowIntervalMs() {
       return normalizeSlideshowInterval(state.config.slideshowInterval) * 60 * 1000;
     }
@@ -592,30 +799,44 @@
         slideshowIntervalMs(),
         state.config.slideshowShuffle ? 'shuffle' : 'sequential',
         state.config.kenBurns ? 'zoom' : 'still',
+        // Crossing 05:00 / 09:00 / 17:00 / 21:00 — or picking a band in the host —
+        // changes the pool, so the signature has to carry the band itself.
+        `band:${activePhotoBand() || 'all'}`,
         photoSources().join('|')
       ].join('::');
     }
 
-    /** Sequential order steps forward; shuffle never repeats the current photo. */
-    function nextPhotoIndex(count) {
-      if (count <= 1) return 0;
-      if (state.config.slideshowShuffle) {
-        let index = state.photoIndex;
-        while (index === state.photoIndex) index = Math.floor(Math.random() * count);
-        return index;
-      }
-      return (state.photoIndex + 1) % count;
+    /**
+     * The pool to rotate through: the active band, or the whole library when the
+     * band only holds the photo already on screen — "Next photo" must never look
+     * like a dead button.
+     */
+    function nextPhotoPool() {
+      const banded = activePhotoSources();
+      const all = photoSources();
+      return banded.length > 1 || banded.length >= all.length ? banded : all;
+    }
+
+    /**
+     * Step to the next photo in `pool`. The photo on screen may come from another
+     * pool (band change, shorter folder), so the move is anchored on the visible
+     * URL rather than on an index that may no longer mean anything.
+     */
+    function nextPhotoIndexFor(pool) {
+      const current = pool.indexOf(state.photoPool[state.photoIndex]);
+      return stepPhotoIndex(pool.length, current, state.config.slideshowShuffle);
     }
 
     /** Paint a photo on the spare layer, then cross-fade the two layers. */
-    function paintPhoto(index) {
-      const sources = photoSources();
+    function paintPhoto(index, list) {
+      const sources = list && list.length > 0 ? list : activePhotoSources();
       if (elements.photoLayers.length === 0 || !sources[index]) return;
 
       const previous = elements.photoLayers[state.photoLayer];
       state.photoLayer = (state.photoLayer + 1) % elements.photoLayers.length;
       const layer = elements.photoLayers[state.photoLayer];
       state.photoIndex = index;
+      state.photoPool = sources;
 
       // A decode that lands after the list changed (host push, slideshow toggle)
       // must not fade, and must not count as a broken photo.
@@ -690,11 +911,21 @@
     }
 
     function advancePhoto() {
-      if (!state.config.slideshow) return;
-      const count = photoSources().length;
-      if (count === 0) return;
-      paintPhoto(nextPhotoIndex(count));
-      scheduleSlide();
+      if (!state.config.slideshow) return false;
+      const pool = nextPhotoPool();
+      if (pool.length === 0) return false;
+      paintPhoto(nextPhotoIndexFor(pool), pool);
+      scheduleSlide(); // a manual skip earns a full interval as well
+      return true;
+    }
+
+    /**
+     * Skip to the next photo right away — the menu bar "Next photo" button,
+     * `livelyPropertyListener('nextPhoto', true)` and `DynaWall.nextPhoto()`.
+     * Same step the timer takes, just now, and the timer restarts from here.
+     */
+    function nextPhoto() {
+      return advancePhoto();
     }
 
     function clearPhotos() {
@@ -722,14 +953,26 @@
       if (signature === state.photoSignature) return;
       state.photoSignature = signature;
 
-      const sources = photoSources();
+      const sources = activePhotoSources();
       const enabled = Boolean(state.config.slideshow) && sources.length > 0;
       doc.body.classList.toggle('has-photo', enabled);
-      clearPhotos();
-      if (!enabled) return;
+      if (!enabled) {
+        clearPhotos();
+        return;
+      }
+
+      // A band change or a host push restarts the rotation without emptying the
+      // layers first: the next photo decodes on the spare layer and the two
+      // cross-fade, so the desktop never blinks through the bare background.
+      win.clearTimeout(state.photoTimer);
+      state.photoTimer = 0;
+      state.photoToken += 1; // a decode from the previous list must not land
+      state.photoIndex = -1;
+      state.photoPool = sources;
+      state.photoFailures = 0;
 
       const start = state.config.slideshowShuffle ? Math.floor(Math.random() * sources.length) : 0;
-      paintPhoto(start);
+      paintPhoto(start, sources);
       scheduleSlide();
     }
 
@@ -755,6 +998,9 @@
     function checkTheme() {
       if (resolveTheme(new Date()) === state.theme) return false;
       applyTheme();
+      // `photoSync` hangs the photo pool off the same band, so the clock crossing
+      // an edge hands the slideshow the matching photos in the same tick.
+      applySlideshow();
       return true;
     }
 
@@ -853,7 +1099,9 @@
       checkGreetingPeriod: checkGreetingPeriod,
       checkTheme: checkTheme,
       syncClock: syncClock,
-      advancePhoto: advancePhoto
+      advancePhoto: advancePhoto,
+      // Host action (menu bar "Next photo", `livelyPropertyListener`).
+      nextPhoto: nextPhoto
     };
   }
 
@@ -861,8 +1109,16 @@
    * Host bridges (Lively Wallpaper / Wallpaper Engine)
    * ------------------------------------------------------------------------ */
 
+  /**
+   * Momentary host commands: they carry no value, they ask the page to do
+   * something. Kept apart from LIVELY_FIELDS so `nextPhoto` never lands in the
+   * configuration (and never gets cached in localStorage).
+   */
+  const LIVELY_ACTIONS = Object.freeze({ nextPhoto: 'nextPhoto' });
+
   let appRef = null;
   const pendingUpdates = [];
+  const pendingActions = [];
 
   /** Feed host updates into the app, or queue them until it is ready. */
   function deliver(updates) {
@@ -874,9 +1130,28 @@
     pendingUpdates.push(...updates);
   }
 
+  function isLivelyAction(name) {
+    if (typeof name !== 'string') return false;
+    return ownLookup(LIVELY_ACTIONS, name.trim()) !== undefined;
+  }
+
+  /** Run a host action now, or park it until the app exists. */
+  function runAction(name) {
+    if (!appRef) {
+      pendingActions.push(name);
+      return false;
+    }
+    return name === LIVELY_ACTIONS.nextPhoto ? appRef.nextPhoto() : false;
+  }
+
   function installBridges(win) {
     // Lively Wallpaper: window.livelyPropertyListener(name, value)
     win.livelyPropertyListener = function livelyPropertyListener(name, value) {
+      // A command, not a setting: hosts fire this on a button or a shortcut.
+      if (isLivelyAction(name)) {
+        runAction(name.trim());
+        return;
+      }
       const update = mapLivelyProperty(name, value);
       if (update) deliver([update]);
     };
@@ -897,6 +1172,8 @@
     DEFAULT_CONFIG: DEFAULT_CONFIG,
     STORAGE_KEYS: STORAGE_KEYS,
     BUNDLED_PHOTOS: BUNDLED_PHOTOS,
+    GOLDEN_GATE_PHOTOS: GOLDEN_GATE_PHOTOS,
+    ABSTRACT_PHOTOS: ABSTRACT_PHOTOS,
     THEMES: THEMES,
     THEME_MODES: THEME_MODES,
     CLOCK_REFRESH_MS: CLOCK_REFRESH_MS,
@@ -904,6 +1181,7 @@
     GREETING_REFRESH_MS: CLOCK_REFRESH_MS,
     TEXT_FADE_MS: TEXT_FADE_MS,
     PHOTO_FADE_MS: PHOTO_FADE_MS,
+    LIVELY_ACTIONS: LIVELY_ACTIONS,
     getGreetingPeriod: getGreetingPeriod,
     getThemeSlot: getThemeSlot,
     buildGreeting: buildGreeting,
@@ -912,6 +1190,16 @@
     normalizeColor: normalizeColor,
     normalizeTheme: normalizeTheme,
     normalizeSlideshowInterval: normalizeSlideshowInterval,
+    photoBasename: photoBasename,
+    classifyPhotos: classifyPhotos,
+    getPhotosForSlot: getPhotosForSlot,
+    resolvePhotoBand: resolvePhotoBand,
+    stepPhotoIndex: stepPhotoIndex,
+    isLivelyAction: isLivelyAction,
+    /** Skip to the next photo from a console or a host script. */
+    nextPhoto: function () {
+      return runAction(LIVELY_ACTIONS.nextPhoto);
+    },
     normalizePhotos: normalizePhotos,
     parseQueryParams: parseQueryParams,
     readStoredConfig: readStoredConfig,
@@ -941,6 +1229,9 @@
       if (pendingUpdates.length > 0) {
         app.applyUpdates(pendingUpdates.splice(0, pendingUpdates.length));
       }
+      // Commands that arrived before the page was ready (a host that fires
+      // `nextPhoto` on load) run once the app exists.
+      pendingActions.splice(0, pendingActions.length).forEach(runAction);
     };
 
     if (document.readyState === 'loading') {

@@ -149,6 +149,67 @@ enum ThemePreset: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Photo collections
+
+/// The photo sets the menu bar can rotate through.
+///
+/// The bundled sets are curated file lists rather than "everything in `images/`":
+/// the Golden Gate scene ships as 4K, 5K, plain and HEIC variants of the same six
+/// pictures, so a folder sweep would cycle through duplicates of one image and
+/// look like a stutter. Bundled lists are also why the filename reaches the page
+/// (`dynawall-photo://photo/<index>/<filename>`): `script.js` classifies a photo
+/// into its time-of-day band from the name alone.
+enum PhotoCollection: String, CaseIterable, Identifiable {
+    case goldenGate
+    case abstract
+    case custom
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .goldenGate: return "Golden Gate"
+        case .abstract: return "Abstract"
+        case .custom: return "Custom folder…"
+        }
+    }
+
+    /// Curated bundled JPEGs, in time-of-day order (dawn → night).
+    var bundledFiles: [String] {
+        switch self {
+        case .goldenGate:
+            return [
+                "iClarified-macOS-27-Golden-Gate-Wallpaper-5K-Light.jpg",
+                "iClarified-macOS-27-Golden-Gate-Day-Wallpaper.jpg",
+                "iClarified-macOS-27-Golden-Gate-Sunset-Wallpaper.jpg",
+                "iClarified-macOS-27-Golden-Gate-Evening-Wallpaper.jpg",
+                "iClarified-macOS-27-Golden-Gate-Night-Wallpaper.jpg",
+                "iClarified-macOS-27-Golden-Gate-Wallpaper-5K-Dark.jpg"
+            ]
+        case .abstract:
+            return [
+                "01-neon-dusk.jpg",
+                "02-solar-flare.jpg",
+                "03-deep-ocean.jpg",
+                "04-mint-fog.jpg",
+                "05-candy-sky.jpg",
+                "06-graphite.jpg"
+            ]
+        case .custom:
+            return []
+        }
+    }
+
+    /// One line for the popover: what this collection rotates through.
+    var summary: String {
+        switch self {
+        case .goldenGate: return "Six 5K pictures, one per time of day"
+        case .abstract: return "Six abstract wallpapers, one per time of day"
+        case .custom: return "Any folder of images you pick"
+        }
+    }
+}
+
 // MARK: - Colour helpers
 
 enum HexColor {
@@ -198,9 +259,11 @@ enum HexColor {
 ///
 /// The page itself is loaded from the bundle with read access to `Resources` only,
 /// so photos in an arbitrary folder are out of reach over `file://`. Each photo is
-/// instead exposed as `dynawall-photo://photo/<index>` and the web view reads it
-/// back through the scheme handler below, which keeps the page sandboxed to exactly
-/// the files this app decided to share.
+/// instead exposed as `dynawall-photo://photo/<index>/<filename>` and the web view
+/// reads it back through the scheme handler below, which keeps the page sandboxed
+/// to exactly the files this app decided to share. The filename rides along in the
+/// URL so `script.js` can sort the photo into a time-of-day band without asking
+/// the host a second question.
 final class PhotoLibrary {
     static let scheme = "dynawall-photo"
 
@@ -211,6 +274,7 @@ final class PhotoLibrary {
     private let lock = NSLock()
     private var files: [URL] = []
     private var folder = ""
+    private var collectionName = PhotoCollection.goldenGate.label
 
     var count: Int {
         lock.lock()
@@ -222,7 +286,7 @@ final class PhotoLibrary {
     var summary: String {
         lock.lock()
         defer { lock.unlock() }
-        return "\(files.count) photo(s) from \(folder.isEmpty ? "<none>" : folder)"
+        return "\(collectionName): \(files.count) photo(s) from \(folder.isEmpty ? "<none>" : folder)"
     }
 
     /// The folder bundled with the app, used when no custom folder is configured.
@@ -230,15 +294,35 @@ final class PhotoLibrary {
         Bundle.main.resourceURL?.appendingPathComponent("images").path ?? ""
     }
 
-    /// Re-scan the folder (or the bundle when `folderPath` is empty).
-    func reload(folderPath: String) {
+    /// Re-scan for a collection.
+    ///
+    /// A bundled collection is a fixed list of six curated files, so the 4K, 5K and
+    /// HEIC duplicates sitting in the same folder never reach the slideshow. A
+    /// custom collection scans the folder the user picked (and falls back to the
+    /// bundled folder while no folder has been chosen yet).
+    func reload(collection: PhotoCollection, folderPath: String) {
         let trimmed = folderPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolved = trimmed.isEmpty ? Self.bundledFolder() : trimmed
-        let scanned = Self.scan(resolved)
+        let base = Self.bundledFolder()
+        let curated = collection.bundledFiles
+
+        var resolved = trimmed.isEmpty ? base : trimmed
+        var scanned = Self.scan(resolved)
+
+        if !curated.isEmpty {
+            let picked = curated.compactMap { name -> URL? in
+                let url = URL(fileURLWithPath: base).appendingPathComponent(name)
+                return FileManager.default.fileExists(atPath: url.path) ? url : nil
+            }
+            if !picked.isEmpty {
+                resolved = base
+                scanned = picked
+            }
+        }
 
         lock.lock()
         files = scanned
         folder = resolved
+        collectionName = collection.label
         lock.unlock()
     }
 
@@ -249,9 +333,23 @@ final class PhotoLibrary {
         return files[index]
     }
 
-    /// Scheme URLs handed to the page, in display order.
+    /// Scheme URLs handed to the page, in display order, with the file name kept
+    /// as the last path segment so the page can classify it.
     func photoURLs() -> [String] {
-        (0..<count).map { "\(Self.scheme)://photo/\($0)" }
+        lock.lock()
+        let names = files.map { $0.lastPathComponent }
+        lock.unlock()
+        return names.enumerated().map { index, name in
+            "\(Self.scheme)://photo/\(index)/\(Self.encodePathSegment(name))"
+        }
+    }
+
+    /// Percent-encode one path segment: spaces and `#`/`?` must survive a round
+    /// trip through `URL` without starting a query or a fragment.
+    private static func encodePathSegment(_ value: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/?#")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
     }
 
     private static func scan(_ path: String) -> [URL] {
@@ -270,7 +368,8 @@ final class PhotoLibrary {
     }
 }
 
-/// Handles `dynawall-photo://photo/<index>` requests from the wallpaper page.
+/// Handles `dynawall-photo://photo/<index>` and
+/// `dynawall-photo://photo/<index>/<filename>` requests from the wallpaper page.
 final class PhotoSchemeHandler: NSObject, WKURLSchemeHandler {
     private let library: PhotoLibrary
     private let lock = NSLock()
@@ -338,10 +437,15 @@ final class PhotoSchemeHandler: NSObject, WKURLSchemeHandler {
         userInfo: [NSLocalizedDescriptionKey: "photo not found"]
     )
 
+    /// The index is the first path segment; the file name that follows it is only
+    /// there for the page's time-of-day classification.
     private static func photoIndex(from url: URL) -> Int? {
         guard url.scheme == PhotoLibrary.scheme, url.host == "photo" else { return nil }
-        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        return Int(path)
+        let first = url.path
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .first
+        guard let segment = first else { return nil }
+        return Int(segment)
     }
 
     private static func mimeType(for url: URL) -> String {
@@ -391,6 +495,8 @@ final class WallpaperPreferences: ObservableObject {
         static let slideshowShuffle = "slideshowShuffle"
         static let kenBurns = "kenBurns"
         static let photoFolder = "photoFolderPath"
+        static let photoCollection = "photoCollection"
+        static let photoSync = "photoSyncTimeOfDay"
     }
 
     static let defaultSubtitle = "What are we building today?"
@@ -433,6 +539,16 @@ final class WallpaperPreferences: ObservableObject {
         didSet { persist(photoFolderPath, Key.photoFolder) }
     }
 
+    /// Which bundled set (or the custom folder) the slideshow rotates through.
+    @Published var photoCollection: PhotoCollection {
+        didSet { persist(photoCollection.rawValue, Key.photoCollection) }
+    }
+
+    /// Keep the wallpaper's photo in step with the clock's palette band.
+    @Published var photoSync: Bool {
+        didSet { persist(photoSync, Key.photoSync) }
+    }
+
     /// Called after every persisted change (never during initialisation).
     var onChange: ((WallpaperPreferences) -> Void)?
 
@@ -463,12 +579,25 @@ final class WallpaperPreferences: ObservableObject {
         }
     }
 
-    /// "Bundled photos", or the folder name the user picked.
+    /// "Golden Gate", "Abstract", or the folder name the user picked.
     var photoFolderLabel: String {
+        if photoCollection != .custom { return photoCollection.label }
         let path = photoFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty else { return "Bundled photos" }
+        guard !path.isEmpty else { return "No folder chosen yet" }
         let name = (path as NSString).lastPathComponent
         return name.isEmpty ? path : name
+    }
+
+    /// One line under the collection picker: what will rotate, and whether it
+    /// follows the clock.
+    ///
+    /// The band mirrors `resolvePhotoBand()` in `script.js`: a pinned palette
+    /// keeps its own band, everything else (auto, custom colour) follows the clock.
+    var photoCollectionHint: String {
+        let summary = photoCollection.summary
+        guard photoSync else { return summary + " · all photos, any time of day" }
+        let band = (themePreset.slot ?? ThemeSlot.current()).label.lowercased()
+        return summary + " · " + band + " photos right now"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -482,7 +611,9 @@ final class WallpaperPreferences: ObservableObject {
             Key.slideshowInterval: 15,
             Key.slideshowShuffle: true,
             Key.kenBurns: true,
-            Key.photoFolder: ""
+            Key.photoFolder: "",
+            Key.photoCollection: PhotoCollection.goldenGate.rawValue,
+            Key.photoSync: true
         ])
 
         firstName = defaults.string(forKey: Key.firstName) ?? Self.detectedFirstName()
@@ -495,6 +626,10 @@ final class WallpaperPreferences: ObservableObject {
         slideshowShuffle = defaults.bool(forKey: Key.slideshowShuffle)
         kenBurns = defaults.bool(forKey: Key.kenBurns)
         photoFolderPath = defaults.string(forKey: Key.photoFolder) ?? ""
+        photoCollection =
+            PhotoCollection(rawValue: defaults.string(forKey: Key.photoCollection) ?? "")
+            ?? .goldenGate
+        photoSync = defaults.bool(forKey: Key.photoSync)
     }
 
     /// The wallpaper greeting starts from the macOS account's first name.
@@ -519,6 +654,7 @@ final class WallpaperPreferences: ObservableObject {
           \(bgColorUpdate)
           window.livelyPropertyListener("theme", \(Self.jsLiteral(themeMode)));
           window.livelyPropertyListener("slideshow", \(slideshow ? "true" : "false"));
+          window.livelyPropertyListener("photoSync", \(photoSync ? "true" : "false"));
           window.livelyPropertyListener("slideshowInterval", \(slideshowIntervalMinutes));
           window.livelyPropertyListener("slideshowShuffle", \(slideshowShuffle ? "true" : "false"));
           window.livelyPropertyListener("kenBurns", \(kenBurns ? "true" : "false"));
@@ -530,6 +666,16 @@ final class WallpaperPreferences: ObservableObject {
     /// `script.js` re-evaluates the greeting period on window focus, which is
     /// exactly what we need after the Mac wakes from sleep.
     static let javaScriptResync = "window.dispatchEvent(new Event('focus'));"
+
+    /// Momentary action rather than a setting: the page advances its slideshow
+    /// right away and restarts the timer. Sent by the popover's "Next photo".
+    static let javaScriptNextPhoto = """
+    (function () {
+      if (typeof window.livelyPropertyListener !== "function") { return false; }
+      window.livelyPropertyListener("nextPhoto", true);
+      return true;
+    })();
+    """
 
     /// JSON string literals are valid JavaScript literals, so quoting stays safe
     /// for apostrophes, quotes, emoji and every other UTF-8 payload.
@@ -598,10 +744,10 @@ final class DesktopWindowController: NSObject, ObservableObject {
     /// the clock crossing into the next one.
     private var activeThemeSlot = ThemeSlot.current()
     private var themeTimer: Timer?
-    /// Photos served to the page: bundled by default, any folder on request.
+    /// Photos served to the page: a bundled collection by default, any folder on request.
     private let photoLibrary = PhotoLibrary()
-    /// Folder the current photo list was scanned from ("" = bundled).
-    private var loadedPhotoFolder: String?
+    /// Collection + folder the current photo list was scanned from (`nil` = never loaded).
+    private var loadedPhotoSource: String?
 
     /// Typing in the popover updates the wallpaper live; a short coalescing window
     /// keeps the web app's greeting cross-fade smooth while keys are pressed.
@@ -788,12 +934,14 @@ final class DesktopWindowController: NSObject, ObservableObject {
         }
     }
 
-    /// Re-scan the folder whenever the user points the slideshow somewhere else.
+    /// Re-scan whenever the user points the slideshow at another collection or folder.
     private func reloadPhotosIfNeeded(force: Bool = false) {
+        let collection = preferences.photoCollection
         let path = preferences.photoFolderPath
-        guard force || path != loadedPhotoFolder else { return }
-        loadedPhotoFolder = path
-        photoLibrary.reload(folderPath: path)
+        let source = "\(collection.rawValue):\(path)"
+        guard force || source != loadedPhotoSource else { return }
+        loadedPhotoSource = source
+        photoLibrary.reload(collection: collection, folderPath: path)
         dynaLog("photo library: \(photoLibrary.summary)")
     }
 
@@ -819,6 +967,26 @@ final class DesktopWindowController: NSObject, ObservableObject {
         }
         pendingPush = work
         DispatchQueue.main.asyncAfter(deadline: .now() + pushDebounce, execute: work)
+    }
+
+    // MARK: Next photo
+
+    /// Skip every display to the next photo immediately.
+    ///
+    /// The page owns the rotation, so this rides the same momentary action a
+    /// Lively button would fire (`livelyPropertyListener("nextPhoto", true)`); the
+    /// page picks the next photo of the active time band and restarts its timer.
+    func nextPhoto() {
+        var ready = 0
+        for entry in windows where entry.isReady {
+            ready += 1
+            entry.webView.evaluateJavaScript(WallpaperPreferences.javaScriptNextPhoto) { _, error in
+                if let error {
+                    dynaLog("next photo failed: \(error.localizedDescription)")
+                }
+            }
+        }
+        dynaLog(ready == 0 ? "next photo skipped (no page ready)" : "next photo requested")
     }
 
     /// Refresh the greeting right away (system wake, wallpaper resume).
@@ -923,6 +1091,7 @@ final class DesktopWindowController: NSObject, ObservableObject {
                 dynaLog("font: \(state["fontFamily"] as? String ?? "<unknown>") @ \(state["fontSize"] as? String ?? "?") Outfit=\(Self.describe(state["fontLoaded"]))")
                 let photoSrc = state["photoSrc"] as? String ?? ""
                 dynaLog("slideshow: on=\(Self.describe(state["slideshowOn"])) photo=\(photoSrc.isEmpty ? "<none>" : photoSrc) size=\(state["photoSize"] as? String ?? "?") layers=\(Self.describe(state["photoLayers"]))")
+                dynaLog("photo collection: \(self.preferences.photoCollection.label) sync=\(self.preferences.photoSync ? "time-of-day" : "off")")
             }
         }
     }
@@ -1012,6 +1181,15 @@ struct SettingsPopoverView: View {
 
             Toggle("Photo slideshow", isOn: $preferences.slideshow)
                 .toggleStyle(.switch)
+            Picker("Collection", selection: $preferences.photoCollection) {
+                ForEach(PhotoCollection.allCases) { collection in
+                    Text(collection.label).tag(collection)
+                }
+            }
+            .pickerStyle(.menu)
+            Toggle("Match time of day", isOn: $preferences.photoSync)
+                .toggleStyle(.switch)
+                .disabled(!preferences.slideshow)
             Picker("Rotate every", selection: $preferences.slideshowIntervalMinutes) {
                 ForEach(intervalChoices, id: \.self) { minutes in
                     Text(minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h").tag(minutes)
@@ -1026,16 +1204,24 @@ struct SettingsPopoverView: View {
                 .toggleStyle(.switch)
                 .disabled(!preferences.slideshow)
 
+            Text(preferences.photoCollectionHint)
+                .font(.caption2)
+                .foregroundColor(.secondary)
+
             HStack(spacing: 6) {
+                Button("Next photo") { controller.nextPhoto() }
+                    .disabled(!preferences.slideshow)
+                Spacer(minLength: 0)
+                Button("Choose…") { choosePhotoFolder() }
+                    .disabled(preferences.photoCollection != .custom)
+            }
+
+            if preferences.photoCollection == .custom {
                 Text(preferences.photoFolderLabel)
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Spacer(minLength: 0)
-                Button("Bundled") { preferences.photoFolderPath = "" }
-                    .disabled(preferences.photoFolderPath.isEmpty)
-                Button("Choose…") { choosePhotoFolder() }
             }
 
             Divider()
@@ -1052,6 +1238,13 @@ struct SettingsPopoverView: View {
         }
         .padding(16)
         .frame(width: 324)
+        .onChange(of: preferences.photoCollection) { collection in
+            // "Custom folder…" is a request for a folder: ask for one straight away
+            // instead of leaving the wallpaper pointing at the bundled set.
+            if collection == .custom && preferences.photoFolderPath.isEmpty {
+                choosePhotoFolder()
+            }
+        }
     }
 
     private func field(_ title: String, text: Binding<String>) -> some View {

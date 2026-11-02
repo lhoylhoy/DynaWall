@@ -42,8 +42,14 @@
         "type": "bool",
         "value": false
       },
-      "slideshowinterval": {
+      "photosync": {
         "order": 6,
+        "text": "Match photos to time of day",
+        "type": "bool",
+        "value": true
+      },
+      "slideshowinterval": {
+        "order": 7,
         "text": "Rotate every (minutes)",
         "type": "slider",
         "value": 15,
@@ -52,13 +58,13 @@
         "step": 1
       },
       "slideshowshuffle": {
-        "order": 7,
+        "order": 8,
         "text": "Shuffle order",
         "type": "bool",
         "value": true
       },
       "kenburns": {
-        "order": 8,
+        "order": 9,
         "text": "Slow zoom",
         "type": "bool",
         "value": true

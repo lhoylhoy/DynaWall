@@ -1,0 +1,98 @@
+name: Release
+
+# Push a tag (v1.0.0) to build both desktop packages and attach them to a GitHub
+# release. Run it manually from the Actions tab to smoke-test the build without
+# publishing anything.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS DMG
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify the wallpaper
+        run: node tests/verify.cjs
+
+      - name: Build DynaWall.dmg
+        run: ./build-dmg.sh
+
+      - name: Verify the disk image
+        run: |
+          hdiutil verify dist/DynaWall.dmg
+          codesign --verify --verbose=2 dist/DynaWall.dmg
+
+      - name: Upload the disk image
+        uses: actions/upload-artifact@v4
+        with:
+          name: DynaWall-macOS
+          path: dist/DynaWall.dmg
+          if-no-files-found: error
+
+  windows:
+    name: Windows portable + installer
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Verify the wallpaper
+        run: node tests/verify.cjs
+
+      - name: Build DynaWall.exe, portable zip and setup
+        shell: pwsh
+        run: |
+          $version = if ('${{ github.ref_type }}' -eq 'tag') { '${{ github.ref_name }}' } else { '0.0.0-dev' }
+          ./windows/build-release.ps1 -Version $version
+
+      - name: Upload the Windows builds
+        uses: actions/upload-artifact@v4
+        with:
+          name: DynaWall-Windows
+          path: |
+            dist/DynaWall-Setup.exe
+            dist/DynaWall-Windows-Portable.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish the GitHub release
+    needs: [macos, windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download the build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Attach the artifacts to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "DynaWall $TAG" --generate-notes
+          fi

@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>DynaWall</AssemblyName>
+    <RootNamespace>DynaWall</RootNamespace>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <ApplicationUseCompatibleTextRendering>false</ApplicationUseCompatibleTextRendering>
+    <Product>DynaWall</Product>
+    <Company>DynaWall</Company>
+    <Description>A minimalist, time-aware live wallpaper for the Windows desktop.</Description>
+    <Version Condition="'$(Version)' == ''">1.0.0</Version>
+
+    <!-- One portable DynaWall.exe; the runtime and the WebView2 native loader ride along. -->
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
+    <DebugType>none</DebugType>
+
+    <!--
+      The WebView2 package also ships a WPF wrapper that pulls a second WindowsBase
+      into reference resolution (MSB3277). This host only uses the WinForms control,
+      and publish output contains no WPF assembly, so the conflict is moot.
+    -->
+    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" />
+  </ItemGroup>
+
+  <!--
+    The wallpaper itself. Everything the page needs lives under `web/` next to
+    DynaWall.exe, which WebView2 exposes as https://dynawall.local/. Keep the
+    photo list in sync with GOLDEN_GATE_PHOTOS + ABSTRACT_PHOTOS in script.js
+    (tests/verify.cjs asserts it): images/ also holds 4K/5K/HEIC duplicates of
+    the same six Golden Gate scenes that no collection rotates through.
+  -->
+  <ItemGroup>
+    <Content Include="..\index.html" Link="web\index.html" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\style.css" Link="web\style.css" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\script.js" Link="web\script.js" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\assets\fonts\**\*" Link="web\assets\fonts\%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\images\iClarified-macOS-27-Golden-Gate-Wallpaper-5K-Light.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\images\iClarified-macOS-27-Golden-Gate-Day-Wallpaper.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\images\iClarified-macOS-27-Golden-Gate-Sunset-Wallpaper.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\images\iClarified-macOS-27-Golden-Gate-Evening-Wallpaper.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\images\iClarified-macOS-27-Golden-Gate-Night-Wallpaper.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\images\iClarified-macOS-27-Golden-Gate-Wallpaper-5K-Dark.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\images\01-neon-dusk.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\images\02-solar-flare.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\images\03-deep-ocean.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\images\04-mint-fog.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\images\05-candy-sky.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="..\images\06-graphite.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

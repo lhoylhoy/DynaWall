@@ -1,0 +1,259 @@
+using System.Drawing;
+using System.Windows.Forms;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
+
+namespace DynaWall;
+
+/// <summary>
+/// One borderless WebView2 window per display, parented to Explorer's wallpaper
+/// layer. The page is the same <c>index.html</c> the macOS app and Lively load, and
+/// the host talks to it through the same <c>livelyPropertyListener</c> bridge.
+/// </summary>
+internal sealed class WallpaperWindow : Form
+{
+    private const int WsExNoActivate = 0x08000000;
+    private const int WsExToolWindow = 0x00000080;
+
+    private readonly WallpaperController owner;
+    private readonly WebView2 webView;
+    private bool suspended;
+
+    internal WallpaperWindow(WallpaperController owner)
+    {
+        this.owner = owner;
+
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        MinimizeBox = false;
+        MaximizeBox = false;
+        BackColor = ColorTranslator.FromHtml(owner.Preferences.BgColor);
+
+        webView = new WebView2
+        {
+            Dock = DockStyle.Fill,
+            DefaultBackgroundColor = BackColor
+        };
+        Controls.Add(webView);
+    }
+
+    internal bool IsReady { get; private set; }
+
+    internal IntPtr DesktopParent => IsHandleCreated ? DesktopHost.Parent(Handle) : IntPtr.Zero;
+
+    protected override bool ShowWithoutActivation => true;
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var parameters = base.CreateParams;
+            // Never take focus from the desktop or appear in Alt+Tab.
+            parameters.ExStyle |= WsExNoActivate | WsExToolWindow;
+            return parameters;
+        }
+    }
+
+    /// <summary>Parent the window to the wallpaper layer and start the page.</summary>
+    internal void AttachToDesktop(IntPtr host, Rectangle bounds)
+    {
+        // Show off-screen first: Show() is what makes WinForms mark the form (and the
+        // WebView2 child) visible, and WebView2 only renders inside a visible window.
+        // The window is reparented below, so the off-screen spot is never painted.
+        Bounds = new Rectangle(-32000, -32000, Math.Max(bounds.Width, 64), Math.Max(bounds.Height, 64));
+        Show();
+
+        if (!DesktopHost.AttachChild(Handle, host, bounds))
+        {
+            Log.Write("wallpaper window could not be attached to the desktop");
+        }
+
+        _ = InitializeWebViewAsync();
+    }
+
+    internal void SetBackground(Color color)
+    {
+        BackColor = color;
+        if (!webView.IsDisposed) webView.DefaultBackgroundColor = color;
+    }
+
+    private async Task InitializeWebViewAsync()
+    {
+        try
+        {
+            var environment = owner.WebViewEnvironment;
+            if (environment is null)
+            {
+                Log.Write("web view environment is not ready");
+                return;
+            }
+
+            if (!Directory.Exists(owner.Photos.WebRoot))
+            {
+                Log.Write($"web wallpaper folder is missing: {owner.Photos.WebRoot}");
+                return;
+            }
+
+            await webView.EnsureCoreWebView2Async(environment);
+            var core = webView.CoreWebView2;
+
+            core.Settings.AreDefaultContextMenusEnabled = false;
+            core.Settings.AreBrowserAcceleratorKeysEnabled = false;
+            core.Settings.AreDevToolsEnabled = false;
+            core.Settings.IsStatusBarEnabled = false;
+            core.Settings.IsZoomControlEnabled = false;
+            core.Settings.IsBuiltInErrorPageEnabled = false;
+            core.Settings.IsPasswordAutosaveEnabled = false;
+            core.Settings.IsGeneralAutofillEnabled = false;
+
+            core.SetVirtualHostNameToFolderMapping(
+                PhotoLibrary.BundledHost, owner.Photos.WebRoot, CoreWebView2HostResourceAccessKind.DenyCors);
+            owner.ApplyPhotoMapping(core);
+
+            // First paint is the user's wallpaper, not the built-in copy.
+            await core.AddScriptToExecuteOnDocumentCreatedAsync(
+                owner.Preferences.BuildSeedScript(owner.Photos.Urls));
+
+            core.NavigationCompleted += OnNavigationCompleted;
+            core.ProcessFailed += OnProcessFailed;
+            core.Navigate($"https://{PhotoLibrary.BundledHost}/index.html");
+
+            Log.Write($"web view starting on display {owner.DisplayLabel(this)} ({Bounds.Width}×{Bounds.Height})");
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"web view failed to start: {ex.Message}");
+        }
+    }
+
+    private void OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+    {
+        Log.Write($"web view process failed: {e.ProcessFailedKind}");
+    }
+
+    private async void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        if (!e.IsSuccess)
+        {
+            Log.Write($"page failed to load: {e.WebErrorStatus}");
+            return;
+        }
+
+        IsReady = true;
+        owner.ApplyPhotoMappingTo(this);
+        await PushSettingsAsync();
+        await PushPhotosAsync();
+        await ApplySuspensionAsync();
+        Log.Write("wallpaper page ready");
+    }
+
+    internal async Task PushSettingsAsync()
+    {
+        var core = ReadyCore();
+        if (core is null) return;
+
+        try
+        {
+            await core.ExecuteScriptAsync(owner.Preferences.BuildSettingsScript());
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"settings push failed: {ex.Message}");
+        }
+    }
+
+    internal async Task PushPhotosAsync()
+    {
+        var core = ReadyCore();
+        if (core is null) return;
+
+        try
+        {
+            await core.ExecuteScriptAsync(Preferences.BuildPhotosScript(owner.Photos.Urls));
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"photo push failed: {ex.Message}");
+        }
+    }
+
+    internal async Task NextPhotoAsync()
+    {
+        var core = ReadyCore();
+        if (core is null) return;
+
+        try
+        {
+            await core.ExecuteScriptAsync(Preferences.BuildNextPhotoScript());
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"next photo failed: {ex.Message}");
+        }
+    }
+
+    internal async Task ApplySuspensionAsync(bool? suspendedOverride = null)
+    {
+        if (suspendedOverride.HasValue) suspended = suspendedOverride.Value;
+
+        var core = ReadyCore();
+        if (core is null) return;
+
+        try
+        {
+            await core.ExecuteScriptAsync(Preferences.BuildSuspendScript(suspended));
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"suspend push failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>Mirror the host's suspension state on the page (Pause, lock, sleep).</summary>
+    internal void SetSuspended(bool value)
+    {
+        if (suspended == value) return;
+        suspended = value;
+        _ = ApplySuspensionAsync(value);
+        Log.Write(value ? "display suspended (0 FPS)" : "display resumed");
+    }
+
+    internal void RefreshPhotoMapping()
+    {
+        var core = ReadyCore();
+        if (core is null) return;
+        owner.ApplyPhotoMapping(core);
+    }
+
+    internal void Resync()
+    {
+        var core = ReadyCore();
+        if (core is null) return;
+        _ = core.ExecuteScriptAsync("window.dispatchEvent(new Event('focus'));");
+    }
+
+    private CoreWebView2? ReadyCore()
+    {
+        if (!IsReady || webView.IsDisposed) return null;
+        try
+        {
+            return webView.CoreWebView2;
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            IsReady = false;
+            if (!webView.IsDisposed) webView.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
+}

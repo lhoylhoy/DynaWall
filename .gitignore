@@ -15,3 +15,19 @@
 # Swift build / module caches
 .swift-module-cache/
 
+# Release packaging outputs (the app bundle in dist/ is checked in; the
+# distributable images/installers are build products)
+dist/DynaWall.dmg
+dist/DynaWall-Setup.exe
+dist/DynaWall-Windows-Portable.zip
+dist/dmg_root/
+
+# .NET build output
+windows/bin/
+windows/obj/
+windows/publish/
+*.user
+
+# dotnet/NuGet CLI state
+.local/
+

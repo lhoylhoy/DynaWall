@@ -1,6 +1,6 @@
 # DynaWall
 
-A minimalist, zero-dependency live wallpaper for **macOS**, **Lively Wallpaper** and **Wallpaper Engine**.
+A minimalist, zero-dependency live wallpaper for **macOS**, **Windows**, **Lively Wallpaper** and **Wallpaper Engine**.
 It greets you with the time of day over a palette that follows it — dawn, day, dusk and night — on a flat
 colour or a rotating photo slideshow.
 
@@ -12,7 +12,8 @@ What are we building today?
 ![DynaWall thumbnail](thumbnail.png)
 
 On macOS it runs as its own native menu bar app (`DynaWall.app`) — no Plash, Lively or Wallpaper Engine
-required. See [macOS app](#macos-app-native).
+required. On Windows it runs as a native tray app (`DynaWall.exe`) on the Edge WebView2 runtime, parented
+behind the desktop icons. See [macOS app](#macos-app-native) and [Windows app](#windows-app-native).
 
 ## Behaviour
 
@@ -23,9 +24,9 @@ required. See [macOS app](#macos-app-native).
 | Palette | Four time-aware bands: **dawn** 05:00–08:59 (violet ink, rose glow) · **day** 09:00–16:59 (neutral) · **dusk** 17:00–20:59 (amber) · **night** 21:00–04:59 (deep blue, dimmer type, dimmed photos). Pin one band or hand it a colour instead |
 | Subtitle | Defaults to `What are we building today?`; clear it to hide the line |
 | Refresh | Greeting period *and* palette re-checked on the exact boundaries that can change them (05:00 · 09:00 · 12:00 · 17:00 · 18:00 · 21:00 local — six one-shot timers a day, nothing in between), and again on wake, resume or window focus |
-| Photo slideshow | Off by default. When on, the wallpaper cross-fades through photos every 1–60 min, in order or shuffled, with an optional slow zoom (Ken Burns) and a scrim that keeps the greeting readable. Twelve wallpapers ship in `images/` — the six Golden Gate 5K time-of-day pictures plus six generated abstracts — and the macOS app can rotate any folder you point it at |
+| Photo slideshow | Off by default. When on, the wallpaper cross-fades through photos every 1–60 min, in order or shuffled, with an optional slow zoom (Ken Burns) and a scrim that keeps the greeting readable. Twelve wallpapers ship in `images/` — the six Golden Gate 5K time-of-day pictures plus six generated abstracts — and the macOS and Windows apps can rotate any folder you point them at |
 | Photo sync | **On by default.** The slideshow only rotates through photos whose filename names the active band — `dawn`, `day`, `dusk` or `night` — so the picture on the desktop matches the light outside and the palette in use. Crossing 05:00 / 09:00 / 17:00 / 21:00, or picking a band in the popover, cross-fades to that band's photos. Turn it off to cycle the whole library |
-| Next photo | A **Next** button in the macOS popover's slideshow controls (and `livelyPropertyListener('nextPhoto', true)` / `window.DynaWall.nextPhoto()`) skips to the next photo immediately and restarts the timer |
+| Next photo | A **Next** button in the macOS popover and a **Next photo** tray item in the Windows app (and `livelyPropertyListener('nextPhoto', true)` / `window.DynaWall.nextPhoto()`) skip to the next photo immediately and restart the timer |
 | Typography | **Outfit** (variable, 600 for the greeting) — optically tracked at display size, so the greeting is ~90 px on a 1080p screen and ~112 px on a 1440p/5K desktop |
 | Motion | One-shot entrance fade plus a 320 ms cross-fade whenever the greeting text changes; photos cross-fade over 1.2 s |
 | Dependencies | No frameworks, CDN links or network requests. The only artwork is the vendored Outfit face (~32 KB, SIL OFL 1.1) plus the wallpapers in `images/`: six generated abstracts (~780 KB) and the six Golden Gate 5K pictures (~15 MB) |
@@ -49,7 +50,15 @@ required. See [macOS app](#macos-app-native).
 | `macos/AppIcon.icns` | Generated icon set (`AppIcon.png` is the 1024×1024 master it ships alongside) |
 | `macos/Info.plist` | Bundle metadata (`com.dynawall.macos`, `LSUIElement`) |
 | `build-macos.sh` | Zero-dependency `swiftc` build that assembles and signs `dist/DynaWall.app` |
-| `dist/DynaWall.app` | Build output (generated, not checked in) |
+| `build-dmg.sh` | Builds the app, then packs it with an `/Applications` symlink into `dist/DynaWall.dmg` |
+| `windows/DynaWall.csproj` | .NET 8 / WinForms project — single-file, self-contained, WebView2, curated wallpapers under `web/` |
+| `windows/*.cs` | Native Windows host: tray icon, settings window, WorkerW layering, WebView2 bridge, photo library, Run-key startup |
+| `windows/installer.iss` | Inno Setup 6 script for the per-user `DynaWall-Setup.exe` (no UAC prompt) |
+| `windows/build-release.ps1` | Publishes `DynaWall.exe`, the portable zip and the installer into `dist/` |
+| `windows/app.ico`, `windows/make-icon.cjs` | Windows icon set, generated from the macOS icon master with `sips` |
+| `.github/workflows/release.yml` | Tag-driven GitHub Actions build that attaches the DMG, setup and portable zip to a release |
+| `dist/DynaWall.app` | The built menu bar app — checked in, and regenerated by `build-macos.sh` |
+| `dist/DynaWall.dmg`, `dist/DynaWall-Setup.exe` | Release outputs (generated, not checked in) |
 
 ## Time-aware palettes
 
@@ -199,6 +208,19 @@ bundle with a 426 KB binary.
 there to stop it. Because the app is ad-hoc signed, Gatekeeper is happy with locally built copies; if you
 move the app to another Mac, re-run `build-macos.sh` on that Mac instead of copying the binary.
 
+### Disk image (.dmg)
+
+```bash
+./build-dmg.sh                  # builds the app, then dist/DynaWall.dmg
+open dist/DynaWall.dmg          # drag DynaWall.app onto the Applications shortcut
+```
+
+`build-dmg.sh` runs `build-macos.sh` first, stages `DynaWall.app` next to a symlink to `/Applications`, and
+packs the folder with the built-in `hdiutil` as a compressed read-only **UDZO** image — the standard macOS
+drag-and-drop install, with no third-party tooling. It ad-hoc signs the image as well as the app inside, so a
+copied DMG is not reported as damaged; because the release is not notarized, the first launch after
+downloading still needs **right-click → Open** once.
+
 ### How it works
 
 | Concern | Implementation |
@@ -310,6 +332,91 @@ appears each time the popover button is pressed.
 - `defaults delete com.dynawall.macos` resets every macOS-side setting.
 - Want it at login? Turn on **Launch at login** in the menu bar popover (or manage it in **System Settings → General → Login Items**).
 
+## Windows app (native)
+
+`windows/` is a native Windows host: a .NET 8 WinForms tray application that puts one Microsoft Edge
+WebView2 window per display behind the desktop icons. There is no Electron and no bundled Chromium — the
+WebView2 runtime is the evergreen component already present on Windows 11 and Windows 10 1809+, and the app
+itself ships as a single self-contained `DynaWall.exe` plus its `web/` wallpaper folder.
+
+### Requirements
+
+- Windows 10 1809+ or Windows 11, 64-bit
+- Microsoft Edge WebView2 (pre-installed; the installer warns and links to it if missing)
+- .NET 8 SDK to build, plus Inno Setup 6.3+ for the installer (`choco install innosetup`)
+
+### Build & run
+
+```powershell
+cd windows
+dotnet publish -c Release -r win-x64 -o publish
+.\publish\DynaWall.exe
+```
+
+Or build everything the release ships:
+
+```powershell
+.\windows\build-release.ps1 -Version 1.0.0
+# dist\DynaWall-Setup.exe          per-user installer, no UAC prompt
+# dist\DynaWall-Windows-Portable.zip   DynaWall.exe + web\ in one folder
+```
+
+Run `DynaWall.exe` straight from the zip — it needs the `web\` folder next to it — and it writes settings,
+the log and the WebView2 profile to `%LOCALAPPDATA%\DynaWall\`, whether it was installed or unzipped. The
+installer places it in `%LOCALAPPDATA%\Programs\DynaWall`, creates Start Menu (and optionally Desktop)
+shortcuts, and can register it to start when you sign in.
+
+### How it works
+
+| Concern | Implementation |
+| --- | --- |
+| Layering | `FindWindow("Progman")` + `SendMessageTimeout(0x052C)` asks Explorer to spawn the wallpaper `WorkerW`; each window is parented to the `WorkerW` below `SHELLDLL_DefView` with `SetParent`, so desktop icons stay on top |
+| Rendering | One borderless WebView2 window per display, loading `web/index.html` from the `https://dynawall.local/` virtual host |
+| Desktop interaction | The windows are `WS_EX_NOACTIVATE` children of the wallpaper layer, below the icon view — clicks, rubber-band selection and the desktop context menu keep working, and nothing appears in Alt+Tab |
+| Photos | The twelve curated wallpapers are served from `web/images/`; **Folder → Choose…** maps `https://dynawall-photos.local/` to that folder, keeping each filename in the URL so `script.js` can match it to the time of day |
+| Multi-monitor | One window per `Screen.AllScreens`, rebuilt when `SystemEvents.DisplaySettingsChanged` fires |
+| Sleep/wake | `PowerModes.Suspend/Resume` and session lock/unlock park the page and re-push settings and photos on resume |
+| Live settings | Every change is pushed with `window.livelyPropertyListener(...)` — the exact bridge the macOS app and Lively use |
+| First paint | `AddScriptToExecuteOnDocumentCreatedAsync` seeds `window.__dynawallSeed` before the page parses, so the first frame already carries your name, palette and photo |
+| Suspension | **Pause**, a locked session and sleeping displays send `livelyPropertyListener("suspend", true)`, which parks the clock, slideshow and Ken Burns drift |
+| Persistence | `%LOCALAPPDATA%\DynaWall\settings.json`; the WebView2 profile lives in `%LOCALAPPDATA%\DynaWall\WebView2\` |
+| Explorer restart | A 15-second watchdog rebuilds the windows when the `WorkerW` layer disappears or Explorer restarts, and keeps retrying if the desktop was not ready at sign-in |
+
+### Tray menu
+
+| Item | Effect |
+| --- | --- |
+| Settings… | Greeting, palette, photo folder, slideshow and startup controls (double-clicking the tray icon does the same) |
+| Next photo | Skips to the next photo now and restarts the interval |
+| Pause / Resume | Parks the wallpaper at 0 FPS without quitting |
+| Start with Windows | Adds or removes the per-user `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` entry |
+| Exit | Stops the app (closing Settings leaves the wallpaper running) |
+
+Settings apply live: the window writes `settings.json`, pushes the changed values into every WebView2 and
+re-scans the folder if the photo source changed. **Reset** restores the shipped subtitle, palette, slideshow
+and sync settings but keeps your folder.
+
+### Diagnostics
+
+Logs go to `%LOCALAPPDATA%\DynaWall\dynawall.log` (one 512 KB generation is kept):
+
+```text
+2026-01-15 10:00:00 [DynaWall] started with 1 display(s); settings at …\DynaWall\settings.json
+2026-01-15 10:00:00 [DynaWall] photo library: bundled wallpapers from …\web\images
+2026-01-15 10:00:01 [DynaWall] desktop windows: 1 for 1 display(s)
+2026-01-15 10:00:01 [DynaWall] web view starting on display 1/1 (2560×1440)
+2026-01-15 10:00:02 [DynaWall] wallpaper page ready
+```
+
+### Good to know
+
+- `DynaWall.exe` is not code-signed, so SmartScreen may ask once — **More info → Run anyway**.
+- Delete `%LOCALAPPDATA%\DynaWall\settings.json` to reset every Windows-side setting.
+- A custom folder with no supported images falls back to the bundled wallpapers, exactly like the web page.
+- The wallpaper runs without administrator rights; the installer is per-user for the same reason.
+- Uninstalling removes the program, shortcuts and Run entry but keeps `%LOCALAPPDATA%\DynaWall\` — delete
+  that folder to remove settings, logs and the WebView2 profile as well.
+
 ## Lively Wallpaper
 
 1. **Add Wallpaper → Browse…** and select `index.html`, or zip the folder and drag it into Lively.
@@ -351,12 +458,33 @@ so `theme` arrives as `0…5` — the page maps it back to the band name.
 Values arrive through `window.wallpaperPropertyListener.applyUserProperties(...)`; colors are converted
 from Wallpaper Engine's `"r g b"` floats to hex automatically.
 
+## Releases
+
+`.github/workflows/release.yml` builds and publishes both desktop packages from one tag:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+| Job | Runner | Produces |
+| --- | --- | --- |
+| macOS DMG | `macos-latest` | `DynaWall.dmg` |
+| Windows | `windows-latest` | `DynaWall-Setup.exe`, `DynaWall-Windows-Portable.zip` |
+| Release | `ubuntu-latest` | attaches all three to the GitHub Release for the tag (`gh release create`) |
+
+Both build jobs run `node tests/verify.cjs` first. The macOS job then runs `build-dmg.sh` and verifies the
+image with `hdiutil verify` and `codesign --verify`; the Windows job installs Inno Setup, runs
+`windows/build-release.ps1` (single-file `dotnet publish`, portable zip, `installer.iss`) and uploads the two
+Windows artifacts. Running the workflow manually from the Actions tab builds the artifacts without creating
+a release.
+
 ## Configuration priority
 
 1. **Host IPC** — Lively or Wallpaper Engine values
-2. **Host seed** — `window.__dynawallSeed`, which the macOS app injects at `documentStart`. It is the same
-   values as the IPC push, delivered early so the first paint is already correct; the page deletes it once
-   it has been read, and a later `livelyPropertyListener` still wins
+2. **Host seed** — `window.__dynawallSeed`, which the macOS and Windows hosts inject at document start. It is
+   the same values as the IPC push, delivered early so the first paint is already correct; the page deletes it
+   once it has been read, and a later `livelyPropertyListener` still wins
 3. **URL query parameters**
 4. **`localStorage` cache** — `dynawall.firstName`, `dynawall.subtitle`, `dynawall.bgColor`,
    `dynawall.theme`, `dynawall.slideshow`, `dynawall.slideshowInterval`, `dynawall.slideshowShuffle`,
@@ -455,6 +583,11 @@ percent-encoded host URLs, untagged folders, adjacent-band fallback), `photoSync
 slideshow signature, so a swap cross-fades instead of blinking), the `nextPhoto` action and pool stepping
 (wrap, shuffle, no repeat), that the clock controls are gone, and the consistency of the host manifests with
 `script.js`.
+
+The distribution checks cover the DMG pipeline (`build-dmg.sh`, UDZO, the `/Applications` symlink and the
+ad-hoc signature), the Windows project (net8.0-windows, single-file self-contained publish, WebView2), the
+WorkerW desktop layering, the shared `livelyPropertyListener` / seed bridge, the per-user Inno Setup installer,
+photo-list parity for `windows/DynaWall.csproj`, and the tag-driven GitHub Actions release workflow.
 
 The efficiency guards are checked the same way, because none of them is visible in a screenshot: the clock is
 a one-shot timer armed on each of the six daily boundaries (midnight wrap included, computed from local date

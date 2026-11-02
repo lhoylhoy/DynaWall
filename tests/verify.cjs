@@ -1708,6 +1708,125 @@ test('the bundle ships only the curated wallpapers, optimised', () => {
 });
 
 /* -------------------------------------------------------------------------- *
+ * Distribution packaging
+ * -------------------------------------------------------------------------- */
+
+group('Distribution packaging');
+
+test('the macOS disk image stages a drag-and-drop Applications shortcut', () => {
+  const script = fs.readFileSync(path.join(ROOT, 'build-dmg.sh'), 'utf8');
+  assert.match(script, /"\$ROOT\/build-macos\.sh"/, 'the DMG must start from a fresh app bundle');
+  assert.match(script, /hdiutil create/);
+  assert.match(script, /-volname "\$VOLUME_NAME"/);
+  assert.match(script, /-format UDZO/, 'the image must be compressed and read-only');
+  assert.match(script, /ln -s \/Applications "\$STAGE\/Applications"/);
+  assert.match(script, /codesign --force --sign - --timestamp=none "\$DMG"/);
+  assert.ok(!/-format UDRW/.test(script), 'a writable image is not a distributable');
+});
+
+test('the Windows host is a self-contained WebView2 app', () => {
+  const project = fs.readFileSync(path.join(ROOT, 'windows/DynaWall.csproj'), 'utf8');
+  assert.match(project, /<TargetFramework>net8\.0-windows<\/TargetFramework>/);
+  assert.match(project, /<UseWindowsForms>true<\/UseWindowsForms>/);
+  assert.match(project, /<PublishSingleFile>true<\/PublishSingleFile>/);
+  assert.match(project, /<SelfContained>true<\/SelfContained>/);
+  assert.match(project, /<RuntimeIdentifier>win-x64<\/RuntimeIdentifier>/);
+  assert.match(project, /<ApplicationIcon>app\.ico<\/ApplicationIcon>/);
+  assert.match(
+    project,
+    /PackageReference Include="Microsoft\.Web\.WebView2" Version="1\.0\.2903\.40"/
+  );
+  assert.ok(fs.existsSync(path.join(ROOT, 'windows/app.ico')), 'the tray and installer icon must ship');
+});
+
+test('the Windows host parents its WebView2 behind the desktop icons', () => {
+  const host = fs.readFileSync(path.join(ROOT, 'windows/DesktopHost.cs'), 'utf8');
+  assert.match(host, /0x052C/, 'Progman must be asked to spawn the WorkerW layer');
+  assert.match(host, /FindWindow\("Progman"/);
+  assert.match(host, /FindWindowEx\([^)]*"WorkerW"/);
+  assert.match(host, /"SHELLDLL_DefView"/);
+  assert.match(host, /SetParent\(window, host\)/);
+});
+
+test('the Windows host speaks the same bridge as every other host', () => {
+  const source = ['Preferences.cs', 'WallpaperWindow.cs']
+    .map((file) => fs.readFileSync(path.join(ROOT, 'windows', file), 'utf8'))
+    .join('\n');
+
+  assert.match(source, /window\.__dynawallSeed/, 'first paint has to be the user wallpaper');
+  assert.match(source, /window\.livelyPropertyListener\(/);
+  assert.match(source, /\("firstName", FirstName\)/);
+  assert.match(source, /livelyPropertyListener\(\\"nextPhoto\\"/);
+  assert.match(source, /livelyPropertyListener\(\\"suspend\\"/);
+  assert.match(source, /livelyPropertyListener\(\\"photos\\"/);
+  assert.match(
+    source,
+    /if \(Theme == "custom"\) values\.Add\(\("bgColor", BgColor\)\)/,
+    'a colour must only travel beside the custom palette'
+  );
+  assert.match(source, /if \(Theme == "custom"\) seed\["bgColor"\] = BgColor/);
+});
+
+test('the Windows host survives Explorer restarts and background callbacks', () => {
+  const controller = fs.readFileSync(path.join(ROOT, 'windows/WallpaperController.cs'), 'utf8');
+  assert.match(
+    controller,
+    /FindWallpaperHost\(spawn: windows\.Count == 0\)/,
+    'the watchdog must not send a blocking Progman message while windows exist'
+  );
+  assert.match(controller, /windows\.Count == 0 \|\|/, 'a failed first build must be retried');
+  assert.match(controller, /IsHandleCreated/, 'a destroyed window must be rebuilt, not recreated in place');
+
+  const window = fs.readFileSync(path.join(ROOT, 'windows/WallpaperWindow.cs'), 'utf8');
+  assert.match(window, /Show\(\);/, 'WebView2 only renders inside a shown, visible window');
+
+  const program = fs.readFileSync(path.join(ROOT, 'windows/Program.cs'), 'utf8');
+  assert.match(
+    program,
+    /SetSynchronizationContext\(new WindowsFormsSynchronizationContext\(\)\)/,
+    'tray and SystemEvents callbacks must marshal onto the UI thread'
+  );
+  assert.match(program, /Local\\DynaWall\.SingleInstance/);
+  assert.match(program, /Local\\DynaWall\.ShowSettings/, 'a second launch opens Settings');
+});
+
+test('the Windows installer is per-user and ships the curated wallpapers', () => {
+  const iss = fs.readFileSync(path.join(ROOT, 'windows/installer.iss'), 'utf8');
+  assert.match(iss, /PrivilegesRequired=lowest/, 'the installer must not ask for UAC');
+  assert.match(iss, /DefaultDirName=\{localappdata\}\\Programs\\DynaWall/);
+  assert.match(iss, /OutputBaseFilename=DynaWall-Setup/);
+  assert.match(iss, /Source: "publish\\\*"/);
+  assert.match(iss, /Tasks: startup/);
+  assert.match(iss, /WebView2Installed/);
+
+  const project = fs.readFileSync(path.join(ROOT, 'windows/DynaWall.csproj'), 'utf8');
+  const listed = Array.from(project.matchAll(/Include="\.\.\\images\\([^"]+\.jpg)"/g)).map(
+    (match) => match[1]
+  );
+  assert.deepEqual(
+    listed.sort(),
+    DynaWall.BUNDLED_PHOTOS.map((photo) => photo.split('/').pop()).sort(),
+    'DynaWall.csproj must copy exactly GOLDEN_GATE_PHOTOS + ABSTRACT_PHOTOS'
+  );
+  assert.ok(
+    !/Include="\.\.\\images\\\*/.test(project),
+    'the whole images/ folder must not be copied'
+  );
+});
+
+test('the release workflow packages both platforms from one tag', () => {
+  const workflow = fs.readFileSync(path.join(ROOT, '.github/workflows/release.yml'), 'utf8');
+  assert.match(workflow, /tags:\s*\n\s*-\s*'v\*'/);
+  assert.match(workflow, /runs-on: macos-latest/);
+  assert.match(workflow, /runs-on: windows-latest/);
+  assert.match(workflow, /\.\/build-dmg\.sh/);
+  assert.match(workflow, /build-release\.ps1/);
+  assert.match(workflow, /DynaWall-Setup\.exe/);
+  assert.match(workflow, /DynaWall-Windows-Portable\.zip/);
+  assert.match(workflow, /gh release create "\$TAG" dist\/\*/);
+});
+
+/* -------------------------------------------------------------------------- *
  * Typography
  * -------------------------------------------------------------------------- */
 

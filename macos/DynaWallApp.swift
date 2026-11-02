@@ -19,6 +19,7 @@
 import AppKit
 import Combine
 import CoreText
+import ImageIO
 import ServiceManagement
 import SwiftUI
 import UniformTypeIdentifiers
@@ -50,6 +51,28 @@ private func dynaLog(_ message: String) {
     guard let data = "[DynaWall] \(message)\n".data(using: .utf8) else { return }
     FileHandle.standardError.write(data)
     Diagnostics.fileHandle?.write(data)
+}
+
+// MARK: - Haptics
+
+/// The popover's tactile vocabulary.
+///
+/// Every pulse goes through `NSHapticFeedbackManager`, which drives the Force Touch
+/// trackpad's own actuator: a skip feels like a click under the finger rather than a
+/// notification. Two patterns are used, deliberately:
+///
+///   * `.alignment` — a discrete move (next photo, folder accepted, Finder reveal).
+///   * `.levelChange` — a state that flipped (pause/resume, restore defaults,
+///     launch at login).
+///
+/// `.generic` is left out on purpose: it is the pattern macOS uses for a rejected
+/// drop, and a skip that feels like an error is worse than no feedback at all. The
+/// manager is a no-op on a Mac without a Force Touch trackpad (and for a mouse), so
+/// every call site stays unconditional.
+enum DynaHaptics {
+    static func tap(_ pattern: NSHapticFeedbackManager.FeedbackPattern = .alignment) {
+        NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
+    }
 }
 
 // MARK: - Preference value types
@@ -626,11 +649,16 @@ enum WallpaperFont {
     /// font appears without a relaunch.
     private static let familiesCacheLifetime: TimeInterval = 30
 
-    /// Every family Font Book exposes, alphabetical.
+    /// Every system family Font Book exposes, alphabetical.
     ///
     /// The system font manager is the only complete source (it also knows faces the
     /// user installed after DynaWall started), so the answer is cached briefly
     /// rather than stored: the popover body is rebuilt on every keystroke.
+    ///
+    /// The four bundled faces are filtered out even when they are also installed
+    /// system-wide: the Typography card hides them and offers `Outfit` only as its
+    /// "Default" entry. The files and `@font-face` rules stay in the bundle —
+    /// hidden, never uninstalled.
     static func installedFamilies() -> [String] {
         let now = Date()
         if !cachedFamilies.isEmpty, now.timeIntervalSince(cachedFamiliesAt) < familiesCacheLifetime {
@@ -638,7 +666,9 @@ enum WallpaperFont {
         }
         let families = NSFontManager.shared.availableFontFamilies
             .filter { family in
-                !family.hasPrefix(".") && !ignoredFamilies.contains(family)
+                !family.hasPrefix(".")
+                    && !ignoredFamilies.contains(family)
+                    && bundledFace(family) == nil
             }
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         cachedFamilies = families
@@ -795,7 +825,6 @@ final class PhotoLibrary {
     private let lock = NSLock()
     private var files: [URL] = []
     private var folder = ""
-    private var collectionName = PhotoCollection.goldenGate.label
 
     var count: Int {
         lock.lock()
@@ -807,52 +836,23 @@ final class PhotoLibrary {
     var summary: String {
         lock.lock()
         defer { lock.unlock() }
-        return "\(collectionName): \(files.count) photo(s) from \(folder.isEmpty ? "<none>" : folder)"
+        return "Folder: \(files.count) photo(s) from \(folder.isEmpty ? "<none>" : folder)"
     }
 
-    /// The folder bundled with the app, used when no custom folder is configured.
-    static func bundledFolder() -> String {
-        Bundle.main.resourceURL?.appendingPathComponent("images").path ?? ""
-    }
-
-    /// Re-scan for a collection.
+    /// Re-scan the folder the host resolved.
     ///
-    /// A bundled collection is a fixed list of six curated files, so the 4K, 5K and
-    /// HEIC duplicates sitting in the same folder never reach the slideshow. A
-    /// custom collection scans the folder the user picked (and falls back to the
-    /// bundled folder while no folder has been chosen yet).
-    ///
-    /// The curated list is resolved *first*: a bundled collection that is present
-    /// returns before `scan()` ever runs, so opening the app never pays for a
-    /// `contentsOfDirectory` sweep, an extension filter and a localized sort of a
-    /// folder whose result it would throw away.
-    func reload(collection: PhotoCollection, folderPath: String) {
+    /// The macOS host is folder-only: the standard `~/Pictures/DynaWall` folder is
+    /// seeded from the bundle once, then scanned like any other folder. A missing
+    /// folder, an empty path or a folder with no supported images resolves to an
+    /// empty library, which is what makes the desktop fall back to solid black
+    /// instead of showing the shipped pictures.
+    func reload(folderPath: String) {
         let trimmed = folderPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        let base = Self.bundledFolder()
-        let curated = collection.bundledFiles
-
-        if !curated.isEmpty {
-            let picked = curated.compactMap { name -> URL? in
-                let url = URL(fileURLWithPath: base).appendingPathComponent(name)
-                return FileManager.default.fileExists(atPath: url.path) ? url : nil
-            }
-            if !picked.isEmpty {
-                lock.lock()
-                files = picked
-                folder = base
-                collectionName = collection.label
-                lock.unlock()
-                return
-            }
-        }
-
-        let resolved = trimmed.isEmpty ? base : trimmed
-        let scanned = Self.scan(resolved)
+        let scanned = trimmed.isEmpty ? [] : Self.scan(trimmed)
 
         lock.lock()
         files = scanned
-        folder = resolved
-        collectionName = collection.label
+        folder = trimmed
         lock.unlock()
     }
 
@@ -969,7 +969,11 @@ final class PhotoSchemeHandler: NSObject, WKURLSchemeHandler {
 
     /// The index is the first path segment; the file name that follows it is only
     /// there for the page's time-of-day classification.
-    private static func photoIndex(from url: URL) -> Int? {
+    /// The photo index at the front of `dynawall-photo://photo/<index>/…`.
+    ///
+    /// Shared with `DesktopWindowController`, which resolves the URL the page
+    /// reported back to a file on disk so the menu bar can show that photo.
+    static func photoIndex(from url: URL) -> Int? {
         guard url.scheme == PhotoLibrary.scheme, url.host == "photo" else { return nil }
         let first = url.path
             .split(separator: "/", omittingEmptySubsequences: true)
@@ -1002,6 +1006,14 @@ final class PhotoEventLogger: NSObject, WKScriptMessageHandler {
     /// bar preview uses it to name what is on the desktop right now.
     var onAdvance: ((String) -> Void)?
 
+    /// Called with the raw `dynawall-photo://photo/<index>/…` URL the page revealed.
+    ///
+    /// The friendly name above is for people; the URL is what lets the host resolve
+    /// the very same file and draw it inside the menu bar's preview card. Only a
+    /// source that still points into the photo library is reported, so a page with
+    /// no host list (a browser, Lively) never asks for a decode.
+    var onSource: ((String) -> Void)?
+
     func userContentController(
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
@@ -1011,6 +1023,9 @@ final class PhotoEventLogger: NSObject, WKScriptMessageHandler {
         let width = payload["width"] as? Int ?? 0
         let height = payload["height"] as? Int ?? 0
         dynaLog("slideshow advanced: \(source) (\(width)x\(height))")
+        if let url = URL(string: source), PhotoSchemeHandler.photoIndex(from: url) != nil {
+            onSource?(source)
+        }
         if let name = Self.photoName(fromSource: source) {
             onAdvance?(name)
         }
@@ -1218,6 +1233,20 @@ final class WallpaperPreferences: ObservableObject {
 
     static let defaultSubtitle = "What are we building today?"
 
+    /// The user-visible folder DynaWall falls back to when no other folder has
+    /// been picked: `~/Pictures/DynaWall`.
+    ///
+    /// `DesktopWindowController` creates it on launch and, the first time it is
+    /// created, seeds it with the wallpapers shipped in the app bundle. Keeping
+    /// the default under `Pictures` makes it easy to find in Finder and lets the
+    /// user add or remove wallpapers without editing the app bundle.
+    static var standardPhotoFolderPath: String {
+        let pictures = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Pictures", isDirectory: true)
+        return pictures.appendingPathComponent("DynaWall", isDirectory: true).path
+    }
+
     /// The greeting name is always read dynamically from the logged-in macOS account.
     var firstName: String {
         Self.detectedFirstName()
@@ -1227,8 +1256,17 @@ final class WallpaperPreferences: ObservableObject {
         didSet { persist(subtitleText, Key.subtitle) }
     }
 
+    /// The palette is always clock-driven now. The popover no longer shows a
+    /// Palette card, and a value stored by an earlier build is collapsed back to
+    /// `auto` so the native layer and the page cannot drift apart.
     @Published var themePreset: ThemePreset {
-        didSet { persist(themePreset.rawValue, Key.themePreset) }
+        didSet {
+            if themePreset != .auto {
+                themePreset = .auto
+                return
+            }
+            persist(themePreset.rawValue, Key.themePreset)
+        }
     }
 
     @Published var customColorHex: String {
@@ -1252,14 +1290,64 @@ final class WallpaperPreferences: ObservableObject {
         didSet { persist(kenBurns, Key.kenBurns) }
     }
 
-    /// Empty string means "use the photos bundled with the app".
+    /// Empty string means no explicit folder: the standard
+    /// `~/Pictures/DynaWall` folder is used instead. If neither folder yields an
+    /// image, the wallpaper falls back to solid black.
     @Published var photoFolderPath: String {
         didSet { persist(photoFolderPath, Key.photoFolder) }
     }
 
-    /// Which bundled set (or the custom folder) the slideshow rotates through.
+    /// The folder the photo library actually scans: an explicit pick wins,
+    /// otherwise the standard `~/Pictures/DynaWall` folder stands in.
+    var effectivePhotoFolderPath: String {
+        let chosen = photoFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        return chosen.isEmpty ? Self.standardPhotoFolderPath : chosen
+    }
+
+    /// `true` while the standard folder is the active source, whether it was
+    /// chosen implicitly or persisted by an earlier build.
+    var usesStandardPhotoFolder: Bool {
+        let chosen = photoFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        return chosen.isEmpty || chosen == Self.standardPhotoFolderPath
+    }
+
+    /// Show the active wallpaper folder in Finder, with nothing preselected.
+    ///
+    /// `selectFile(nil, inFileViewerRootedAtPath:)` opens (or re-focuses) a Finder
+    /// window rooted at the folder instead of merely activating Finder, which is
+    /// what "Reveal in Finder" means on macOS. The folder is created on launch, so
+    /// the path is normally present; a folder the user deleted meanwhile simply
+    /// brings Finder forward without a window.
+    func revealPhotoFolderInFinder() {
+        let path = effectivePhotoFolderPath
+        guard !path.isEmpty else { return }
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)
+        dynaLog("revealed photo folder in Finder: \(path)")
+    }
+
+    /// Photos always come from the active folder: the standard
+    /// `~/Pictures/DynaWall` folder unless the user picked another one. The old
+    /// bundled collections stay in `PhotoCollection` for the web wallpaper and
+    /// the Windows manifest, but the macOS host pins this to `.custom`.
     @Published var photoCollection: PhotoCollection {
-        didSet { persist(photoCollection.rawValue, Key.photoCollection) }
+        didSet {
+            if photoCollection != .custom {
+                photoCollection = .custom
+                return
+            }
+            persist(photoCollection.rawValue, Key.photoCollection)
+        }
+    }
+
+    /// Images the active folder yielded, updated by `DesktopWindowController`
+    /// after every rescan. While it is zero the desktop is solid black and the
+    /// slideshow controls are disabled.
+    @Published private(set) var photoCount = 0
+
+    func updatePhotoCount(_ count: Int) {
+        if photoCount != count {
+            photoCount = count
+        }
     }
 
     /// Keep the wallpaper's photo in step with the clock's palette band.
@@ -1328,10 +1416,13 @@ final class WallpaperPreferences: ObservableObject {
 
     private let defaults: UserDefaults
 
-    /// Effective background colour for the windows and the backing layer: a pinned
-    /// preset keeps its own colour, `auto` resolves against the clock so the native
-    /// layer matches the band the page is about to paint.
+    /// Effective background colour for the windows and the backing layer.
+    ///
+    /// With no folder (or a folder that yielded no readable images) the desktop is
+    /// pure black. Once photos are available the palette follows the clock, so the
+    /// native layer matches the band the page is about to paint.
     var bgColor: String {
+        if photoCount == 0 { return "#000000" }
         switch themePreset {
         case .custom: return customColorHex
         case .auto: return ThemeSlot.current().hex
@@ -1340,11 +1431,19 @@ final class WallpaperPreferences: ObservableObject {
     }
 
     /// Palette mode handed to the page (`auto` = follow the clock).
-    var themeMode: String { themePreset.themeMode }
+    ///
+    /// With no photos the page is asked for the `custom` palette in pure black:
+    /// there is nothing to grade, and the clock band would otherwise paint a
+    /// colour behind the greeting. As soon as a folder yields an image, `auto`
+    /// takes over and the clock drives everything again.
+    var themeMode: String {
+        photoCount == 0 ? "custom" : themePreset.themeMode
+    }
 
     /// A pinned colour (`custom`, GitHub Dark, Deep Slate) is sent as `bgColor`;
     /// `auto` and the four bands leave every token to `style.css`, which is what
-    /// keeps the clock in charge.
+    /// keeps the clock in charge. An empty photo folder also sends black so the
+    /// page has no coloured backdrop behind the greeting.
     var usesPinnedColor: Bool {
         switch themePreset {
         case .githubDark, .deepSlate, .custom: return true
@@ -1352,30 +1451,38 @@ final class WallpaperPreferences: ObservableObject {
         }
     }
 
-    /// Only a pinned colour sends `bgColor`.
+    /// Only a pinned colour (or the photo-less black fallback) sends `bgColor`.
     private var bgColorUpdate: String {
-        guard usesPinnedColor else { return "" }
+        guard usesPinnedColor || photoCount == 0 else { return "" }
         return "window.livelyPropertyListener(\"bgColor\", \(Self.jsLiteral(bgColor)));"
     }
 
-    /// "Golden Gate", "Abstract", or the folder name the user picked.
+    /// The folder row's title: the standard folder's short path when no
+    /// explicit folder is chosen, otherwise the picked folder's name.
     var photoFolderLabel: String {
-        if photoCollection != .custom { return photoCollection.label }
-        let path = photoFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty else { return "No folder chosen yet" }
+        if usesStandardPhotoFolder {
+            return "Pictures/DynaWall"
+        }
+        let path = effectivePhotoFolderPath
         let name = (path as NSString).lastPathComponent
         return name.isEmpty ? path : name
     }
 
-    /// One line under the collection picker: what will rotate, and whether it
-    /// follows the clock.
+    /// One line under the folder row: what will rotate, and whether it follows
+    /// the clock.
     ///
-    /// The band mirrors `resolvePhotoBand()` in `script.js`: a pinned palette
-    /// keeps its own band, everything else (auto, custom colour) follows the clock.
+    /// The band mirrors `resolvePhotoBand()` in `script.js`: with the palette
+    /// pinned to `.auto`, photos follow the clock.
     var photoCollectionHint: String {
-        let summary = photoCollection.summary
+        if photoCount == 0 {
+            if usesStandardPhotoFolder {
+                return "Add images to ~/Pictures/DynaWall — the desktop stays solid black."
+            }
+            return "No supported images in this folder — the desktop stays solid black."
+        }
+        let summary = "\(photoCount) \(photoCount == 1 ? "photo" : "photos")"
         guard photoSync else { return summary + " · all photos, any time of day" }
-        let band = (themePreset.slot ?? ThemeSlot.current()).label.lowercased()
+        let band = ThemeSlot.current().label.lowercased()
         return summary + " · " + band + " photos right now"
     }
 
@@ -1409,7 +1516,7 @@ final class WallpaperPreferences: ObservableObject {
             // popover follows the measured content height, so a hint that wrapped for
             // a longer name ("Google Sans Flex ships with DynaWall — no install, no
             // download." is 297 pt of the 288 pt the card has) would resize the whole
-            // panel the moment that chip was clicked.
+            // panel the moment the selection changed.
             return "Bundled with DynaWall — no install, no download."
         }
         switch family.lowercased() {
@@ -1521,19 +1628,6 @@ final class WallpaperPreferences: ObservableObject {
         }
     }
 
-    /// Choose a collection and start the slideshow when it was off.
-    ///
-    /// Picking a photo set (or clicking "Next photo") is a request to see photos;
-    /// leaving the master switch off turned that click into nothing.
-    func selectCollection(_ collection: PhotoCollection) {
-        if photoCollection != collection {
-            photoCollection = collection
-        }
-        if !slideshow {
-            slideshow = true
-        }
-    }
-
     /// Accept a folder dropped onto the popover.
     ///
     /// Switches to the custom collection, remembers the folder and starts the
@@ -1549,8 +1643,11 @@ final class WallpaperPreferences: ObservableObject {
         if photoCollection != .custom {
             photoCollection = .custom
         }
-        if photoFolderPath != url.path {
-            photoFolderPath = url.path
+        // Dropping the standard folder is the same as choosing it implicitly;
+        // keeping the path empty preserves the "standard folder" label.
+        let path = url.path == Self.standardPhotoFolderPath ? "" : url.path
+        if photoFolderPath != path {
+            photoFolderPath = path
         }
         if !slideshow {
             slideshow = true
@@ -1560,9 +1657,9 @@ final class WallpaperPreferences: ObservableObject {
 
     /// Restore the shipped look in one click.
     ///
-    /// `photoFolderPath` is deliberately left alone: resetting the palette and the
-    /// slideshow should not forget the folder a user picked, and `.goldenGate`
-    /// never reads it.
+    /// Clearing `photoFolderPath` returns the wallpaper to the standard
+    /// `~/Pictures/DynaWall` folder. If that folder has no images, the desktop
+    /// returns to solid black and the slideshow controls go inactive.
     func resetToDefaults() {
         subtitleText = Self.defaultSubtitle
         themePreset = .auto
@@ -1571,7 +1668,9 @@ final class WallpaperPreferences: ObservableObject {
         slideshowIntervalMinutes = 15
         slideshowShuffle = true
         kenBurns = true
-        photoCollection = .goldenGate
+        photoCollection = .custom
+        photoFolderPath = ""
+        photoCount = 0
         photoSync = true
         fontFamily = WallpaperFont.defaultFamily
         customFontPath = ""
@@ -1592,7 +1691,7 @@ final class WallpaperPreferences: ObservableObject {
             Key.slideshowShuffle: true,
             Key.kenBurns: true,
             Key.photoFolder: "",
-            Key.photoCollection: PhotoCollection.goldenGate.rawValue,
+            Key.photoCollection: PhotoCollection.custom.rawValue,
             Key.photoSync: true,
             Key.launchAtLogin: false,
             Key.fontFamily: WallpaperFont.defaultFamily,
@@ -1600,7 +1699,11 @@ final class WallpaperPreferences: ObservableObject {
         ])
 
         subtitleText = defaults.string(forKey: Key.subtitle) ?? Self.defaultSubtitle
-        themePreset = ThemePreset(rawValue: defaults.string(forKey: Key.themePreset) ?? "") ?? .auto
+        // The palette is always clock-driven now. Writing the migrated value back is
+        // what removes a band, a fixed colour or a custom pick stored by an earlier
+        // build, so a relaunch cannot bring it back.
+        themePreset = .auto
+        defaults.set(ThemePreset.auto.rawValue, forKey: Key.themePreset)
         customColorHex = defaults.string(forKey: Key.customColor) ?? HexColor.fallback
         slideshow = defaults.bool(forKey: Key.slideshow)
         let interval = defaults.integer(forKey: Key.slideshowInterval)
@@ -1608,18 +1711,29 @@ final class WallpaperPreferences: ObservableObject {
         slideshowShuffle = defaults.bool(forKey: Key.slideshowShuffle)
         kenBurns = defaults.bool(forKey: Key.kenBurns)
         photoFolderPath = defaults.string(forKey: Key.photoFolder) ?? ""
-        photoCollection =
-            PhotoCollection(rawValue: defaults.string(forKey: Key.photoCollection) ?? "")
-            ?? .goldenGate
+        // Folder-only photos: an old bundled collection is migrated to `.custom`.
+        photoCollection = .custom
+        defaults.set(PhotoCollection.custom.rawValue, forKey: Key.photoCollection)
         photoSync = defaults.bool(forKey: Key.photoSync)
         launchAtLogin = LaunchAtLogin.isEnabled
-        fontFamily = WallpaperFont.normalizedFamily(
+        // Bundled families are hidden from the dropdown; an old pick that pointed at
+        // one of them lands back on Outfit rather than at an invisible selection.
+        let storedFamily = WallpaperFont.normalizedFamily(
             defaults.string(forKey: Key.fontFamily) ?? WallpaperFont.defaultFamily
         )
+        let resolvedFamily: String
+        if WallpaperFont.isBundled(storedFamily),
+           storedFamily.caseInsensitiveCompare(WallpaperFont.defaultFamily) != .orderedSame {
+            resolvedFamily = WallpaperFont.defaultFamily
+        } else {
+            resolvedFamily = storedFamily
+        }
+        fontFamily = resolvedFamily
         customFontPath = defaults.string(forKey: Key.customFontPath) ?? ""
+        defaults.set(resolvedFamily, forKey: Key.fontFamily)
         // `didSet` does not run during init, so the preview card and CoreText have to
         // be told about the saved typography here (and not only when it changes).
-        WallpaperFont.activeFamily = fontFamily
+        WallpaperFont.activeFamily = resolvedFamily
         if !customFontPath.isEmpty {
             WallpaperFont.registerCustomFont(atPath: customFontPath)
         }
@@ -1707,7 +1821,7 @@ final class WallpaperPreferences: ObservableObject {
             "\"subtitle\": \(Self.jsLiteral(subtitleText))",
             "\"theme\": \(Self.jsLiteral(themeMode))"
         ]
-        if usesPinnedColor {
+        if usesPinnedColor || photoCount == 0 {
             fields.append("\"bgColor\": \(Self.jsLiteral(bgColor))")
         }
         fields.append("\"slideshow\": \(slideshow ? "true" : "false")")
@@ -1722,9 +1836,10 @@ final class WallpaperPreferences: ObservableObject {
         if !fontSource.isEmpty {
             fields.append("\"customFont\": \(Self.jsLiteral(fontSource))")
         }
-        if !photoURLs.isEmpty {
-            fields.append("\"photos\": \(Self.jsArrayLiteral(photoURLs))")
-        }
+        // Always present, even when empty: an empty array is how the page knows the
+        // host chose a folder and it has no images, which keeps the bundled photos
+        // off the desktop and the background solid black.
+        fields.append("\"photos\": \(Self.jsArrayLiteral(photoURLs))")
         return """
         (function () {
           window.__dynawallSeed = { \(fields.joined(separator: ", ")) };
@@ -1807,8 +1922,16 @@ final class DesktopWindowController: NSObject, ObservableObject {
     /// off or nothing has painted yet. The menu bar preview card names it.
     @Published private(set) var currentPhotoName = ""
 
-    /// How many photos the active collection resolved to, for the folder row.
-    @Published private(set) var photoCount = 0
+    /// The photo itself, downsampled for the menu bar's preview card.
+    ///
+    /// Decoded once per reveal instead of at draw time: the card is 120 pt tall, so a
+    /// 5K wallpaper is reduced to a 720 px thumbnail on a background queue and the
+    /// popover only ever composites a texture that fits in a few hundred kilobytes.
+    /// `nil` means "no live photo", and the card falls back to the band gradient.
+    @Published private(set) var previewImage: NSImage?
+
+    /// How many photos the active folder resolved to, for the folder row.
+    var photoCount: Int { preferences.photoCount }
 
     private final class WallpaperWindow {
         let window: NSWindow
@@ -1850,10 +1973,13 @@ final class DesktopWindowController: NSObject, ObservableObject {
     private var workspaceObservers: [NSObjectProtocol] = []
     /// Displays asleep or session locked: every page stands still until they are not.
     private var systemSuspended = false
-    /// Photos served to the page: a bundled collection by default, any folder on request.
+    /// Photos the wallpaper rotates through. The standard `~/Pictures/DynaWall`
+    /// folder is the default; an explicit pick replaces it.
     private let photoLibrary = PhotoLibrary()
-    /// Collection + folder the current photo list was scanned from (`nil` = never loaded).
+    /// Folder the current photo list was scanned from (`nil` = never loaded).
     private var loadedPhotoSource: String?
+    /// Bumped on every reveal so a slow decode can never overwrite a newer photo.
+    private var previewImageToken = 0
 
     /// Shared by every display: one in-memory data store, one scheme handler and one
     /// message logger. A second monitor reuses them instead of standing up a parallel
@@ -1881,12 +2007,25 @@ final class DesktopWindowController: NSObject, ObservableObject {
                 DispatchQueue.main.async { self.currentPhotoName = name }
             }
         }
+        // The same reveal, as the URL of the file on disk: the card draws the photo
+        // the desktop is actually showing instead of a colour that merely matches it.
+        photoLogger.onSource = { [weak self] source in
+            guard let self else { return }
+            if Thread.isMainThread {
+                self.loadPreviewImage(from: source)
+            } else {
+                DispatchQueue.main.async { self.loadPreviewImage(from: source) }
+            }
+        }
         preferences.onChange = { [weak self] _ in
             guard let self else { return }
             self.schedulePush()
             // No slideshow, no photo on screen: the preview card must not name one.
             if !self.preferences.slideshow {
                 self.currentPhotoName = ""
+                // Dropping the decoded texture too keeps a paused wallpaper from
+                // holding a full-size bitmap for a photo nobody can see any more.
+                self.previewImage = nil
             }
             // Only a palette switch needs a new clock timer; typing must not re-arm it.
             if self.preferences.themePreset != self.scheduledPreset {
@@ -1899,8 +2038,12 @@ final class DesktopWindowController: NSObject, ObservableObject {
 
     func start() {
         observeSystemEvents()
+        // The standard folder has to exist before the first scan, and a fresh
+        // install is seeded from the bundled wallpapers so the app has something
+        // to show before the user picks anything.
+        prepareStandardPhotoFolder()
         // The seed is built before the first window exists, so the photo list has to
-        // be resolved first; a bundled collection resolves without a folder scan.
+        // be resolved first.
         reloadPhotosIfNeeded()
         rebuild()
         startThemeClock()
@@ -2019,7 +2162,7 @@ final class DesktopWindowController: NSObject, ObservableObject {
         activeThemeSlot = slot
         guard preferences.themePreset == .auto else { return }
 
-        let color = HexColor.nsColor(slot.hex)
+        let color = HexColor.nsColor(preferences.bgColor)
         for entry in windows {
             entry.window.backgroundColor = color
             entry.webView.underPageBackgroundColor = color
@@ -2218,15 +2361,79 @@ final class DesktopWindowController: NSObject, ObservableObject {
         }
     }
 
-    /// Re-scan whenever the user points the slideshow at another collection or folder.
+    /// Create `~/Pictures/DynaWall` on launch and seed a brand-new folder with
+    /// the wallpapers shipped in `DynaWall.app/Contents/Resources/images`.
+    ///
+    /// Seeding only happens when the folder does not exist. An existing folder —
+    /// including one the user has emptied — is never touched, so deleting every
+    /// photo really does produce the solid-black fallback instead of restoring
+    /// the bundled set on the next launch.
+    private func prepareStandardPhotoFolder() {
+        let folder = URL(
+            fileURLWithPath: WallpaperPreferences.standardPhotoFolderPath,
+            isDirectory: true
+        )
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory) {
+            if !isDirectory.boolValue {
+                dynaLog("standard photo folder is not a directory: \(folder.path)")
+            }
+            return
+        }
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        } catch {
+            dynaLog("could not create standard photo folder: \(error.localizedDescription)")
+            return
+        }
+        seedStandardPhotoFolder(at: folder)
+    }
+
+    /// Copy the bundled wallpapers into a freshly created standard folder.
+    ///
+    /// The bundle is read-only (and may be translocated), so the user-visible
+    /// `Pictures/DynaWall` folder is the place they can add or remove images.
+    /// Copying once keeps the app useful on first launch without re-seeding a
+    /// folder they intentionally emptied later.
+    private func seedStandardPhotoFolder(at folder: URL) {
+        guard let bundled = Bundle.main.resourceURL?
+            .appendingPathComponent("images", isDirectory: true) else {
+            dynaLog("bundled images folder is missing; standard photo folder stays empty")
+            return
+        }
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: bundled,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        )) ?? []
+        var copied = 0
+        for source in entries
+        where PhotoLibrary.supportedExtensions.contains(source.pathExtension.lowercased()) {
+            let destination = folder.appendingPathComponent(source.lastPathComponent)
+            guard !FileManager.default.fileExists(atPath: destination.path) else { continue }
+            do {
+                try FileManager.default.copyItem(at: source, to: destination)
+                copied += 1
+            } catch {
+                dynaLog("could not seed \(source.lastPathComponent): \(error.localizedDescription)")
+            }
+        }
+        dynaLog("seeded standard photo folder with \(copied) bundled wallpaper(s) at \(folder.path)")
+    }
+
+    /// Re-scan whenever the user points the slideshow at another folder.
     private func reloadPhotosIfNeeded(force: Bool = false) {
-        let collection = preferences.photoCollection
-        let path = preferences.photoFolderPath
-        let source = "\(collection.rawValue):\(path)"
-        guard force || source != loadedPhotoSource else { return }
-        loadedPhotoSource = source
-        photoLibrary.reload(collection: collection, folderPath: path)
-        photoCount = photoLibrary.count
+        let path = preferences.effectivePhotoFolderPath
+        guard force || path != loadedPhotoSource else { return }
+        loadedPhotoSource = path
+        photoLibrary.reload(folderPath: path)
+        let count = photoLibrary.count
+        preferences.updatePhotoCount(count)
+        // An empty folder cannot run a slideshow: park the switch so the popover
+        // opens with the controls inactive instead of switched on but dead.
+        if count == 0 && preferences.slideshow {
+            preferences.slideshow = false
+        }
         dynaLog("photo library: \(photoLibrary.summary)")
     }
 
@@ -2284,6 +2491,8 @@ final class DesktopWindowController: NSObject, ObservableObject {
     /// The page owns the rotation, so this rides the same momentary action a
     /// Lively button would fire (`livelyPropertyListener("nextPhoto", true)`); the
     /// page picks the next photo of the active time band and restarts its timer.
+    /// The haptic pulse is the only acknowledgement a menu bar skip can give: it
+    /// lands the moment the click registers, not when the cross-fade finishes.
     func nextPhoto() {
         var ready = 0
         for entry in windows where entry.isReady {
@@ -2294,7 +2503,58 @@ final class DesktopWindowController: NSObject, ObservableObject {
                 }
             }
         }
+        if ready > 0 {
+            DynaHaptics.tap(.alignment)
+        }
         dynaLog(ready == 0 ? "next photo skipped (no page ready)" : "next photo requested")
+    }
+
+    /// Decode a thumbnail of the photo the page just revealed.
+    ///
+    /// ImageIO reads the dimensions from the file header and produces a
+    /// `kCGImageSourceThumbnailMaxPixelSize`-bounded bitmap, so a 5K JPEG costs a few
+    /// hundred kilobytes here instead of a ~60 MB full decode. The work happens on a
+    /// utility queue and `previewImageToken` makes sure a slow decode of the outgoing
+    /// photo cannot overwrite the one that replaced it.
+    private func loadPreviewImage(from source: String) {
+        previewImageToken += 1
+        let token = previewImageToken
+        guard let url = URL(string: source),
+              let index = PhotoSchemeHandler.photoIndex(from: url),
+              let fileURL = photoLibrary.file(at: index) else {
+            previewImage = nil
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let image = Self.thumbnail(at: fileURL, maxPixelSize: 720)
+            DispatchQueue.main.async {
+                guard let self, token == self.previewImageToken else { return }
+                self.previewImage = image
+            }
+        }
+    }
+
+    /// A downsampled, upright `NSImage` for the preview card.
+    ///
+    /// Every format the photo library accepts (JPEG, PNG, HEIC, TIFF, WebP, BMP, GIF)
+    /// decodes through ImageIO. A file that cannot be read returns `nil`, which leaves
+    /// the card on its gradient rather than on a blank rectangle.
+    private static func thumbnail(at url: URL, maxPixelSize: Int) -> NSImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            // Honour the EXIF orientation: a portrait wallpaper must not arrive rotated.
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(
+            source,
+            0,
+            options as CFDictionary
+        ) else {
+            return nil
+        }
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 
     /// Refresh the greeting right away (system wake, wallpaper resume).
@@ -2322,6 +2582,8 @@ final class DesktopWindowController: NSObject, ObservableObject {
     func setPaused(_ paused: Bool) {
         guard paused != isPaused else { return }
         isPaused = paused
+        // A flip, not a move: `.levelChange` is the pattern macOS uses for a switch.
+        DynaHaptics.tap(.levelChange)
 
         for entry in windows {
             if paused {
@@ -2486,61 +2748,6 @@ private final class FolderDropTarget: ObservableObject {
     @Published var isTargeted = false
 }
 
-/// The result of the last "Add Font…" attempt, shown under the typography picker.
-///
-/// An `ObservableObject` rather than `@State` on purpose: the app is compiled with
-/// plain `swiftc`, which does not load SwiftUI's macro plugin, so the `@State`
-/// *macro* is unavailable here (`@StateObject` is still a plain property wrapper).
-private final class FontImportNotice: ObservableObject {
-    @Published var message: String?
-}
-
-/// A bezel-less `NSColorWell` that fills its whole parent.
-///
-/// `ColorPicker` keeps its own 44×22 control centred inside whatever frame it is
-/// given, which drew a second pill bezel inside the rounded swatch and left the
-/// swatch's edges dead. This well stretches to the swatch instead; the popover
-/// draws it at 1.5 % opacity so only the click target (not the control chrome) is
-/// visible, and every point on the swatch opens the system colour panel.
-private struct SwatchColorWell: NSViewRepresentable {
-    @Binding var color: Color
-
-    func makeNSView(context: Context) -> NSColorWell {
-        let well = NSColorWell()
-        well.isBordered = false
-        well.target = context.coordinator
-        well.action = #selector(Coordinator.colorChanged(_:))
-        well.color = NSColor(color)
-        return well
-    }
-
-    func updateNSView(_ well: NSColorWell, context: Context) {
-        context.coordinator.color = $color
-        let next = NSColor(color)
-        // The live panel owns the colour while it is open; mirroring it back would
-        // fight the user's drag.
-        if !well.isActive, well.color != next {
-            well.color = next
-        }
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(color: $color)
-    }
-
-    final class Coordinator: NSObject {
-        var color: Binding<Color>
-
-        init(color: Binding<Color>) {
-            self.color = color
-        }
-
-        @objc func colorChanged(_ sender: NSColorWell) {
-            color.wrappedValue = Color(nsColor: sender.color)
-        }
-    }
-}
-
 struct SettingsPopoverView: View {
     /// Fixed design width; the height is measured from the content.
     static let popoverWidth: CGFloat = 340
@@ -2550,36 +2757,14 @@ struct SettingsPopoverView: View {
     /// Called with the ideal content height whenever the layout changes.
     var onContentHeightChange: ((CGFloat) -> Void)?
 
-    /// A folder is hovering over the custom-folder row.
+    /// A folder is hovering over the upload row.
     @StateObject private var dropTarget = FolderDropTarget()
-
-    /// Why the last "Add Font…" attempt failed, shown under the picker.
-    @StateObject private var fontNotice = FontImportNotice()
-
-    private var customColorBinding: Binding<Color> {
-        Binding(
-            get: { HexColor.color(preferences.customColorHex) },
-            // Picking a colour pins the custom palette, so the well is never a
-            // control that appears to do nothing.
-            set: { preferences.selectCustomColor(HexColor.hex($0)) }
-        )
-    }
-
-    private var collectionBinding: Binding<PhotoCollection> {
-        Binding(
-            get: { preferences.photoCollection },
-            // Choosing a collection starts the slideshow instead of saving an
-            // invisible preference behind a switch that is off.
-            set: { preferences.selectCollection($0) }
-        )
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 11) {
             previewCard
             greetingCard
             typographyCard
-            paletteCard
             photosCard
             startupCard
             footer
@@ -2595,13 +2780,6 @@ struct SettingsPopoverView: View {
         .onPreferenceChange(PopoverHeightKey.self) { height in
             onContentHeightChange?(height)
         }
-        .onChange(of: preferences.photoCollection) { collection in
-            // "Custom folder…" is a request for a folder: ask for one straight away
-            // instead of leaving the wallpaper pointing at the bundled set.
-            if collection == .custom && preferences.photoFolderPath.isEmpty {
-                choosePhotoFolder()
-            }
-        }
         .onAppear {
             preferences.syncLaunchAtLogin()
         }
@@ -2615,6 +2793,10 @@ struct SettingsPopoverView: View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(HexColor.color(preferences.bgColor))
+            // The photo the desktop is showing right now, under the same scrim the
+            // page paints over it, so the card is a true miniature rather than a
+            // colour swatch that only approximates one.
+            previewPhotoBackdrop
             // The wallpaper's own ambient light: one soft, centred radial accent plus
             // the edge vignette from `.wallpaper-container::before` in style.css,
             // instead of a hard diagonal split across the card.
@@ -2692,6 +2874,39 @@ struct SettingsPopoverView: View {
 
     private var trimmedSubtitle: String {
         preferences.subtitleText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// The photo behind the card's chrome.
+    ///
+    /// Drawn only while the slideshow is on and a reveal has been decoded, so the
+    /// card never shows a picture the desktop has already left behind, and so a
+    /// wallpaper without photos stays a pure gradient. The thumbnail is bounded by
+    /// `DesktopWindowController.thumbnail` (720 px on its long edge) and pinned to
+    /// the card's exact size, which keeps the popover's measured height constant
+    /// whether or not a photo is present — a card that grew the moment the first
+    /// photo landed would resize the whole panel mid-fade.
+    @ViewBuilder
+    private var previewPhotoBackdrop: some View {
+        if preferences.slideshow, let photo = controller.previewImage {
+            Image(nsImage: photo)
+                .resizable()
+                .interpolation(.medium)
+                .aspectRatio(contentMode: .fill)
+                .frame(width: Self.popoverWidth - 32, height: 120)
+                .clipped()
+                // `.scrim` in style.css: a radial darkening that is deepest behind
+                // the greeting, plus a flat wash, never a full black-out.
+                .overlay(
+                    RadialGradient(
+                        colors: [Color.black.opacity(0.18), Color.black.opacity(0.58)],
+                        center: UnitPoint(x: 0.5, y: 0.46),
+                        startRadius: 10,
+                        endRadius: 230
+                    )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .animation(.easeOut(duration: 0.35), value: photo)
+        }
     }
 
     /// `Dawn`, `Day`, `Dusk`, `Night`, `Paused` — or the pinned preset's name.
@@ -2797,11 +3012,6 @@ struct SettingsPopoverView: View {
 
     // MARK: Typography
 
-    /// The one-click presets: exactly the four faces DynaWall ships. Everything else
-    /// is a system font (the menu below) or an imported file, which is why the chips
-    /// are not a list of what happens to be installed.
-    private static let fontPresets: [String] = WallpaperFont.bundledFamilies
-
     private var fontFamilyBinding: Binding<String> {
         Binding(
             get: { preferences.fontFamily },
@@ -2809,135 +3019,78 @@ struct SettingsPopoverView: View {
         )
     }
 
+    /// The families the dropdown lists: the installed system families only.
+    /// `installedFamilies()` filters the bundled faces out (their files are never
+    /// removed); the vendored Outfit is always offered as the leading
+    /// `Default (Outfit)` entry, and a family imported by an older build is kept
+    /// visible so the stored selection is not silently blank.
+    private var fontChoices: [String] {
+        var choices = WallpaperFont.installedFamilies()
+        let current = WallpaperFont.normalizedFamily(preferences.fontFamily)
+        if current.caseInsensitiveCompare(WallpaperFont.defaultFamily) != .orderedSame,
+           !choices.contains(where: { $0.caseInsensitiveCompare(current) == .orderedSame }) {
+            choices.insert(current, at: 0)
+        }
+        return choices
+    }
+
+    /// `Default (Outfit)` for the vendored face, the family name otherwise.
+    private var fontPickerLabel: String {
+        let current = WallpaperFont.normalizedFamily(preferences.fontFamily)
+        return current.caseInsensitiveCompare(WallpaperFont.defaultFamily) == .orderedSame
+            ? "Default (Outfit)"
+            : current
+    }
+
     private var typographyCard: some View {
         card(systemImage: "textformat.alt", title: "Typography") {
             VStack(alignment: .leading, spacing: 8) {
-                LazyVGrid(
-                    columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 2),
-                    spacing: 6
-                ) {
-                    ForEach(Self.fontPresets, id: \.self) { family in
-                        fontPresetChip(family)
+                // One menu, not a chip grid: every installed family is listed, the
+                // bundled default is one entry, and the four bundled faces are not
+                // offered as separate choices.
+                Menu {
+                    Picker("Font", selection: fontFamilyBinding) {
+                        Text("Default (Outfit)").tag(WallpaperFont.defaultFamily)
+                        ForEach(fontChoices, id: \.self) { family in
+                            Text(family).tag(family)
+                        }
                     }
+                    .pickerStyle(.inline)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "character.cursor.ibeam")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text(fontPickerLabel)
+                            .font(WallpaperFont.regular(size: 11, family: preferences.fontFamily))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
+                    .foregroundColor(.primary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.primary.opacity(0.05))
+                    )
                 }
-                HStack(spacing: 6) {
-                    systemFontMenu
-                    addFontButton
-                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .help("Choose a system font, or keep the bundled Outfit default")
                 // One line, always. The popover resizes itself to the measured content
                 // height, so a hint that wrapped for a longer family name would grow the
-                // panel and move every card below it the moment that chip was clicked. A
-                // long name is trimmed in the middle instead, and the full line is on
-                // hover.
+                // panel and move every card below it when the selection changed. A long
+                // name is trimmed in the middle instead, and the full line is on hover.
                 Text(preferences.fontFamilyHint)
                     .font(.system(size: 9.5))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .help(preferences.fontFamilyHint)
-                if let message = fontNotice.message {
-                    Text(message)
-                        .font(.system(size: 9.5))
-                        .foregroundColor(.orange)
-                        .lineLimit(2)
-                }
             }
         }
-    }
-
-    /// A preset chip drawn *in its own face*, so the choice previews itself.
-    private func fontPresetChip(_ family: String) -> some View {
-        let selected = preferences.fontFamily.caseInsensitiveCompare(family) == .orderedSame
-        return Button {
-            selectFontFamily(family)
-        } label: {
-            HStack(spacing: 4) {
-                Text(family)
-                    .font(WallpaperFont.semibold(size: 11, family: family))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Spacer(minLength: 0)
-                // Reserved whether or not this chip is the selected one: a checkmark
-                // that appeared out of nowhere would squeeze the label and make the
-                // grid twitch as the pointer moved between chips.
-                Image(systemName: "checkmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .opacity(selected ? 1 : 0)
-            }
-            .foregroundColor(selected ? .accentColor : .primary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 5)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(selected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .strokeBorder(
-                        selected ? Color.accentColor.opacity(0.55) : Color.clear,
-                        lineWidth: 1
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .help("Set the greeting and subtitle in \(family)")
-    }
-
-    /// The whole OS collection: every family Font Book exposes, with a checkmark on
-    /// the one in use. A menu is what macOS scrolls natively, so hundreds of families
-    /// cost nothing until it is opened.
-    private var systemFontMenu: some View {
-        Menu {
-            Picker("Installed fonts", selection: fontFamilyBinding) {
-                ForEach(WallpaperFont.installedFamilies(), id: \.self) { family in
-                    Text(family).tag(family)
-                }
-            }
-            .pickerStyle(.inline)
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "character.cursor.ibeam")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("System font…")
-                    .font(.system(size: 11))
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .foregroundColor(.primary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.primary.opacity(0.05))
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .help("Every font installed on this Mac (Font Book)")
-    }
-
-    private var addFontButton: some View {
-        Button {
-            importFontFile()
-        } label: {
-            HStack(spacing: 4) {
-                Image(systemName: "plus")
-                    .font(.system(size: 9, weight: .bold))
-                Text("Add Font…")
-                    .font(.system(size: 11))
-            }
-            .foregroundColor(.primary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.primary.opacity(0.05))
-            )
-        }
-        .buttonStyle(.plain)
-        .help("Import a .ttf, .otf, .woff or .woff2 file without installing it system-wide")
     }
 
     // MARK: Section chrome
@@ -2973,294 +3126,100 @@ struct SettingsPopoverView: View {
         )
     }
 
-    // MARK: Palette
-
-    private var paletteCard: some View {
-        card(systemImage: "paintpalette", title: "Palette") {
-            VStack(alignment: .leading, spacing: 9) {
-                autoPill
-                swatches
-                Text(paletteHint)
-                    .font(.system(size: 9.5))
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
-            }
-        }
-    }
-
-    /// Hands the palette back to the clock in one click, with the band it is on.
-    private var autoPill: some View {
-        Button {
-            preferences.themePreset = .auto
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "clock.fill")
-                    .font(.system(size: 10, weight: .semibold))
-                Text("Auto (follow the clock)")
-                    .font(.system(size: 11, weight: .medium))
-                Spacer(minLength: 0)
-                Text("\(ThemeSlot.current().label) · \(ThemeSlot.current().hoursLabel)")
-                    .font(.system(size: 9.5))
-                    .foregroundColor(.secondary)
-                Image(systemName: preferences.themePreset == .auto ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 11))
-                    .foregroundColor(preferences.themePreset == .auto ? .accentColor : .secondary)
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(preferences.themePreset == .auto
-                          ? Color.accentColor.opacity(0.16)
-                          : Color.primary.opacity(0.05))
-            )
-        }
-        .buttonStyle(.plain)
-        .help("Follow the clock: dawn, day, dusk and night")
-    }
-
-    /// The four clock bands on top, the three fixed colours below.
-    ///
-    /// `.custom` is already one of `ThemePreset.allCases`; enumerating every case
-    /// and then appending the colour well rendered a second "Custom" swatch. Split
-    /// by kind so each preset appears exactly once.
-    private static let bandPresets: [ThemePreset] = [.dawn, .day, .dusk, .night]
-    private static let fixedPresets: [ThemePreset] = [.githubDark, .deepSlate]
-
-    private var swatches: some View {
-        VStack(spacing: 8) {
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: Self.bandPresets.count),
-                spacing: 8
-            ) {
-                ForEach(Self.bandPresets) { preset in
-                    swatch(preset)
-                }
-            }
-            LazyVGrid(
-                columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: Self.fixedPresets.count + 1),
-                spacing: 8
-            ) {
-                ForEach(Self.fixedPresets) { preset in
-                    swatch(preset)
-                }
-                customSwatch
-            }
-        }
-    }
-
-    private func swatch(_ preset: ThemePreset) -> some View {
-        let selected = preferences.themePreset == preset
-        return Button {
-            preferences.themePreset = preset
-        } label: {
-            VStack(spacing: 3) {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(HexColor.color(preset.swatchHex ?? preferences.customColorHex))
-                    .frame(height: 24)
-                    .overlay(swatchGlow(preset))
-                    .overlay(swatchSymbol(preset, selected: selected))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                            .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.14),
-                                          lineWidth: selected ? 2 : 1)
-                    )
-                Text(preset.shortLabel)
-                    .font(.system(size: 9))
-                    .foregroundColor(selected ? .primary : .secondary)
-                    .lineLimit(1)
-            }
-        }
-        .buttonStyle(.plain)
-        .help(preset.label)
-    }
-
-    /// The band's own light, so six near-black presets read as six different moods.
-    ///
-    /// `ThemeSlot.accentHex` is the RGB of the wallpaper's `--bg-radial-accent`; the
-    /// swatch has to glow with the same light or the palette grid is a row of black
-    /// bricks. The fixed colours have no band accent, so they get a neutral sheen.
-    private func swatchGlow(_ preset: ThemePreset) -> some View {
-        let accent = preset.slot.map { HexColor.color($0.accentHex) } ?? Color.white
-        let isBand = preset.slot != nil
-        return RadialGradient(
-            colors: [accent.opacity(isBand ? 0.55 : 0.16), .clear],
-            center: isBand ? UnitPoint(x: 0.5, y: 0.35) : .topLeading,
-            startRadius: 0,
-            endRadius: isBand ? 30 : 26
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-    }
-
-    /// A tiny band mark, swapped for the tick when this preset is active.
-    @ViewBuilder
-    private func swatchSymbol(_ preset: ThemePreset, selected: Bool) -> some View {
-        if selected {
-            Image(systemName: "checkmark")
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(.white)
-                .shadow(color: Color.black.opacity(0.6), radius: 2)
-        } else if let slot = preset.slot {
-            Image(systemName: slot.symbolName)
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(.white.opacity(0.72))
-                .shadow(color: Color.black.opacity(0.45), radius: 1)
-        }
-    }
-
-    /// The live colour well inside the Custom swatch.
-    ///
-    /// It is never disabled: a click opens the system panel and
-    /// `selectCustomColor(_:)` pins that palette, which is the documented behaviour.
-    private var customSwatch: some View {
-        let selected = preferences.themePreset == .custom
-        return VStack(spacing: 3) {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(HexColor.color(preferences.customColorHex))
-                .frame(height: 24)
-                .overlay(
-                    RadialGradient(
-                        colors: [Color.white.opacity(0.16), .clear],
-                        center: .topLeading,
-                        startRadius: 0,
-                        endRadius: 26
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                )
-                .overlay(
-                    Image(systemName: selected ? "checkmark" : "paintpalette.fill")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(.white.opacity(0.85))
-                        .shadow(color: Color.black.opacity(0.6), radius: 2)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.14),
-                                      lineWidth: selected ? 2 : 1)
-                )
-                // A bezel-less well stretched over the whole swatch: a click anywhere
-                // opens the system panel, and the near-zero opacity keeps the well's
-                // own control chrome from drawing a mismatched pill inside the square.
-                .overlay(
-                    SwatchColorWell(color: customColorBinding)
-                        .opacity(0.015)
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            Text("Custom")
-                .font(.system(size: 9))
-                .foregroundColor(selected ? .primary : .secondary)
-        }
-        .help("Pick any background colour — the palette switches to it immediately")
-    }
-
-    /// One line of context for the palette picker: what the clock is doing, or why
-    /// the wallpaper is ignoring it.
-    private var paletteHint: String {
-        switch preferences.themePreset {
-        case .auto:
-            return "Following the clock — \(ThemeSlot.current().label.lowercased()) right now"
-        case .dawn, .day, .dusk, .night:
-            return "\(preferences.themePreset.shortLabel) pinned; Auto hands it back to the clock"
-        case .githubDark, .deepSlate:
-            return "\(preferences.themePreset.shortLabel) · fixed colour, neutral palette"
-        case .custom:
-            return "Custom colour \(preferences.customColorHex) · fixed, neutral palette"
-        }
-    }
-
     // MARK: Photos
 
     private var photosCard: some View {
         card(systemImage: "photo.on.rectangle.angled", title: "Photos") {
             VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 8) {
-                    Toggle("Photo slideshow", isOn: $preferences.slideshow)
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                    Spacer(minLength: 0)
-                    if preferences.slideshow {
-                        Button {
-                            controller.nextPhoto()
-                        } label: {
-                            Label("Next", systemImage: "forward.end.fill")
-                                .font(.system(size: 10, weight: .medium))
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Show the next photo now")
-                    }
-                }
+                // The one way to add photos: a prominent drop target with the folder
+                // name, its photo count and a picker. There are no collection tabs.
+                folderRow
 
-                if preferences.slideshow {
-                    // Progressive disclosure: these controls only matter while the
-                    // slideshow runs, so they stay out of the way when it does not.
-                    Divider()
-                    Picker("Collection", selection: collectionBinding) {
-                        ForEach(PhotoCollection.allCases) { collection in
-                            Text(collection.shortLabel).tag(collection)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .controlSize(.small)
-
-                    if preferences.photoCollection == .custom {
-                        folderRow
-                    }
-
-                    Toggle("Match time of day", isOn: $preferences.photoSync)
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                    Text(preferences.photoCollectionHint)
-                        .font(.system(size: 9.5))
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
+                // One disabled group keeps the master switch, Next and every
+                // slideshow option inert until a folder with images is chosen.
+                VStack(alignment: .leading, spacing: 9) {
                     HStack(spacing: 8) {
-                        Text("Rotate every")
-                            .font(.system(size: 11))
+                        Toggle("Photo slideshow", isOn: $preferences.slideshow)
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
                         Spacer(minLength: 0)
-                        Picker("Rotate every", selection: $preferences.slideshowIntervalMinutes) {
-                            ForEach(intervalChoices, id: \.self) { minutes in
-                                Text(intervalLabel(minutes)).tag(minutes)
+                        if preferences.slideshow {
+                            Button {
+                                controller.nextPhoto()
+                            } label: {
+                                Label("Next", systemImage: "forward.end.fill")
+                                    .font(.system(size: 10, weight: .medium))
                             }
+                            .buttonStyle(.borderless)
+                            .help("Show the next photo now")
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .controlSize(.small)
                     }
 
-                    HStack(spacing: 16) {
-                        Toggle("Shuffle", isOn: $preferences.slideshowShuffle)
+                    if preferences.slideshow {
+                        // Progressive disclosure: these controls only matter while
+                        // the slideshow runs, so they stay out of the way when it
+                        // does not.
+                        Divider()
+                        Toggle("Match time of day", isOn: $preferences.photoSync)
                             .toggleStyle(.switch)
                             .controlSize(.small)
-                        Toggle("Slow zoom", isOn: $preferences.kenBurns)
-                            .toggleStyle(.switch)
+                        Text(preferences.photoCollectionHint)
+                            .font(.system(size: 9.5))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        HStack(spacing: 8) {
+                            Text("Rotate every")
+                                .font(.system(size: 11))
+                            Spacer(minLength: 0)
+                            Picker("Rotate every", selection: $preferences.slideshowIntervalMinutes) {
+                                ForEach(intervalChoices, id: \.self) { minutes in
+                                    Text(intervalLabel(minutes)).tag(minutes)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
                             .controlSize(.small)
-                        Spacer(minLength: 0)
+                        }
+
+                        HStack(spacing: 16) {
+                            Toggle("Shuffle", isOn: $preferences.slideshowShuffle)
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                            Toggle("Slow zoom", isOn: $preferences.kenBurns)
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                            Spacer(minLength: 0)
+                        }
+                    } else if controller.photoCount > 0 {
+                        Text("Off — your greeting sits on the palette alone. Turn it on to rotate photos behind it.")
+                            .font(.system(size: 9.5))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text("No photos yet — add a folder to turn the slideshow on. Without one the desktop is solid black.")
+                            .font(.system(size: 9.5))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                } else {
-                    Text("Off — your greeting sits on the palette alone. Turn it on to rotate photos behind it.")
-                        .font(.system(size: 9.5))
-                        .foregroundColor(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .disabled(controller.photoCount == 0)
             }
         }
         .animation(.easeInOut(duration: 0.18), value: preferences.slideshow)
     }
 
-    /// The custom-folder row: name, photo count, picker and drag-and-drop.
-    ///
-    /// Only shown when the custom collection is active, so the popover never
-    /// carries a "Choose…" button that is disabled most of the time.
+    /// The upload / drop target: names the folder, reports its photo count, opens the
+    /// folder picker and hands the folder to Finder. Dragging a folder anywhere on the
+    /// row has the same effect as clicking Change Folder….
     private var folderRow: some View {
         HStack(spacing: 8) {
-            Image(systemName: dropTarget.isTargeted ? "folder.fill.badge.plus" : "folder.fill")
-                .font(.system(size: 12))
+            Image(systemName: dropTarget.isTargeted ? "square.and.arrow.down.fill" : "photo.stack.fill")
+                .font(.system(size: 14))
                 .foregroundColor(dropTarget.isTargeted ? .accentColor : .secondary)
             VStack(alignment: .leading, spacing: 1) {
                 Text(preferences.photoFolderLabel)
-                    .font(.system(size: 10.5, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Text(folderCaption)
@@ -3269,31 +3228,69 @@ struct SettingsPopoverView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 0)
-            Button("Choose…") { choosePhotoFolder() }
-                .controlSize(.small)
+            // Reveal in Finder: one click from the panel to the folder the wallpaper
+            // is rotating through, which is where a wallpaper is actually added.
+            Button {
+                revealPhotoFolder()
+            } label: {
+                Image(systemName: "arrow.up.forward.app")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .buttonStyle(.borderless)
+            .controlSize(.small)
+            .help("Reveal \(preferences.photoFolderLabel) in Finder")
+            .accessibilityLabel("Reveal wallpaper folder in Finder")
+            Button("Change Folder…") {
+                choosePhotoFolder()
+            }
+            .controlSize(.small)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 8)
         .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(dropTarget.isTargeted ? Color.accentColor.opacity(0.18) : Color.primary.opacity(0.05))
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(dropTarget.isTargeted
+                      ? Color.accentColor.opacity(0.20)
+                      : Color.primary.opacity(0.06))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(dropTarget.isTargeted ? Color.accentColor : Color.primary.opacity(0.10),
-                              lineWidth: 1)
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .strokeBorder(dropTarget.isTargeted
+                              ? Color.accentColor
+                              : Color.primary.opacity(0.12),
+                              lineWidth: dropTarget.isTargeted ? 1.5 : 1)
         )
+        // A drop target has to answer "can I let go here?" before the mouse button is
+        // released: the ring glows and the row lifts by a hair while a folder hovers.
+        .shadow(
+            color: Color.accentColor.opacity(dropTarget.isTargeted ? 0.45 : 0),
+            radius: dropTarget.isTargeted ? 7 : 0
+        )
+        .scaleEffect(dropTarget.isTargeted ? 1.012 : 1)
+        .animation(.easeOut(duration: 0.16), value: dropTarget.isTargeted)
         .onDrop(of: [.fileURL], isTargeted: $dropTarget.isTargeted) { providers in
             handleFolderDrop(providers)
         }
-        .help("Drag a folder of images here, or click Choose…")
+        .help("Drag a folder of images here, or click Change Folder… to use another folder")
+    }
+
+    /// Hand the active wallpaper folder to Finder.
+    ///
+    /// The row is the only place in the panel that knows where the pictures live, so
+    /// "Reveal in Finder" belongs next to the folder name rather than under a menu.
+    private func revealPhotoFolder() {
+        preferences.revealPhotoFolderInFinder()
+        DynaHaptics.tap(.alignment)
     }
 
     private var folderCaption: String {
-        let path = preferences.photoFolderPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        if path.isEmpty { return "Drop a folder here, or click Choose…" }
         let count = controller.photoCount
-        return "\(count) \(count == 1 ? "photo" : "photos") · drop a folder to switch"
+        if preferences.usesStandardPhotoFolder {
+            if count == 0 { return "Standard folder · empty · solid black" }
+            return "\(count) \(count == 1 ? "photo" : "photos") · standard folder"
+        }
+        if count == 0 { return "No supported images · solid black until one is added" }
+        return "\(count) \(count == 1 ? "photo" : "photos") · drop another folder to switch"
     }
 
     /// Read the dropped folder URL off the pasteboard and hand it to the model.
@@ -3318,7 +3315,11 @@ struct SettingsPopoverView: View {
             // `loadItem` calls back on a background queue; the preferences publish
             // to SwiftUI, which is main-thread only.
             DispatchQueue.main.async {
-                _ = preferences.applyDroppedFolder(url)
+                if preferences.applyDroppedFolder(url) {
+                    // The drop landed: the same discrete pulse as a successful drag in
+                    // Finder, so the folder is acknowledged before the row redraws.
+                    DynaHaptics.tap(.alignment)
+                }
             }
         }
         return true
@@ -3362,6 +3363,7 @@ struct SettingsPopoverView: View {
         HStack(spacing: 8) {
             Button {
                 preferences.resetToDefaults()
+                DynaHaptics.tap(.levelChange)
             } label: {
                 Label("Reset", systemImage: "arrow.counterclockwise")
                     .font(.system(size: 10.5))
@@ -3412,12 +3414,14 @@ struct SettingsPopoverView: View {
         panel.canCreateDirectories = false
         panel.prompt = "Use Folder"
         panel.message = "Pick a folder of images to rotate as your wallpaper."
-        if !preferences.photoFolderPath.isEmpty {
-            panel.directoryURL = URL(fileURLWithPath: preferences.photoFolderPath)
+        let path = preferences.effectivePhotoFolderPath
+        if !path.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: path, isDirectory: true)
         }
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        preferences.photoFolderPath = url.path
+        preferences.photoFolderPath =
+            url.path == WallpaperPreferences.standardPhotoFolderPath ? "" : url.path
     }
 
     /// Select a family, dropping an imported file when the user moves to a font that
@@ -3437,33 +3441,12 @@ struct SettingsPopoverView: View {
                 preferences.customFontPath = ""
             }
         }
-        fontNotice.message = nil
-    }
-
-    /// Pick a downloaded font file, copy it into Application Support and apply it.
-    private func importFontFile() {
-        let panel = NSOpenPanel()
-        panel.title = "Add a font to DynaWall"
-        panel.prompt = "Add Font"
-        panel.message = "Pick a .ttf, .otf, .woff or .woff2 file. DynaWall copies it into its own folder, so the original can be moved afterwards."
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = WallpaperFont.supportedExtensions
-            .sorted()
-            .compactMap { UTType(filenameExtension: $0) }
-        NSApp.activate(ignoringOtherApps: true)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        if preferences.importFontFile(url) {
-            fontNotice.message = nil
-        } else {
-            fontNotice.message = "\(url.lastPathComponent) is not a font DynaWall can read."
-        }
     }
 }
 
 // MARK: - App delegate
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let controller = DesktopWindowController()
     private var statusItem: NSStatusItem?
@@ -3508,9 +3491,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = item.button {
             button.image = Self.makeMenuBarIcon()
             button.imagePosition = .imageOnly
-            button.toolTip = "DynaWall — click to customize your desktop"
+            button.toolTip = "DynaWall — click to customize, right-click for quick actions"
             button.target = self
             button.action = #selector(togglePopover(_:))
+            // AppKit only sends the action for the primary button by default, so a
+            // right-click would be swallowed by the status item.
+            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
         statusItem = item
@@ -3521,6 +3507,133 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.statusItem?.button?.appearsDisabled = paused
             }
             .store(in: &cancellables)
+    }
+
+    /// The right-click menu: the actions people reach for between settings visits.
+    ///
+    /// Built once and reused for the life of the app. `menuNeedsUpdate(_:)` rewrites
+    /// the title and the tick marks from the live model every time the menu opens, so
+    /// the menu can never describe a state the wallpaper is not actually in — the old
+    /// approach of rebuilding the menu per click allocated a dozen items on every
+    /// right-click.
+    private lazy var quickMenu: NSMenu = {
+        let menu = NSMenu()
+        menu.delegate = self
+        // Nothing is auto-enabled: Next Photo has to stay greyed out unless there is
+        // a running slideshow with a photo in it.
+        menu.autoenablesItems = false
+
+        menu.addItem(quickMenuItem(
+            title: "Next Photo",
+            action: #selector(nextPhotoFromMenu(_:)),
+            key: "n"
+        ))
+        menu.addItem(quickMenuItem(
+            title: "Pause Wallpaper",
+            action: #selector(togglePauseFromMenu(_:)),
+            key: "p"
+        ))
+        menu.addItem(quickMenuItem(
+            title: "Open Wallpapers in Finder",
+            action: #selector(revealWallpapersInFinder(_:)),
+            key: "o"
+        ))
+        menu.addItem(.separator())
+        menu.addItem(quickMenuItem(
+            title: "Settings…",
+            action: #selector(openSettingsFromMenu(_:)),
+            key: ","
+        ))
+        menu.addItem(quickMenuItem(
+            title: "Launch at Login",
+            action: #selector(toggleLaunchAtLoginFromMenu(_:)),
+            key: ""
+        ))
+        menu.addItem(.separator())
+        menu.addItem(quickMenuItem(
+            title: "Quit DynaWall",
+            action: #selector(quitFromMenu(_:)),
+            key: "q"
+        ))
+        return menu
+    }()
+
+    /// One item wired to `self`, tagged so `menuNeedsUpdate(_:)` can find it again.
+    private func quickMenuItem(title: String, action: Selector, key: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.target = self
+        item.tag = Self.MenuTag.tag(for: action)
+        return item
+    }
+
+    /// Stable tags for the items whose state changes while the app runs.
+    private enum MenuTag {
+        static let nextPhoto = 1
+        static let pause = 2
+        static let reveal = 3
+        static let launchAtLogin = 4
+
+        static func tag(for action: Selector) -> Int {
+            switch action {
+            case #selector(AppDelegate.nextPhotoFromMenu(_:)): return nextPhoto
+            case #selector(AppDelegate.togglePauseFromMenu(_:)): return pause
+            case #selector(AppDelegate.revealWallpapersInFinder(_:)): return reveal
+            case #selector(AppDelegate.toggleLaunchAtLoginFromMenu(_:)): return launchAtLogin
+            default: return 0
+            }
+        }
+    }
+
+    /// Pop the quick-action menu under the menu bar icon.
+    ///
+    /// `NSStatusItem` shows a menu only while `menu` is assigned, so it is attached
+    /// for the duration of one tracking loop and detached on the way out: leaving it
+    /// installed would silently steal every left-click from the popover.
+    private func presentQuickMenu(from button: NSStatusBarButton) {
+        if popover?.isShown == true {
+            popover?.performClose(nil)
+        }
+        // The tick mark comes from `SMAppService`, not from a cached copy: the user
+        // may have revoked login items in System Settings since launch.
+        controller.preferences.syncLaunchAtLogin()
+        statusItem?.menu = quickMenu
+        button.performClick(nil)
+        statusItem?.menu = nil
+    }
+
+    // MARK: Quick actions
+
+    @objc private func nextPhotoFromMenu(_ sender: Any?) {
+        guard controller.preferences.slideshow else { return }
+        controller.nextPhoto()
+    }
+
+    @objc private func togglePauseFromMenu(_ sender: Any?) {
+        controller.togglePause()
+    }
+
+    @objc private func revealWallpapersInFinder(_ sender: Any?) {
+        controller.preferences.revealPhotoFolderInFinder()
+        DynaHaptics.tap(.alignment)
+    }
+
+    @objc private func openSettingsFromMenu(_ sender: Any?) {
+        // "Settings…" always opens; `togglePopover` would close a panel that is
+        // already up, which is the opposite of what the menu promised.
+        guard popover?.isShown != true else { return }
+        togglePopover(nil)
+    }
+
+    @objc private func toggleLaunchAtLoginFromMenu(_ sender: Any?) {
+        controller.preferences.launchAtLogin.toggle()
+        // `SMAppService` is the source of truth: it can refuse (or defer to the user
+        // approving the item), and the tick mark must show what actually happened.
+        controller.preferences.syncLaunchAtLogin()
+        DynaHaptics.tap(.levelChange)
+    }
+
+    @objc private func quitFromMenu(_ sender: Any?) {
+        NSApp.terminate(nil)
     }
 
     /// The menu bar mark: a sunrise, not a hard hat.
@@ -3657,6 +3770,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func togglePopover(_ sender: Any?) {
         guard let button = statusItem?.button else { return }
 
+        // Control-click reads as a secondary click on every Mac, trackpad or mouse.
+        let event = NSApp.currentEvent
+        let secondary = event?.type == .rightMouseUp
+            || event?.modifierFlags.contains(.control) == true
+        if secondary {
+            presentQuickMenu(from: button)
+            return
+        }
+
         if popover == nil {
             popover = makePopover()
         }
@@ -3680,7 +3802,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.controller.rebuildIfNeeded()
+            // The observer block is `@Sendable`, so the hop onto the main actor is
+            // spelled out: `controller` is main-actor isolated state.
+            Task { @MainActor in self?.controller.rebuildIfNeeded() }
         }
 
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
@@ -3689,8 +3813,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             queue: .main
         ) { [weak self] _ in
             dynaLog("system woke from sleep — resyncing greeting and photos")
-            self?.controller.resync()
+            Task { @MainActor in self?.controller.resync() }
         }
+    }
+}
+
+// MARK: - Quick menu state
+
+extension AppDelegate: NSMenuDelegate {
+    /// Refresh the menu from the live model right before it is displayed.
+    ///
+    /// This is the only place the items' titles, tick marks and enabled state are
+    /// written, which is what keeps a menu that is never rebuilt from going stale.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu === quickMenu else { return }
+        let preferences = controller.preferences
+
+        // A skip needs a photo to skip to *and* a rotation to restart: with the
+        // slideshow off the page would ignore the action.
+        menu.item(withTag: MenuTag.nextPhoto)?.isEnabled =
+            preferences.slideshow && controller.photoCount > 0
+        menu.item(withTag: MenuTag.pause)?.title =
+            controller.isPaused ? "Resume Wallpaper" : "Pause Wallpaper"
+        menu.item(withTag: MenuTag.reveal)?.isEnabled =
+            !preferences.effectivePhotoFolderPath.isEmpty
+        menu.item(withTag: MenuTag.launchAtLogin)?.state =
+            preferences.launchAtLogin ? .on : .off
     }
 }
 

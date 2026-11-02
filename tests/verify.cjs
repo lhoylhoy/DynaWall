@@ -428,6 +428,23 @@ test('bundled photos ship with the wallpaper', () => {
   });
 });
 
+test('an empty macOS photo list paints black while other hosts keep bundled photos', () => {
+  const script = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  const from = script.indexOf('function photoSources()');
+  assert.notEqual(from, -1, 'photoSources() is missing');
+  const body = script.slice(from, script.indexOf('\n    }', from));
+  assert.match(body, /Array\.isArray\(custom\) && custom\.length > 0/, 'a host list wins');
+  assert.match(
+    body,
+    /handlers\.dynawallPhoto \? \[\] : BUNDLED_PHOTOS/,
+    'only a host that owns the list suppresses the bundled fallback'
+  );
+  // An empty list is a real answer: the slideshow is disabled and `has-photo`
+  // is cleared, so CSS shows the plain background (black from the host seed).
+  assert.match(script, /const enabled = Boolean\(state\.config\.slideshow\) && sources\.length > 0/);
+  assert.match(script, /doc\.body\.classList\.toggle\('has-photo', enabled\)/);
+});
+
 test('photo controls map from livelyPropertyListener', () => {
   assert.deepEqual(DynaWall.mapLivelyProperty('slideshow', true), { field: 'slideshow', value: true });
   assert.deepEqual(DynaWall.mapLivelyProperty('slideshowInterval', 45), {
@@ -1044,22 +1061,20 @@ test('the greeting name always comes from the logged-in macOS user', () => {
   assert.ok(!swift.includes('effectiveFirstName'), 'the blank-field fallback went with the field');
 });
 
-test('picking a colour or a collection turns the setting on', () => {
+test('a chosen folder is the only photo source and starts the slideshow', () => {
   const swift = hostSwift();
-
-  const selectCustom = memberBody(swift, 'func selectCustomColor(');
-  assert.match(selectCustom, /customColorHex = (HexColor\.normalized\(hex\)|normalized)/);
-  assert.match(selectCustom, /themePreset = \.custom/, 'a picked colour must pin the custom palette');
-
-  const selectCollection = memberBody(swift, 'func selectCollection(');
-  assert.match(selectCollection, /photoCollection = collection/);
-  assert.match(selectCollection, /slideshow = true/, 'choosing a collection must start the slideshow');
 
   const dropped = memberBody(swift, 'func applyDroppedFolder(');
   assert.match(dropped, /isDirectory\.boolValue/, 'only a folder may be dropped');
   assert.match(dropped, /photoCollection = \.custom/);
-  assert.match(dropped, /photoFolderPath = url\.path/);
+  assert.match(dropped, /let path = url\.path == Self\.standardPhotoFolderPath \? "" : url\.path/);
+  assert.match(dropped, /photoFolderPath = path/);
   assert.match(dropped, /slideshow = true/, 'a dropped folder must start the slideshow');
+
+  // The bundled collections and their picker are gone from the host.
+  assert.ok(!swift.includes('func selectCollection('), 'the collection picker must be gone');
+  assert.ok(!swift.includes('func bundledFolder()'), 'there is no bundled folder fallback');
+  assert.match(swift, /func reload\(folderPath: String\)/);
 });
 
 test('Reset restores the shipped defaults', () => {
@@ -1073,7 +1088,10 @@ test('Reset restores the shipped defaults', () => {
     ['slideshowIntervalMinutes = 15', 'interval'],
     ['slideshowShuffle = true', 'shuffle'],
     ['kenBurns = true', 'slow zoom'],
-    ['photoCollection = .goldenGate', 'collection'],
+    ['photoCollection = .custom', 'collection'],
+    ['photoFolderPath = ""', 'photo folder'],
+    ['photoCount = 0', 'photo count'],
+    ['fontFamily = WallpaperFont.defaultFamily', 'font'],
     ['photoSync = true', 'time-of-day sync']
   ].forEach(([snippet, label]) => {
     assert.ok(reset.includes(snippet), `resetToDefaults() must restore the ${label}`);
@@ -1089,18 +1107,18 @@ test('the popover reveals the photo controls only while the slideshow runs', () 
   assert.match(popover, /if preferences\.slideshow \{/, 'the photo controls must be disclosed');
   const disclosed = popover.slice(popover.indexOf('if preferences.slideshow {'));
   [
-    'Picker("Collection"',
     'Toggle("Match time of day"',
     'Picker("Rotate every"',
     'Toggle("Shuffle"',
-    'Toggle("Slow zoom"',
-    'folderRow'
+    'Toggle("Slow zoom"'
   ].forEach((control) => {
     assert.ok(disclosed.includes(control), `${control} is missing from the disclosed section`);
   });
-  // Nothing in the popover is greyed out any more: a control is either shown or not.
-  assert.ok(!popover.includes('.disabled('), 'the popover must not disable controls');
-  assert.match(popover, /if preferences\.photoCollection == \.custom \{\s*folderRow/);
+  // Folder-only photos: the upload row is always visible, while the slideshow
+  // options stay disabled until the folder actually yields an image.
+  assert.match(popover, /folderRow/);
+  assert.match(popover, /\.disabled\(controller\.photoCount == 0\)/);
+  assert.ok(!popover.includes('Picker("Collection"'), 'the collection tabs are gone');
   assert.match(popover, /xmark\.circle\.fill/, 'the subtitle needs a one-click clear');
 });
 
@@ -1213,17 +1231,20 @@ test('the subtitle clear button lives inside a full-width field', () => {
   );
 });
 
-test('the palette renders one Custom swatch and keeps every band distinct', () => {
+test('the popover drops the Palette card and leaves the clock in charge', () => {
   const swift = hostSwift();
-  const swatches = memberBody(swift, 'private var swatches: some View');
-  assert.equal((swatches.match(/customSwatch/g) || []).length, 1, 'Custom must be rendered once');
-  assert.ok(
-    !swatches.includes('ThemePreset.allCases.filter'),
-    'the grid must not enumerate .custom and then append a second Custom swatch'
-  );
-  assert.match(swatches, /Self\.bandPresets/);
-  assert.match(swatches, /Self\.fixedPresets/);
-  assert.match(swift, /\$0\.accentHex/, 'band swatches must glow with ThemeSlot.accentHex');
+  const popover = swift.slice(swift.indexOf('struct SettingsPopoverView'));
+  assert.ok(!popover.includes('paletteCard'), 'the Palette card is gone');
+  assert.ok(!popover.includes('private var swatches'), 'the swatch grid is gone');
+  assert.ok(!popover.includes('SwatchColorWell'), 'the colour well is gone');
+
+  // `themePreset` can only ever be `.auto`: a stored band, fixed colour or custom
+  // pick from an earlier build is migrated back to the clock and written out.
+  assert.match(swift, /if themePreset != \.auto \{\s*themePreset = \.auto/);
+  assert.match(swift, /defaults\.set\(ThemePreset\.auto\.rawValue, forKey: Key\.themePreset\)/);
+  // With no photos, the page is handed a custom black palette rather than a band.
+  assert.match(swift, /if photoCount == 0 \{ return "#000000" \}/);
+  assert.match(swift, /photoCount == 0 \? "custom" : themePreset\.themeMode/);
 });
 
 test('photo captions drop watermarks, resolutions and sort prefixes', () => {
@@ -1247,16 +1268,59 @@ test('photo captions drop watermarks, resolutions and sort prefixes', () => {
   assert.ok(name.includes('"Golden Gate · '), 'the location reads as subject · light');
 });
 
-test('the Photos card fits its pickers and never truncates the folder caption', () => {
+test('the Photos card uses a standard folder and waits for images before enabling options', () => {
   const swift = hostSwift();
   const photos = memberBody(swift, 'private var photosCard: some View');
-  assert.ok(!photos.includes('.frame(width: 176)'), 'the five-segment picker must size itself');
+  assert.ok(!photos.includes('Picker("Collection"'), 'the collection tabs are gone');
+  assert.ok(!photos.includes('collectionBinding'), 'there is no collection binding');
+  assert.match(photos, /folderRow/, 'the upload row is always visible');
+  assert.match(photos, /\.disabled\(controller\.photoCount == 0\)/, 'options wait for images');
   assert.ok(
     (photos.match(/\.controlSize\(\.small\)/g) || []).length >= 4,
-    'the collection and interval pickers use the small control size'
+    'the interval picker and toggles use the small control size'
   );
-  assert.match(swift, /"Drop a folder here, or click Choose…"/);
-  assert.match(swift, /"photos"\) · drop a folder to switch/);
+  assert.match(swift, /static var standardPhotoFolderPath: String/);
+  assert.match(swift, /\.picturesDirectory/);
+  assert.match(swift, /appendingPathComponent\("DynaWall", isDirectory: true\)/);
+  assert.match(swift, /var effectivePhotoFolderPath: String/);
+  assert.match(swift, /var usesStandardPhotoFolder: Bool/);
+  assert.match(swift, /"Pictures\/DynaWall"/);
+  assert.match(swift, /"Change Folder…"/);
+  assert.match(swift, /"Standard folder · empty · solid black"/);
+  assert.match(swift, /"photos"\) · standard folder/);
+  assert.match(swift, /"photos"\) · drop another folder to switch/);
+});
+
+test('the standard Pictures/DynaWall folder is created and seeded from the bundle', () => {
+  const swift = hostSwift();
+  assert.match(swift, /static var standardPhotoFolderPath: String/);
+  assert.match(swift, /\.picturesDirectory/);
+  assert.match(swift, /appendingPathComponent\("DynaWall", isDirectory: true\)/);
+
+  const start = memberBody(swift, 'func start()');
+  assert.match(start, /prepareStandardPhotoFolder\(\)/, 'the folder must exist before the first scan');
+
+  const prepare = memberBody(swift, 'private func prepareStandardPhotoFolder()');
+  assert.match(prepare, /FileManager\.default\.createDirectory/);
+  assert.match(prepare, /seedStandardPhotoFolder\(at: folder\)/);
+  assert.match(prepare, /fileExists\(atPath: folder\.path, isDirectory: &isDirectory\)/);
+
+  const seed = memberBody(swift, 'private func seedStandardPhotoFolder(at folder: URL)');
+  assert.match(seed, /Bundle\.main\.resourceURL\?/);
+  assert.match(seed, /appendingPathComponent\("images", isDirectory: true\)/);
+  assert.match(seed, /PhotoLibrary\.supportedExtensions/);
+  assert.match(seed, /copyItem\(at: source, to: destination\)/);
+
+  const reload = memberBody(swift, 'private func reloadPhotosIfNeeded');
+  assert.match(reload, /let path = preferences\.effectivePhotoFolderPath/);
+  assert.match(reload, /photoLibrary\.reload\(folderPath: path\)/);
+
+  const choose = memberBody(swift, 'private func choosePhotoFolder()');
+  assert.match(choose, /preferences\.effectivePhotoFolderPath/);
+  assert.match(choose, /url\.path == WallpaperPreferences\.standardPhotoFolderPath \? "" : url\.path/);
+
+  const drop = memberBody(swift, 'func applyDroppedFolder(');
+  assert.match(drop, /let path = url\.path == Self\.standardPhotoFolderPath \? "" : url\.path/);
 });
 
 test('Pause/Resume appears once and an empty folder clears the old photos', () => {
@@ -1315,6 +1379,29 @@ test('the macOS bundle ships a custom AppIcon.icns and Info.plist icon entry', (
 
   const icnsHeader = fs.readFileSync(icnsPath).subarray(0, 4).toString('ascii');
   assert.equal(icnsHeader, 'icns', 'AppIcon.icns must begin with the icns magic header');
+});
+
+test('the icon master is pure geometry: two tones, snapped hairlines, no aura', () => {
+  const swift = fs.readFileSync(path.join(ROOT, 'macos', 'make-icon.swift'), 'utf8');
+
+  // Apple's icon grid, intact: an 824 pt squircle with 185 pt corners centred in the
+  // 1024 pt canvas, so the mark keeps the standard 100 pt margin on every side.
+  assert.match(swift, /CGRect\(x: 100, y: 100, width: 824, height: 824\)/);
+  assert.match(swift, /let cornerRadius: CGFloat = 185\.0/);
+
+  // Every hairline snaps to whole device pixels, so the 16x16 entry keeps a one-pixel
+  // horizon and eclipse arc instead of smearing them into grey haze.
+  assert.match(swift, /func hairline\(_ modelled: CGFloat\) -> CGFloat/);
+  assert.match(swift, /let horizonThickness = hairline\(/);
+  assert.match(swift, /let arcThickness = hairline\(/);
+
+  // The solar dome is a two-stop dawn — ivory into amber — with no third colour.
+  assert.match(swift, /colors: \[ivory, amber\] as CFArray/);
+
+  // The atmospheric layers that used to soften the mark stay gone: no dusk whisper,
+  // no corona bloom, no specular inner rim and no reflection bleeding off the water.
+  assert.doesNotMatch(swift, /drawRadialGradient/, 'the mark must stay free of radial bloom');
+  assert.doesNotMatch(swift, /let (whisper|corona|reflection) = CGGradient/, 'the aura layers are gone for good');
 });
 
 test('the menu bar icon is a custom vector template, not an SF Symbol', () => {
@@ -1717,12 +1804,18 @@ test('the macOS host seeds the page, suspends it and keeps its own clock', () =>
   assert.ok(!/timeInterval: 60, repeats: true/.test(swift), 'the 60 s poll is gone');
   assert.match(swift, /Notification\.Name\.NSSystemClockDidChange/);
   assert.match(swift, /\.NSCalendarDayChanged/);
-  // Curated collections resolve before any folder scan.
-  const reload = swift.slice(swift.indexOf('func reload(collection:'));
-  assert.ok(
-    reload.indexOf('if !curated.isEmpty') < reload.indexOf('Self.scan('),
-    'a bundled collection must not pay for a directory scan'
-  );
+  // Folder-only photos: the scan is the only source, and an empty path or empty
+  // folder resolves to zero photos rather than a bundled collection.
+  const reload = memberBody(swift, 'func reload(folderPath:');
+  assert.ok(!reload.includes('curated'), 'the bundled collection fallback must not survive in the folder scan');
+  assert.match(swift, /preferences\.updatePhotoCount\(count\)/);
+  assert.match(swift, /if count == 0 && preferences\.slideshow \{\s*preferences\.slideshow = false/);
+  // The seed always carries `photos` (even empty) and a black `bgColor` while the
+  // folder yields nothing, so the very first frame is the black fallback.
+  const seed = memberBody(swift, 'func javaScriptSeed(photoURLs: [String]) -> String');
+  assert.match(seed, /\\"photos\\": \\\(Self\.jsArrayLiteral\(photoURLs\)\)/, 'photos must always be seeded');
+  assert.match(seed, /if usesPinnedColor \|\| photoCount == 0/);
+  assert.match(swift, /photoCount == 0 \? "custom" : themePreset\.themeMode/);
   // The SwiftUI popover is built on first click, not at launch.
   assert.match(swift, /private func makePopover\(\) -> NSPopover/);
   assert.ok(!swift.includes('configurePopover'), 'the popover must not be built at launch');
@@ -2055,10 +2148,14 @@ test('both native hosts ship the same font pipeline', () => {
   // The multi-megabyte payload rides its own push, and only when it changed.
   assert.match(swift, /static func javaScriptFontUpdate\(_ source: String\) -> String/);
   assert.match(swift, /entry\.pushedFont != fontSource/);
-  // The popover offers the presets, Font Book and a file picker.
+  // The popover offers one dropdown of installed families; the Add Font picker and
+  // its import notice are gone, while previously imported bytes still ride their own
+  // push (so an upgraded Mac does not lose the face it already chose).
   assert.match(swift, /private var typographyCard: some View/);
   assert.match(swift, /WallpaperFont\.installedFamilies\(\)/);
-  assert.match(swift, /panel\.allowedContentTypes = WallpaperFont\.supportedExtensions/);
+  assert.ok(!swift.includes('panel.allowedContentTypes'), 'the Add Font picker is gone');
+  assert.ok(!swift.includes('FontImportNotice'), 'the import notice is gone');
+  assert.ok(!swift.includes('addFontButton'), 'the Add Font button is gone');
 
   const preferences = readText('windows/Preferences.cs');
   assert.match(preferences, /internal const string DefaultFontFamily = "Outfit"/);
@@ -2148,7 +2245,7 @@ test('the typography hint cannot resize the popover', () => {
   );
 });
 
-test('the bundled four are the only presets on every host', () => {
+test('the bundled four stay the shared default but are hidden from the macOS dropdown', () => {
   assert.deepEqual(
     [...DynaWall.BUNDLED_FONT_FAMILIES],
     ['Outfit', 'Google Sans Flex', 'Space Grotesk', 'Geist'],
@@ -2160,9 +2257,10 @@ test('the bundled four are the only presets on every host', () => {
     swift,
     /static let bundledFamilies = \["Outfit", "Google Sans Flex", "Space Grotesk", "Geist"\]/
   );
-  // The chips come from that list, so a preset can never point at a face the
-  // bundle does not ship (a system font lives in the Font Book menu instead).
-  assert.match(swift, /private static let fontPresets: \[String\] = WallpaperFont\.bundledFamilies/);
+  // The single dropdown lists installed system families and filters the bundled
+  // faces out, so Outfit is only offered once, as the labeled default entry.
+  assert.match(swift, /bundledFace\(family\) == nil/);
+  assert.ok(!swift.includes('private static let fontPresets'), 'the preset chips are gone');
   assert.match(swift, /static func isBundled\(_ family: String\) -> Bool/);
 
   const preferences = readText('windows/Preferences.cs');
@@ -2200,6 +2298,232 @@ test('display type is tracked, lead and balanced deliberately', () => {
   assert.match(css, /font-synthesis:\s*none/, 'no faux weights or italics');
   assert.match(css, /font-kerning:\s*normal/);
   assert.match(css, /text-wrap:\s*balance/, 'the greeting balances when it wraps');
+});
+
+/* -------------------------------------------------------------------------- *
+ * Premium surface: quick actions, live preview, resilience
+ * -------------------------------------------------------------------------- */
+
+group('Menu bar quick actions');
+
+test('the status item answers a secondary click with a quick action menu', () => {
+  const swift = hostSwift();
+  // AppKit only sends the status item's action for the primary button unless the
+  // button opts into the other mouse events, so the right-click would be swallowed.
+  assert.match(swift, /button\.sendAction\(on: \[\.leftMouseUp, \.rightMouseUp\]\)/);
+  assert.match(swift, /event\?\.type == \.rightMouseUp/, 'a right-click opens the menu');
+  assert.match(
+    swift,
+    /event\?\.modifierFlags\.contains\(\.control\)/,
+    'control-click is a secondary click on every Mac'
+  );
+
+  assert.match(swift, /private lazy var quickMenu: NSMenu/, 'the menu is built once, not per click');
+  assert.match(swift, /menu\.delegate = self/);
+  assert.match(swift, /menu\.autoenablesItems = false/, 'Next Photo must be able to stay greyed out');
+  assert.match(swift, /extension AppDelegate: NSMenuDelegate/);
+  [
+    'Next Photo',
+    'Pause Wallpaper',
+    'Open Wallpapers in Finder',
+    'Settings…',
+    'Launch at Login',
+    'Quit DynaWall'
+  ].forEach((title) => {
+    assert.ok(swift.includes(`title: "${title}"`), `the quick menu is missing "${title}"`);
+  });
+
+  // The menu is attached for exactly one tracking loop: leaving it installed would
+  // steal every left-click from the popover.
+  const present = memberBody(swift, 'private func presentQuickMenu(from button: NSStatusBarButton)');
+  assert.match(present, /statusItem\?\.menu = quickMenu/);
+  assert.match(present, /button\.performClick\(nil\)/);
+  assert.match(present, /statusItem\?\.menu = nil/);
+});
+
+test('the quick menu is refreshed from the live model before it opens', () => {
+  const swift = hostSwift();
+  const update = memberBody(swift, 'func menuNeedsUpdate(_ menu: NSMenu)');
+  assert.match(update, /menu === quickMenu/, 'only the quick menu is refreshed');
+  assert.match(
+    update,
+    /preferences\.slideshow && controller\.photoCount > 0/,
+    'a skip needs a rotation and a photo to skip to'
+  );
+  assert.match(
+    update,
+    /controller\.isPaused \? "Resume Wallpaper" : "Pause Wallpaper"/,
+    'the title has to describe the state the wallpaper is in'
+  );
+  assert.match(update, /\.state =\s*preferences\.launchAtLogin \? \.on : \.off/);
+});
+
+test('the quick menu and the folder row hand the folder to Finder', () => {
+  const swift = hostSwift();
+  assert.match(swift, /func revealPhotoFolderInFinder\(\)/);
+  assert.match(swift, /NSWorkspace\.shared\.selectFile\(nil, inFileViewerRootedAtPath: path\)/);
+
+  const row = memberBody(swift, 'private var folderRow: some View');
+  assert.match(row, /revealPhotoFolder\(\)/, 'the row owns a Reveal in Finder button');
+  assert.match(row, /arrow\.up\.forward\.app/);
+  assert.match(row, /"Change Folder…"/, 'the picker stays next to the reveal button');
+  // The drop target answers "can I let go here?" before the button is released.
+  assert.match(row, /dropTarget\.isTargeted \? 1\.012 : 1/, 'the row lifts while a folder hovers');
+  assert.match(row, /Color\.accentColor\.opacity\(dropTarget\.isTargeted \? 0\.45 : 0\)/);
+
+  const reveal = memberBody(swift, 'private func revealPhotoFolder()');
+  assert.match(reveal, /preferences\.revealPhotoFolderInFinder\(\)/);
+});
+
+test('tactile feedback rides the trackpad actuator, not a notification', () => {
+  const swift = hostSwift();
+  assert.match(swift, /enum DynaHaptics/);
+  assert.match(swift, /NSHapticFeedbackManager\.defaultPerformer\.perform/);
+
+  assert.match(memberBody(swift, 'func nextPhoto()'), /DynaHaptics\.tap\(\.alignment\)/);
+  assert.match(memberBody(swift, 'func setPaused(_ paused: Bool)'), /DynaHaptics\.tap\(\.levelChange\)/);
+  assert.match(
+    memberBody(swift, 'private var footer: some View'),
+    /DynaHaptics\.tap\(\.levelChange\)/,
+    'restoring the defaults is a state flip'
+  );
+  assert.match(
+    memberBody(swift, 'private func handleFolderDrop('),
+    /DynaHaptics\.tap\(\.alignment\)/,
+    'an accepted folder is acknowledged'
+  );
+  // `.generic` is the "that was rejected" pattern and must not be used for a skip.
+  assert.ok(!swift.includes('.perform(.generic'), 'a skip must not feel like an error');
+});
+
+group('Live preview & image resilience');
+
+test('the preview card shows the photo the page actually revealed', () => {
+  const swift = hostSwift();
+  assert.match(swift, /@Published private\(set\) var previewImage: NSImage\?/);
+
+  const preview = memberBody(swift, 'private var previewCard: some View');
+  assert.match(preview, /previewPhotoBackdrop/, 'the card draws the live photo');
+
+  const backdrop = memberBody(swift, 'private var previewPhotoBackdrop: some View');
+  assert.match(
+    backdrop,
+    /preferences\.slideshow, let photo = controller\.previewImage/,
+    'no slideshow, no photo, no backdrop'
+  );
+  assert.match(backdrop, /Image\(nsImage: photo\)/);
+  assert.match(backdrop, /Color\.black\.opacity\(0\.58\)/, 'the scrim dims the miniature too');
+  assert.match(
+    backdrop,
+    /frame\(width: Self\.popoverWidth - 32, height: 120\)/,
+    'the card height is fixed'
+  );
+  assert.ok(!backdrop.includes('.multilineTextAlignment'), 'the backdrop owns no type');
+
+  // A 5K wallpaper must not be decoded at full size just to fill a 120 pt card.
+  assert.match(swift, /CGImageSourceCreateThumbnailAtIndex/);
+  assert.match(swift, /kCGImageSourceThumbnailMaxPixelSize/);
+  assert.match(
+    swift,
+    /DispatchQueue\.global\(qos: \.userInitiated\)\.async/,
+    'the decode is off the main thread'
+  );
+  assert.match(swift, /token == self\.previewImageToken/, 'a slow decode cannot replace a newer photo');
+
+  // The page hands back the URL it revealed, and the logger only reports library URLs.
+  assert.match(swift, /var onSource: \(\(String\) -> Void\)\?/);
+  assert.match(swift, /static func photoIndex\(from url: URL\) -> Int\?/);
+});
+
+test('a photo that cannot be decoded is skipped instead of blanking the layer', () => {
+  const script = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  const start = script.indexOf('function paintPhoto(');
+  assert.notEqual(start, -1, 'paintPhoto() is missing');
+  const paint = script.slice(start, script.indexOf('\n    }', start));
+  assert.match(paint, /layer\.onerror = skip;/, 'the error event reaches the skip path');
+  assert.match(paint, /layer\.onerror = null;/, 'the handler is dropped once the photo failed');
+  assert.match(paint, /let settled = false;/, 'the two failure paths only cost one skip');
+  assert.match(paint, /if \(settled \|\| stale\(\)\) return;/, 'a stale decode still cannot reveal');
+  // A layer that never decodes must not stay on screen with a broken bitmap.
+  assert.match(paint, /layer\.removeAttribute\('src'\)/);
+  // A corrupt band must not blank the desktop while the rest of the folder is fine.
+  assert.match(
+    paint,
+    /if \(all\.length > sources\.length\) \{/,
+    'an exhausted band widens to the whole library before giving up'
+  );
+  assert.match(paint, /paintPhoto\(stepPhotoIndex\(all\.length, current, false\), all\)/);
+  assert.match(paint, /const all = photoSources\(\);/);
+
+  const clearStart = script.indexOf('function clearPhotos()');
+  const clear = script.slice(clearStart, script.indexOf('\n    }', clearStart));
+  assert.match(clear, /layer\.onerror = null;/, 'a stopped slideshow keeps no handlers');
+});
+
+test('the decoded texture is released once the cross-fade is over', () => {
+  const script = fs.readFileSync(path.join(ROOT, 'script.js'), 'utf8');
+  const start = script.indexOf('function releasePhotoTexture(');
+  assert.notEqual(start, -1, 'releasePhotoTexture() is missing');
+  const release = script.slice(start, script.indexOf('\n    }', start));
+  assert.match(release, /PHOTO_FADE_MS/, 'the bitmap is held for exactly the fade');
+  assert.match(release, /token !== state\.photoToken/, 'a newer slide owns the layer');
+  assert.match(release, /layer\.classList\.contains\('is-visible'\)/, 'never clear a photo on screen');
+  assert.match(release, /layer\.removeAttribute\('src'\)/);
+
+  const paintStart = script.indexOf('function paintPhoto(');
+  const paint = script.slice(paintStart, script.indexOf('\n    }', paintStart));
+  assert.match(paint, /releasePhotoTexture\(previous\)/, 'the outgoing layer is recycled');
+});
+
+group('Premium typography & scrim');
+
+test('the scrim protects the greeting and leaves the picture vivid', () => {
+  const scrim = cssRule('.scrim');
+  assert.ok(scrim, '.scrim is missing');
+  assert.match(scrim, /62% 58% at 50% 48%/, 'the pool of shade is centred on the greeting');
+  const stops = Array.from(scrim.matchAll(/rgba\(1, 4, 9, ([0-9.]+)\)/g)).map((match) =>
+    Number(match[1])
+  );
+  assert.ok(stops.length >= 8, 'a multi-stop ramp, not two flat bands');
+  assert.ok(
+    Math.max(...stops) >= 0.4,
+    'the centre has to hold contrast against a bright photograph'
+  );
+  // The periphery stays brighter than the centre: that is what keeps a photo vivid.
+  const corner = stops.filter((alpha) => alpha <= 0.26).length;
+  assert.ok(corner >= 3, 'the edges of the frame must not be muddied');
+});
+
+test('type is set with real OpenType features, not just a family name', () => {
+  assert.match(css, /font-feature-settings:\s*"cv02", "cv03", "cv04", "cv11", "ss01"/);
+  assert.match(css, /text-rendering:\s*optimizeLegibility/);
+  assert.match(css, /-webkit-font-smoothing:\s*antialiased/);
+  assert.match(css, /-moz-osx-font-smoothing:\s*grayscale/);
+});
+
+test('the ambient aura breathes on the compositor and stops when hidden', () => {
+  const aura = cssRule('.wallpaper-container::before');
+  assert.ok(aura, '.wallpaper-container::before is missing');
+  assert.match(aura, /animation:\s*aura-breathe/, 'the aura breathes');
+  assert.equal(
+    (aura.match(/radial-gradient/g) || []).length,
+    3,
+    'halo, low bloom and edge vignette share one composited layer'
+  );
+  assert.match(css, /@keyframes aura-breathe/);
+  // No `will-change` here: the animation promotes the layer only while it runs.
+  assert.ok(!/will-change/.test(aura), 'the aura must not hold a GPU layer for the day');
+  assert.match(
+    css,
+    /html\.is-suspended \.wallpaper-container::before\s*{[^}]*animation-play-state:\s*paused/,
+    'a covered or paused desktop costs no frames'
+  );
+  const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+  assert.match(
+    reduced,
+    /\.wallpaper-container::before\s*{[^}]*animation:\s*none/,
+    'reduced motion holds the aura still'
+  );
 });
 
 /* -------------------------------------------------------------------------- *

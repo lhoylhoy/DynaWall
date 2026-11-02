@@ -64,11 +64,13 @@ func strokeGradient(_ ctx: CGContext,
 
 /// Renders the DynaWall icon at `pixelSize x pixelSize`.
 ///
-/// The mark is deliberately ultra-minimalist: pure geometry, light and negative
-/// space. Inside an obsidian squircle a single orb is cut by a razor horizon — a
-/// warm solar hemisphere rises above it, a submerged eclipse hemisphere rests
-/// below it. Day over night, in one clean optical split. No stars, no ridges, no
-/// floating glass card: anything that cannot survive 16x16 is noise, not identity.
+/// The mark is deliberately ultra-minimalist: pure geometry, two tones and vast
+/// negative space. Inside an obsidian squircle a single orb is cut by a razor
+/// horizon — a warm solar hemisphere rises above it, a submerged eclipse
+/// hemisphere rests below it. Day over night, in one clean optical split. There is
+/// no bloom, no corona, no specular inner rim and no reflection: every one of those
+/// blurred the silhouette at small sizes, and anything that cannot survive 16x16 is
+/// noise, not identity.
 func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
     let size = CGFloat(pixelSize)
     let scale = size / 1024.0
@@ -124,27 +126,35 @@ func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
     let upperHalf = CGRect(x: bodyRect.minX, y: center.y, width: bodyRect.width, height: bodyRect.maxY - center.y)
     let lowerHalf = CGRect(x: bodyRect.minX, y: bodyRect.minY, width: bodyRect.width, height: center.y - bodyRect.minY)
 
-    // Hairlines are floored to whole rendered pixels. At 16x16 the modelled 2.5pt
-    // horizon is 4% of a pixel, which would turn the icon into a grey haze; flooring
-    // it keeps the split razor sharp all the way down to the smallest iconset entry.
+    // Every hairline is snapped to whole *device* pixels. A modelled 2.5pt stroke is
+    // 4% of a pixel at 16x16 and would smear the split into grey haze, so the width is
+    // rounded to the nearest physical pixel and expressed back in mark units: the
+    // horizon and the eclipse arc stay one razor pixel wide on every iconset entry,
+    // 1024 included. Nothing else in the mark is thin enough to need the treatment.
     let onePixel = 1.0 / scale
-    let horizonThickness = max(2.5, onePixel)
-    let arcThickness = max(2.5, onePixel)
-    // The squircle rim light is a large-size nicety: floored to a whole pixel it turns
+    func hairline(_ modelled: CGFloat) -> CGFloat {
+        let devicePixels = (modelled * scale).rounded(.toNearestOrAwayFromZero)
+        return max(1.0, devicePixels) * onePixel
+    }
+
+    let horizonThickness = hairline(2.5)
+    let arcThickness = hairline(2.5)
+    // The squircle rim light is a large-size nicety. Snapped to a whole pixel it turns
     // into a grey ring that fights the silhouette, so below 128px it keeps its modelled
-    // width and simply disappears instead.
-    let rimThickness: CGFloat = pixelSize >= 128 ? max(3.0, onePixel) : 3.0
+    // width and dissolves into the canvas instead.
+    let rimThickness: CGFloat = pixelSize >= 128 ? hairline(3.0) : 3.0
 
-    // The bloom, corona and 1.5pt specular rim only resolve once there are enough
-    // pixels to carry them. The smallest sizes keep the bare optical split, which is
-    // what makes the 16x16 icon legible in a Dock or Finder list.
-    let hasAtmosphere = pixelSize >= 64
-    let hasFineDetail = pixelSize >= 128
-
-    // An 18%-white hairline averages away to nothing once it is one pixel wide, so
-    // the submerged half leans on its outline instead: the same rim arc is drawn
-    // heavier below 128px and the eclipse silhouette survives the downscale.
-    let rimArcAlpha: CGFloat = hasFineDetail ? 0.18 : 0.46
+    // Two tones carry the whole mark: the sun above the split, the eclipse below it.
+    // No third colour, no bloom, no haze — anything that cannot survive 16x16 is noise.
+    let ivory = srgb(255, 253, 249)   // #fffdf9 apex
+    let amber = srgb(255, 150, 84)    // #ff9654 horizon baseline
+    // A single lit pixel has to do more work the smaller the canvas, so the submerged
+    // arc steps up as the icon shrinks: 26% on the 1024 master (where it is three
+    // physical pixels), 40% across 128-512 (one pixel), 52% at 64, and 62% on the
+    // 16/32 px entries where that one pixel *is* the whole silhouette.
+    let rimArcAlpha: CGFloat = pixelSize >= 1024
+        ? 0.26
+        : (pixelSize >= 128 ? 0.40 : (pixelSize >= 64 ? 0.52 : 0.62))
 
     // 1. Outer ambient drop shadow (a single soft contact shadow, no inner glow)
     if pixelSize >= 32 {
@@ -165,16 +175,17 @@ func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
     ctx.addPath(bodyPath)
     ctx.clip()
 
-    // 3. Obsidian canvas: night ink -> day ink -> night ink. Vast negative space,
-    //    the only "background" the mark allows itself.
+    // 3. Obsidian canvas: one restrained vertical tone, #080b12 deepening at the top
+    //    and lifting to #0d121c at the base so the submerged hemisphere reads as a
+    //    silhouette rather than dissolving into the field. The negative space *is* the
+    //    icon; nothing else is allowed to fill it.
     if let canvas = CGGradient(
         colorsSpace: colorSpace,
         colors: [
-            srgb(7, 10, 17, 1.0),   // #070a11 night ink
-            srgb(13, 17, 23, 1.0),  // #0d1117 day ink
-            srgb(9, 12, 20, 1.0)    // #090c14 back to night
+            srgb(8, 11, 18, 1.0),   // #080b12 deepest ink
+            srgb(13, 18, 28, 1.0)   // #0d121c lifted ink
         ] as CFArray,
-        locations: [0.0, 0.52, 1.0]
+        locations: [0.0, 1.0]
     ) {
         ctx.drawLinearGradient(
             canvas,
@@ -184,62 +195,16 @@ func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
         )
     }
 
-    // 4. Atmospheric whisper: one restrained dusk-to-dawn bloom behind the orb.
-    //    Warm where the sun is, a cold blue rim where the night is.
-    if hasAtmosphere, let whisper = CGGradient(
-        colorsSpace: colorSpace,
-        colors: [
-            srgb(255, 146, 80, 0.22),   // #ff9250 dusk
-            srgb(255, 148, 170, 0.09),  // #ff94aa dawn
-            srgb(72, 110, 255, 0.0)     // #486eff night, fully transparent
-        ] as CFArray,
-        locations: [0.0, 0.42, 1.0]
-    ) {
-        ctx.drawRadialGradient(
-            whisper,
-            startCenter: center,
-            startRadius: 0,
-            endCenter: center,
-            endRadius: 360,
-            options: []
-        )
-    }
-
-    // 5. Outer corona: the light the solar hemisphere spills past its own edge.
-    //    Drawn under the orb, so only the halo outside the disc survives.
-    if hasAtmosphere, let corona = CGGradient(
-        colorsSpace: colorSpace,
-        colors: [
-            srgb(255, 158, 92, 0.30),
-            srgb(255, 146, 80, 0.10),
-            srgb(255, 146, 80, 0.0)
-        ] as CFArray,
-        locations: [0.0, 0.55, 1.0]
-    ) {
-        ctx.drawRadialGradient(
-            corona,
-            startCenter: center,
-            startRadius: orbRadius * 0.84,
-            endCenter: center,
-            endRadius: orbRadius * 1.60,
-            options: []
-        )
-    }
-
-    // 6. Upper solar hemisphere: warm ivory at the apex melting to amber at the
-    //    horizon, clipped to the half of the disc that sits above the split.
+    // 4. Upper solar hemisphere: a clean two-stop dawn. Warm ivory at the apex melting
+    //    straight into amber at the horizon — no third colour, no haze, no inner rim.
     ctx.saveGState()
     ctx.clip(to: upperHalf)
     ctx.addPath(orbPath)
     ctx.clip()
     if let solar = CGGradient(
         colorsSpace: colorSpace,
-        colors: [
-            srgb(255, 252, 245, 1.0),  // #fffcf5 ivory
-            srgb(255, 213, 153, 1.0),  // #ffd599 amber light
-            srgb(255, 146, 80, 1.0)    // #ff9250 ember at the horizon
-        ] as CFArray,
-        locations: [0.0, 0.58, 1.0]
+        colors: [ivory, amber] as CFArray,
+        locations: [0.0, 1.0]
     ) {
         ctx.drawLinearGradient(
             solar,
@@ -250,34 +215,8 @@ func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
     }
     ctx.restoreGState()
 
-    // 6b. 1.5pt specular rim inside the dome: the sun catching its own edge,
-    //     brightest at the apex and dissolving as it reaches the horizon.
-    if hasFineDetail {
-        let solarRim = CGMutablePath()
-        solarRim.addArc(
-            center: center,
-            radius: orbRadius - 0.75,
-            startAngle: 0,
-            endAngle: .pi,
-            clockwise: false
-        )
-        strokeGradient(
-            ctx,
-            path: solarRim,
-            lineWidth: 1.5,
-            colorSpace: colorSpace,
-            colors: [
-                srgb(255, 255, 255, 0.08),
-                srgb(255, 255, 255, 0.62)
-            ],
-            locations: [0.0, 1.0],
-            from: CGPoint(x: center.x, y: center.y),
-            to: CGPoint(x: center.x, y: center.y + orbRadius)
-        )
-    }
-
-    // 7. Lower eclipse hemisphere: submerged nocturnal glass, darker the deeper it
-    //    sinks, with a diffused vertical reflection still bleeding off the horizon.
+    // 5. Lower eclipse hemisphere: submerged nocturnal glass, one step darker the
+    //    deeper it sinks. A single tone change — no reflection bleeding off the water.
     ctx.saveGState()
     ctx.clip(to: lowerHalf)
     ctx.addPath(orbPath)
@@ -297,25 +236,10 @@ func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
             options: [.drawsBeforeStartLocation, .drawsAfterEndLocation]
         )
     }
-    if hasFineDetail, let reflection = CGGradient(
-        colorsSpace: colorSpace,
-        colors: [
-            srgb(240, 246, 252, 0.10),
-            srgb(240, 246, 252, 0.0)
-        ] as CFArray,
-        locations: [0.0, 1.0]
-    ) {
-        ctx.drawLinearGradient(
-            reflection,
-            start: CGPoint(x: center.x, y: center.y),
-            end: CGPoint(x: center.x, y: center.y - orbRadius * 0.78),
-            options: []
-        )
-    }
     ctx.restoreGState()
 
-    // 8. Eclipse rim arc: a crisp 2.5pt light on the submerged half, brightest where
-    //    it meets the horizon and fading as it falls toward the bottom pole.
+    // 6. Eclipse rim arc: one crisp pixel-snapped stroke on the submerged half,
+    //    brightest where it meets the horizon and fading to nothing at the pole.
     ctx.saveGState()
     ctx.clip(to: lowerHalf)
     ctx.addPath(orbPath)
@@ -335,7 +259,7 @@ func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
         colorSpace: colorSpace,
         colors: [
             srgb(240, 246, 252, rimArcAlpha),
-            srgb(240, 246, 252, rimArcAlpha * 0.12)
+            srgb(240, 246, 252, 0.0)
         ],
         locations: [0.0, 1.0],
         from: CGPoint(x: center.x, y: center.y),
@@ -343,9 +267,9 @@ func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
     )
     ctx.restoreGState()
 
-    // 9. Razor horizon line: 824pt of light splitting day from night. Bright across
-    //    the orb, dissolving into the canvas at both ends so it never looks like a
-    //    ruler laid over the icon.
+    // 7. Razor horizon line: 824pt of light splitting day from night. Bright across
+    //    the orb, dissolving to nothing before the squircle margins so it never looks
+    //    like a ruler laid over the icon, and never bleeds into the negative space.
     let horizon = CGMutablePath()
     horizon.move(to: CGPoint(x: bodyRect.minX, y: center.y))
     horizon.addLine(to: CGPoint(x: bodyRect.maxX, y: center.y))
@@ -360,13 +284,13 @@ func renderIcon(pixelSize: Int) -> NSBitmapImageRep {
             srgb(255, 246, 232, 0.78),
             srgb(255, 246, 232, 0.0)
         ],
-        locations: [0.0, 0.24, 0.76, 1.0],
+        locations: [0.0, 0.26, 0.74, 1.0],
         from: CGPoint(x: bodyRect.minX, y: center.y),
         to: CGPoint(x: bodyRect.maxX, y: center.y)
     )
 
-    // 10. Squircle rim light: a top-lit specular border, 22% white at the top edge
-    //     falling to 4% at the bottom — the standard macOS icon lighting cue.
+    // 8. Squircle rim light: a restrained top-lit specular border, 22% white at the
+    //    top edge falling to 4% at the bottom — the standard macOS icon lighting cue.
     strokeGradient(
         ctx,
         path: bodyPath,

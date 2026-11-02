@@ -22,9 +22,11 @@ MACOS_BIN="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 
 # The twelve curated wallpapers that ship inside the bundle: the six Golden Gate
-# 5K time-of-day pictures plus the six generated abstracts. `images/` also holds
+# 5K time-of-day pictures plus the six generated abstracts. The macOS host seeds
+# these into ~/Pictures/DynaWall the first time that folder is created, so the app
+# has wallpapers to rotate before the user picks a folder. `images/` also holds
 # 4K/5K/HEIC/Light-Dark duplicates of the same six Golden Gate scenes (~13.5 MB)
-# that no collection ever rotates through, so they are deliberately left out —
+# that no collection ever rotates through, so they are deliberately left out.
 # keep this list in sync with GOLDEN_GATE_PHOTOS + ABSTRACT_PHOTOS in script.js
 # (tests/verify.cjs asserts it).
 CURATED_PHOTOS=(

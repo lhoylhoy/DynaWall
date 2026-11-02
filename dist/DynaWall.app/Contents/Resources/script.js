@@ -22,8 +22,10 @@
  * the window fades in. Live IPC still outranks it, exactly like every other host.
  *
  * Photo sources follow the same rule, except `photos` is never cached: a host
- * (the macOS app) hands the page its resolved list on every load and the page
- * falls back to the photos bundled in `images/` when no host speaks up.
+ * (the macOS app) hands the page its resolved folder list on every load, and an
+ * empty list from that host is a real answer — no folder, no supported images —
+ * so the desktop stays solid black instead of showing pictures the user did not
+ * choose. Hosts that do not manage the list keep the bundled wallpapers.
  *
  * Typography: the greeting and subtitle are set in the bundled Outfit face
  * (`@font-face` in style.css) unless a host, the URL ('?font=Charter') or the
@@ -77,7 +79,8 @@
     kenBurns: true,
     // Only show photos whose filename matches the active time-of-day band.
     photoSync: true,
-    // Sources injected by the macOS host (absolute scheme URLs); empty = bundled set.
+    // Sources injected by the macOS host (absolute scheme URLs). Empty means the
+    // host has no photos; hosts that do not own the list keep the bundled fallback.
     photos: [],
     // Typography. `Outfit` is vendored with the wallpaper (see style.css), so the
     // default never depends on what the machine happens to have installed. Any
@@ -127,7 +130,14 @@
     'images/06-graphite.jpg'
   ]);
 
-  /** The photos that ship with the wallpaper, used when no host list arrives. */
+  /**
+   * The photos that ship with the wallpaper.
+   *
+   * They stay in the bundle for the installer, the README previews and the host
+   * manifests. The page falls back to them only when no host claims the photo
+   * list (Lively, Wallpaper Engine's bundled mode, a plain browser); the macOS
+   * host always seeds `photos`, so an empty list there means solid black.
+   */
   const BUNDLED_PHOTOS = Object.freeze(GOLDEN_GATE_PHOTOS.concat(ABSTRACT_PHOTOS));
 
   /** Slideshow bounds, in minutes. */
@@ -1175,10 +1185,21 @@
      * Photo slideshow
      * ---------------------------------------------------------------------- */
 
-    /** Host-provided sources win; otherwise the photos bundled with the wallpaper. */
+    /**
+     * The sources to rotate through.
+     *
+     * A host list wins. When it is empty, the answer depends on who is rendering:
+     * the macOS host owns the photo list (it always seeds `photos`, even empty) and
+     * registers the `dynawallPhoto` bridge, so an empty list means "no folder or no
+     * supported images" and the desktop stays solid black. Lively, Wallpaper
+     * Engine's bundled mode and a plain browser have no such bridge and keep the
+     * twelve curated wallpapers shipped in `images/`.
+     */
     function photoSources() {
       const custom = state.config.photos;
-      return custom && custom.length > 0 ? custom : BUNDLED_PHOTOS;
+      if (Array.isArray(custom) && custom.length > 0) return custom;
+      const handlers = win.webkit && win.webkit.messageHandlers;
+      return handlers && handlers.dynawallPhoto ? [] : BUNDLED_PHOTOS;
     }
 
     /**
@@ -1239,7 +1260,21 @@
       return stepPhotoIndex(pool.length, current, state.config.slideshowShuffle);
     }
 
-    /** Paint a photo on the spare layer, then cross-fade the two layers. */
+    /**
+     * Paint a photo on the spare layer, then cross-fade the two layers.
+     *
+     * Two failure paths land here and must both end the same way — a step to the next
+     * photo, never a blank frame:
+     *
+     *   1. `decode()` rejecting, which is the reliable signal for a file the browser
+     *      opened but cannot decode (truncated JPEG, renamed text file, HEIC on a host
+     *      without the codec);
+     *   2. the `<img>` `error` event, which is the *earlier* signal for a file that is
+     *      gone, unreadable or rejected by the scheme handler.
+     *
+     * @param {number} index Index into `list` (or into the active pool when omitted).
+     * @param {string[]} [list] Pool to paint from.
+     */
     function paintPhoto(index, list) {
       const sources = list && list.length > 0 ? list : activePhotoSources();
       if (elements.photoLayers.length === 0 || !sources[index]) return;
@@ -1256,6 +1291,9 @@
       const stale = function () {
         return token !== state.photoToken;
       };
+      // The two failure paths above can both fire for one photo; whichever arrives
+      // first wins, so a single broken file only ever costs one skip.
+      let settled = false;
 
       // Removing `.is-ken-burns` and adding it again in the same task does not
       // restart a CSS animation; the reflow does. It is only needed when the drift
@@ -1271,13 +1309,18 @@
         layer.style.setProperty('--photo-duration', `${slideshowIntervalMs() + PHOTO_FADE_MS}ms`);
         layer.classList.add('is-ken-burns');
       }
-      layer.src = sources[index];
 
       const reveal = function () {
-        if (stale()) return;
+        if (settled || stale()) return;
+        settled = true;
         state.photoFailures = 0;
         layer.classList.add('is-visible');
-        if (previous && previous !== layer) previous.classList.remove('is-visible');
+        if (previous && previous !== layer) {
+          previous.classList.remove('is-visible');
+          // The outgoing layer keeps its bitmap while the 1.2 s cross-fade runs; it
+          // is released as soon as nothing can see it any more.
+          releasePhotoTexture(previous);
+        }
         reportPhoto(layer);
       };
 
@@ -1285,9 +1328,24 @@
       // skip ahead instead, and give up (back to the plain background) if nothing
       // in the list can be rendered at all.
       const skip = function () {
-        if (stale()) return;
+        if (settled || stale()) return;
+        settled = true;
+        layer.onerror = null;
+        layer.removeAttribute('src');
         state.photoFailures += 1;
         if (state.photoFailures >= sources.length) {
+          // Every photo in this pool is unreadable. When the pool was narrowed to
+          // the band the clock is on, widen to the whole library once before giving
+          // up: a folder whose only Day picture is corrupt should still show its
+          // Evening one rather than a black desktop. `sources.length` grows with the
+          // wider pool, so a folder that is broken end to end still stops here.
+          const all = photoSources();
+          if (all.length > sources.length) {
+            state.photoFailures = 0;
+            const current = all.indexOf(sources[index]);
+            paintPhoto(stepPhotoIndex(all.length, current, false), all);
+            return;
+          }
           state.photoFailures = 0;
           state.photoSignature = '';
           doc.body.classList.remove('has-photo');
@@ -1297,12 +1355,41 @@
         scheduleSlide(50);
       };
 
+      // Wired before `src` so an error that fires synchronously (cached 404, a file
+      // deleted between the scan and the paint) still reaches `skip`.
+      layer.onerror = skip;
+      layer.src = sources[index];
+
       // decode() settles only once the bitmap is ready, so the fade never shows a gap.
       if (typeof layer.decode === 'function') {
         layer.decode().then(reveal, skip);
       } else {
         reveal();
       }
+    }
+
+    /**
+     * Free the decoded texture of a layer that just lost `.is-visible`.
+     *
+     * `src` cannot be cleared at the moment the cross-fade starts: the outgoing photo
+     * is still fading out for `--photo-fade-duration`. Once that has elapsed the layer
+     * is `visibility: hidden`, so dropping `src` hands the bitmap back to the browser
+     * instead of holding tens of megabytes for a photo that will not be shown again.
+     * The layer keeps its element and classes and simply receives the next `src`.
+     *
+     * The token check makes this a no-op when a newer slide already reused the layer,
+     * and the class check catches a fast rotation that revealed it again in the
+     * meantime — clearing either of those would blank a photo that is on screen.
+     *
+     * @param {HTMLImageElement} layer The layer that just stopped being visible.
+     */
+    function releasePhotoTexture(layer) {
+      const token = state.photoToken;
+      win.setTimeout(function () {
+        if (token !== state.photoToken) return;
+        if (layer.classList.contains('is-visible')) return;
+        layer.removeAttribute('src');
+      }, PHOTO_FADE_MS);
     }
 
     /**
@@ -1378,6 +1465,9 @@
       elements.photoLayers.forEach(function (layer) {
         layer.classList.remove('is-visible', 'is-ken-burns');
         layer.style.removeProperty('--photo-duration');
+        // The handler belongs to the photo that is being cleared, not to the layer:
+        // leaving it attached would fire a skip for a slideshow that is off.
+        layer.onerror = null;
         layer.removeAttribute('src');
       });
       state.photoIndex = -1;

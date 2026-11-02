@@ -51,7 +51,7 @@ SmartScreen (**More info → Run anyway**). The DMG is built on the Apple silico
 | Palette | Four time-aware bands: **dawn** 05:00–08:59 (violet ink, rose glow) · **day** 09:00–16:59 (neutral) · **dusk** 17:00–20:59 (amber) · **night** 21:00–04:59 (deep blue, dimmer type, dimmed photos). Pin one band or hand it a colour instead |
 | Subtitle | Defaults to `What are we building today?`; clear it to hide the line |
 | Refresh | Greeting period *and* palette re-checked on the exact boundaries that can change them (05:00 · 09:00 · 12:00 · 17:00 · 18:00 · 21:00 local — six one-shot timers a day, nothing in between), and again on wake, resume or window focus |
-| Photo slideshow | Off by default. When on, the wallpaper cross-fades through photos every 1–60 min, in order or shuffled, with an optional slow zoom (Ken Burns) and a scrim that keeps the greeting readable. Twelve wallpapers ship in `images/` — the six Golden Gate 5K time-of-day pictures plus six generated abstracts — and the macOS and Windows apps can rotate any folder you point them at |
+| Photo slideshow | Off by default. When on, the wallpaper cross-fades through photos every 1–60 min, in order or shuffled, with an optional slow zoom (Ken Burns) and a scrim that keeps the greeting readable. Twelve wallpapers ship in `images/` — the six Golden Gate 5K time-of-day pictures plus six generated abstracts — and the macOS app seeds them into `~/Pictures/DynaWall` on first launch before rotating that folder (or any folder you pick) |
 | Photo sync | **On by default.** The slideshow only rotates through photos whose filename names the active band — `dawn`, `day`, `dusk` or `night` — so the picture on the desktop matches the light outside and the palette in use. Crossing 05:00 / 09:00 / 17:00 / 21:00, or picking a band in the popover, cross-fades to that band's photos. Turn it off to cycle the whole library |
 | Next photo | A **Next** button in the macOS popover and a **Next photo** tray item in the Windows app (and `livelyPropertyListener('nextPhoto', true)` / `window.DynaWall.nextPhoto()`) skip to the next photo immediately and restart the timer |
 | Typography | **Outfit** by default (variable, 600 for the greeting) — optically tracked at display size, so the greeting is ~90 px on a 1080p screen and ~112 px on a 1440p/5K desktop. Three more families ship with it: **Google Sans Flex**, **Space Grotesk** and **Geist** |
@@ -260,7 +260,7 @@ script — Apple silicon on the release runner.
 | Click-through | `ignoresMouseEvents = true`, plus a `DesktopLevelWindow` that can never become key or main, so Finder icons, drag-select and Mission Control keep working |
 | Spaces & full screens | `collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]` |
 | Rendering | A `WKWebView` per display loading the bundled `index.html`, `style.css` and `script.js` |
-| Photos | The host resolves your collection or folder and hands the page `dynawall-photo://photo/<n>/<filename>` URLs; a `WKURLSchemeHandler` serves those files, so the web view stays sandboxed to exactly the images you picked. The filename rides along so `script.js` can match a photo to the time of day |
+| Photos | The host resolves the standard `~/Pictures/DynaWall` folder or the folder you pick and hands the page `dynawall-photo://photo/<n>/<filename>` URLs; a `WKURLSchemeHandler` serves those files, so the web view stays sandboxed to exactly the images you picked. The filename rides along so `script.js` can match a photo to the time of day |
 | Multi-monitor | `NSApplication.didChangeScreenParametersNotification` rebuilds the windows (only when the layout actually changed) |
 | Sleep/wake | `NSWorkspace.didWakeNotification` re-pushes the settings and asks the page to re-evaluate its greeting and pick a fresh photo |
 | Live settings | Every change is pushed straight into the page with `window.livelyPropertyListener(...)` — the exact same bridge Lively uses, so both hosts share one configuration code path. Pushes are diffed per window: typing a subtitle sends a few hundred bytes, not the photo array again |
@@ -282,11 +282,24 @@ the palette.
 ### Menu bar settings
 
 Clicking the menu bar icon opens a 340 pt popover that mirrors the desktop instead of listing settings, and
-that sizes itself to whatever is on screen:
+that sizes itself to whatever is on screen. **Right-click** (or Control-click) the same icon for a
+quick-action menu that does the everyday things without opening the popover — **Next Photo** (`⌘N`),
+**Pause Wallpaper** / **Resume Wallpaper** (`⌘P`), **Open Wallpapers in Finder** (`⌘O`),
+**Settings…** (`⌘,`), **Launch at Login** (ticked while it is on) and **Quit DynaWall** (`⌘Q`). Both surfaces
+answer with a haptic tick (`NSHapticFeedbackManager`, `.alignment` / `.levelChange`) when they change
+something, so the menu bar confirms a click the way the trackpad does. The menu is built once and rewritten
+from the live model every time it opens (title, enabled state, tick marks), so it can never describe a state
+the wallpaper is not in — **Next Photo** stays greyed out while the slideshow is off or the folder is empty,
+and **Open Wallpapers in Finder** follows the folder actually in use.
+
+Inside the popover:
 
 - **Live preview card.** The top card paints the exact background the wallpaper is using — the active band's
   ink plus its radial accent — with the greeting the page is rendering (`Good morning, Froilan.`), your
   subtitle, a time-of-day badge (`Dawn`, `Day`, `Dusk`, `Night` or `Paused`) and the photo currently on screen.
+  The photo is shown, not named: the host decodes a 720 px thumbnail of the very URL the wallpaper is painting
+  (ImageIO, EXIF orientation applied, off the main thread) and cross-fades it in behind the card's type, so the
+  preview really is the desktop in miniature. A photo that never decodes simply leaves the card on its palette.
   The greeting and subtitle are set in the wallpaper's own family — **Outfit** until you pick another — at its
   600/400 weights and CSS tracking, tinted with the active band's `--text-primary` / `--text-secondary`, and
   centred in the card the same way `.wallpaper-content` is centred on screen — so the card and the desktop read
@@ -299,12 +312,19 @@ that sizes itself to whatever is on screen:
   the ink they apply, next to a live colour well. The **Auto (follow the clock)** pill hands the palette back
   to the clock and names the band it is on (`Day · 09:00–17:00`). Picking a colour in the well selects **Custom
   color** immediately — no dropdown to change first.
-- **Progressive disclosure.** The six slideshow controls (collection, custom folder, time-of-day matching,
-  interval, shuffle, slow zoom) only appear while **Photo slideshow** is on; choosing a collection or dropping
-  a folder turns it on for you, and the controls that would otherwise be greyed out are simply not shown.
-- **Drag and drop.** With **Custom folder…** selected, the folder row accepts a folder of images dragged from
-  Finder: it becomes the collection, the slideshow starts, and the row shows the folder name and how many
-  photos it found.
+- **Progressive disclosure.** The slideshow controls (time-of-day matching, interval, shuffle, slow zoom) only
+  appear while **Photo slideshow** is on; dropping a folder turns it on for you, and the controls that would
+  otherwise be greyed out are simply not shown.
+- **Standard folder.** On first launch DynaWall creates `~/Pictures/DynaWall` and copies the twelve bundled
+  wallpapers into it. The Photos card reads that folder by default, so adding or removing images in Finder
+  changes what rotates without opening Settings; **Change Folder…** points the wallpaper at any other folder,
+  **Reveal in Finder** (⇗, tooltipped with the folder name) drops to the active folder itself (so you can add or
+  delete a picture and the rotation picks it up), and **Reset** returns to the standard one. If the active folder
+  has no supported images, the wallpaper falls back to solid black and the slideshow options stay disabled.
+- **Drag and drop.** The folder row accepts a folder of images dragged from Finder: it becomes the active
+  folder, the slideshow starts, and the row shows the folder name and how many photos it found. The row lifts,
+  glows and casts a shadow while a folder hovers over it, and the drop lands with the same haptic tick as the
+  rest of the popover.
 - **Typography.** A **Typography** card sets the greeting and subtitle in one of the four faces DynaWall ships
   — **Outfit** (the default), **Google Sans Flex**, **Space Grotesk** or **Geist** — each chip drawn in its own
   face, so the choice previews itself. Every other family belongs to the system: **System font…** lists what
@@ -318,7 +338,7 @@ that sizes itself to whatever is on screen:
   it under the pointer.
 - **Startup.** A native **Launch at login** switch registers DynaWall with macOS (`SMAppService`) so it starts automatically when you log in, without having to open System Settings manually.
 - **Reset** in the footer restores the default subtitle, palette, slideshow and sync settings in one
-  click (your chosen photo folder is kept).
+  click, and returns the photo source to `~/Pictures/DynaWall`.
 
 | Control | Key | Effect |
 | --- | --- | --- |
@@ -329,9 +349,9 @@ that sizes itself to whatever is on screen:
 | Palette swatches | `themePreset` | Dawn/Day/Dusk/Night pin one band; GitHub Dark `#0d1117` and Deep Slate `#0b0f19` ride the neutral palette |
 | Custom color | `customBgColor` | The colour well is always live: picking a colour selects **Custom color** and pins it at once |
 | Photo slideshow | `slideshowEnabled` | Rotate photos behind the greeting; the controls below only appear while it is on |
-| Collection | `photoCollection` | **Golden Gate** (six 5K time-of-day pictures), **Abstract** (six abstracts) or **Folder** — a curated list, so bundled mode never cycles 4K/5K/HEIC duplicates of the same image. Choosing one starts the slideshow |
-| Folder row | `photoFolderPath` | Shown only for **Folder**: drop a folder here or click **Choose…**; the row reports the folder name and its photo count |
-| Match time of day | `photoSyncTimeOfDay` | **On** by default: only show the photos whose filename matches the active band, and cross-fade when the band changes. Off cycles the whole collection |
+| Folder row | `photoFolderPath` | The folder to rotate. Defaults to `~/Pictures/DynaWall`, seeded from the bundled wallpapers the first time it is created; **Change Folder…** picks another folder, dropping a folder switches to it, and **Reveal in Finder** opens it. The row reports the folder name and its photo count |
+| Quick-action menu | — | **Right-click / Control-click** the menu bar icon for **Next Photo** (`⌘N`), **Pause**/**Resume Wallpaper** (`⌘P`), **Open Wallpapers in Finder** (`⌘O`), **Settings…** (`⌘,`), **Launch at Login** (ticked while on) and **Quit DynaWall** (`⌘Q`) — the popover's own actions, without opening it |
+| Match time of day | `photoSyncTimeOfDay` | **On** by default: only show the photos whose filename matches the active band, and cross-fade when the band changes. Off cycles the whole folder |
 | Rotate every | `slideshowIntervalMinutes` | 1, 5, 15, 30 or 60 minutes |
 | Shuffle | `slideshowShuffle` | Random order instead of file-name order |
 | Slow zoom | `kenBurns` | Drift/zoom each photo for the length of its turn |
@@ -340,7 +360,7 @@ that sizes itself to whatever is on screen:
 | Add Font… | `customFont` | Copies the picked `.ttf`/`.otf`/`.ttc`/`.woff`/`.woff2` (up to 4 MB) into Application Support, applies its family and pushes the bytes to the page as a `data:` URL |
 | Pause / Resume | — | Detaches the wallpaper from the desktop (the menu bar icon dims) |
 | Launch at login | `launchAtLogin` | Starts DynaWall automatically on login (registered with macOS via `SMAppService`) |
-| Reset | — | Restores the default subtitle, palette (`Auto`), slideshow, interval, shuffle, slow zoom and collection |
+| Reset | — | Restores the default subtitle, palette (`Auto`), slideshow, interval, shuffle and slow zoom, and returns the photo folder to `~/Pictures/DynaWall` |
 | Quit | — | Stops the app |
 
 ### Diagnostics
@@ -358,15 +378,18 @@ tail -f /tmp/dynawall.log
 # [DynaWall] background: rgb(13, 17, 23)
 # [DynaWall] palette: day (mode: auto)
 # [DynaWall] font: Outfit @ 90.240005px width=949 face=loaded
-# [DynaWall] photo library: Golden Gate: 6 photo(s) from …/Resources/images
+# [DynaWall] photo library: Folder: 12 photo(s) from …/Pictures/DynaWall
 # [DynaWall] slideshow advanced: dynawall-photo://photo/1/iClarified-macOS-27-Golden-Gate-Day-Wallpaper.jpg (4096x2160)
 # [DynaWall] slideshow: on=1 photo=dynawall-photo://photo/1/iClarified-macOS-27-Golden-Gate-Day-Wallpaper.jpg size=4096x2160 layers=2
-# [DynaWall] photo collection: Golden Gate sync=time-of-day
+# [DynaWall] photo collection: Custom folder… sync=time-of-day
 ```
 
 `slideshow advanced:` names the file that was put on screen, so the time-of-day match (`…-Day-Wallpaper.jpg`
 at 10:00, `…-Sunset-Wallpaper.jpg` at 18:00) can be verified from a terminal, and `next photo requested`
-appears each time the popover button is pressed. `font:` names the family the page asked for, the width the
+appears each time the popover button — or the right-click menu item — is pressed. `revealed photo folder in
+Finder:` records the folder handed to Finder, `wallpaper paused` / `wallpaper resumed` the pause state, and
+`registered login item with SMAppService` the **Launch at Login** switch, so every quick action leaves a trace.
+`font:` names the family the page asked for, the width the
 greeting actually measured with it and the state of the `@font-face` behind it — `face=loaded` for one of the
 four bundled faces, `face=<null>` for a system font or a name nothing can resolve — so a build can prove which
 typeface reached the screen without a screenshot.
@@ -378,6 +401,9 @@ typeface reached the screen without a screenshot.
 - Settings changes while the app is closed are picked up on the next launch; changes in the popover apply
   immediately.
 - `defaults delete com.dynawall.macos` resets every macOS-side setting.
+- The standard photo folder is `~/Pictures/DynaWall`. DynaWall creates it and seeds it from the bundled
+  wallpapers the first time; deleting the folder makes it recreate and reseed, while emptying it keeps the
+  solid-black fallback.
 - Imported fonts are copied to `~/Library/Application Support/DynaWall/Fonts`; deleting that folder makes
   DynaWall fall back to the bundled Outfit (the family is still stored, so reselect a preset afterwards).
 - Want it at login? Turn on **Launch at login** in the menu bar popover (or manage it in **System Settings → General → Login Items**).
@@ -618,13 +644,26 @@ The one interaction to know about: a colour with no theme beside it pins `custom
   on that row) at any folder (jpg, png, heic, webp, gif, bmp, tiff; the same folder on every display). Two
   stacked `<img>` layers
   cross-fade, so a slide never flashes empty, and a photo that fails to decode is skipped instead of leaving
-  a blank frame.
+  a blank frame. When the only picture a band has is unreadable, the slideshow widens to the whole folder
+  before it gives up on photos, so one corrupt file cannot black out a desktop that has other images.
 - **Time-of-day names**: the classifier reads the filename, so a folder works out of the box if its pictures
   are named after the hour they belong to (`dawn`, `day`, `sunset`, `night`, …); untagged folders are dealt
   across the four bands instead of being ignored. `photoSync=false` (or **Match time of day** off) hands the
   whole library back to the slideshow.
-- The scrim behind the greeting (a soft radial + 22% dim) only appears while a photo is showing, and text
-  shadows are added at the same time, so the minimal background keeps its pure look.
+- The scrim behind the greeting is built from three low-alpha layers — an elliptical pool of ink under the type,
+  a top/bottom falloff for the menu bar and the Dock, and a floor wash — so the dim is perceptual rather than a
+  flat 22% slab: about 0.46 alpha at the deepest point behind the greeting, easing out by 84% so the corners
+  stay around 0.26–0.32. The picture keeps its colour and the type keeps its contrast. It only appears while a
+  photo is showing, and text shadows are added at the same time, so the minimal background keeps its pure look.
+- Type is set with `font-variant-ligatures` and `font-feature-settings` (`cv02`, `cv03`, `cv04`, `cv11`, `ss01`)
+  plus `text-rendering: optimizeLegibility` on the greeting and subtitle, so the vendored faces use their own
+  kerning, ligatures and alternates instead of the browser's defaults (a face without a tag simply ignores it).
+- **Ambient aura.** `.wallpaper-container::before` paints three gradients — the band's accent as a halo behind the
+  greeting, a second bloom low in the frame and a soft edge vignette — above the photo stack and the scrim but
+  below the type, so the picture is framed by the hour's light rather than covered by it. It breathes on a 34 s
+  opacity/scale cycle that runs on the compositor (no `will-change`, no filter, no backdrop blur), is parked with
+  `animation-play-state` whenever the page is suspended (`html.is-suspended`, display sleep, occlusion, **Pause**)
+  and is switched off entirely under `prefers-reduced-motion: reduce`.
 - **Palette**: the four bands are pure CSS custom properties under `[data-theme]`, so `script.js` only swaps
   one attribute on `<html>` — the background, accent glow, text tones and photo grade all change together
   and CSS does the interpolating. `prefers-reduced-motion: reduce` collapses the 2.4 s palette fade to 1 ms

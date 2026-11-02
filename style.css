@@ -208,9 +208,19 @@ body {
      from faking weights or an italic Outfit never shipped. */
   font-kerning: normal;
   font-variant-ligatures: common-ligatures contextual;
+  /* Stylistic sets and character variants for the bundled faces (Geist and Google
+     Sans Flex ship `cv02`/`cv03`/`cv04`/`cv11`/`ss01`; Outfit ignores tags it has no
+     glyphs for, per spec). They give the greeting the geometric single-storey `a`,
+     the straightened `l`, the open `6`/`9` and the tabular figures a display face is
+     expected to have — the difference between "a font loaded" and "type was set". */
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Greyscale antialiasing above already removes the subpixel fringing a dark
+     wallpaper does not want; `optimizeLegibility` keeps kerning and ligatures on for
+     the large greeting instead of snapping the pair table at display sizes. */
+  text-rendering: optimizeLegibility;
   cursor: default;
   user-select: none;
   -webkit-user-select: none;
@@ -246,7 +256,15 @@ html.is-theme-ready .photo-stack {
   contain: layout style paint;
 }
 
-/* Ambient depth: a barely-there radial accent plus a soft edge vignette. */
+/* Ambient depth: the hour's accent as a soft halo behind the greeting, a second
+   bloom low in the frame, and a soft edge vignette.
+
+   All three layers are gradients on one composited pseudo-element: no extra DOM, no
+   filter, no backdrop blur. The slow "breathing" is an opacity/scale animation on
+   that single layer, which the compositor can run without waking the page's main
+   thread — and it is paused outright while the desktop is covered, the display is
+   asleep or the wallpaper is paused (`html.is-suspended`), so an idle desktop still
+   costs zero frames. */
 .wallpaper-container::before {
   content: "";
   position: absolute;
@@ -255,7 +273,25 @@ html.is-theme-ready .photo-stack {
   pointer-events: none;
   background-image:
     radial-gradient(circle at 50% 38%, var(--bg-radial-accent) 0%, transparent 62%),
+    radial-gradient(ellipse 74% 42% at 50% 102%, var(--bg-radial-accent) 0%, transparent 72%),
     radial-gradient(circle at 50% 50%, transparent 58%, var(--bg-vignette) 100%);
+  /* 34 s each way: a change of light, not a UI event. */
+  animation: aura-breathe 34s var(--ease-out) infinite alternate;
+}
+
+@keyframes aura-breathe {
+  from {
+    opacity: 0.78;
+    transform: scale(1);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1.035);
+  }
+}
+
+html.is-suspended .wallpaper-container::before {
+  animation-play-state: paused;
 }
 
 .wallpaper-content {
@@ -365,9 +401,42 @@ html.is-suspended .photo.is-ken-burns {
   pointer-events: none;
   opacity: 0;
   transition: opacity 700ms var(--ease-out);
+  /* A three-layer scrim instead of one flat wash.
+
+     The previous rules darkened the whole frame evenly, which is what left the
+     corners of a bright picture muddy while the greeting still fought for contrast
+     against snow or sky. This one protects legibility where the text actually is and
+     leaves the picture alone everywhere else:
+
+       1. an elliptical pool of shade centred on `.wallpaper-content` — deepest behind
+          the greeting (0.46) and gone by 84%, with uneven stops so the falloff follows
+          a perceptual curve instead of a straight line (the eye reads a linear ramp as
+          a hard ring at the edge of the pool);
+       2. a top-and-bottom falloff for the menu bar and the Dock;
+       3. a low floor wash so no photo can ever present pure white behind the text.
+
+     Centre ≈ 0.50, corners ≈ 0.26–0.32: the text is protected, the periphery stays
+     vivid — which is the opposite of the old vignette-first arrangement. */
   background-image:
-    radial-gradient(ellipse at 50% 46%, rgba(1, 4, 9, 0.1) 0%, rgba(1, 4, 9, 0.45) 100%),
-    linear-gradient(rgba(1, 4, 9, 0.22), rgba(1, 4, 9, 0.22));
+    radial-gradient(
+      62% 58% at 50% 48%,
+      rgba(1, 4, 9, 0.46) 0%,
+      rgba(1, 4, 9, 0.37) 20%,
+      rgba(1, 4, 9, 0.25) 38%,
+      rgba(1, 4, 9, 0.13) 54%,
+      rgba(1, 4, 9, 0.05) 69%,
+      rgba(1, 4, 9, 0) 84%
+    ),
+    linear-gradient(
+      to bottom,
+      rgba(1, 4, 9, 0.26) 0%,
+      rgba(1, 4, 9, 0.1) 18%,
+      rgba(1, 4, 9, 0) 38%,
+      rgba(1, 4, 9, 0) 62%,
+      rgba(1, 4, 9, 0.12) 82%,
+      rgba(1, 4, 9, 0.2) 100%
+    ),
+    linear-gradient(rgba(1, 4, 9, 0.08), rgba(1, 4, 9, 0.08));
 }
 
 body.has-photo .scrim {
@@ -483,5 +552,12 @@ body.has-photo .subtitle {
 
   .photo.is-ken-burns {
     animation: none;
+  }
+
+  /* The ambient aura is motion too: hold it at its brightest, still frame. */
+  .wallpaper-container::before {
+    animation: none;
+    opacity: 1;
+    transform: none;
   }
 }

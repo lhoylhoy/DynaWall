@@ -23,6 +23,12 @@ internal sealed class Preferences
     internal const int MinIntervalMinutes = 1;
     internal const int MaxIntervalMinutes = 120;
 
+    /// <summary>Keep in sync with DEFAULT_FONT_FAMILY in script.js.</summary>
+    internal const string DefaultFontFamily = "Outfit";
+
+    /// <summary>Keep in sync with MAX_FONT_FAMILY_LENGTH in script.js.</summary>
+    internal const int MaxFontFamilyLength = 80;
+
     /// <summary>Keep in sync with THEME_MODES in script.js.</summary>
     internal static readonly string[] ThemeModes = { "auto", "dawn", "day", "dusk", "night", "custom" };
 
@@ -45,6 +51,29 @@ internal sealed class Preferences
 
     /// <summary>Empty means the twelve wallpapers that ship in <c>web/images</c>.</summary>
     public string PhotoFolder { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The family the greeting and subtitle are set in. <c>Outfit</c> is the vendored
+    /// default; any family installed in Windows works, and an imported file is
+    /// addressed by the name resolved when it was added.
+    /// </summary>
+    public string FontFamily { get; set; } = DefaultFontFamily;
+
+    /// <summary>
+    /// Absolute path of a font file imported with "Add font…" (empty = none).
+    ///
+    /// The file lives under <c>%LOCALAPPDATA%\DynaWall\Fonts</c>, so the wallpaper
+    /// keeps its typeface after the download is moved or deleted.
+    /// </summary>
+    public string CustomFontPath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The imported file as a <c>data:</c> URL, or empty when nothing is imported.
+    /// Never serialised: the bytes are re-read from disk on every launch instead of
+    /// living in <c>settings.json</c>.
+    /// </summary>
+    [JsonIgnore]
+    internal string CustomFontSource => FontLibrary.DataUrl(CustomFontPath);
 
     /// <summary>
     /// The logged-in Windows account's first name, normalised the same way
@@ -114,6 +143,8 @@ internal sealed class Preferences
         BgColor = NormalizeColor(BgColor);
         SlideshowInterval = Math.Clamp(SlideshowInterval, MinIntervalMinutes, MaxIntervalMinutes);
         PhotoFolder = (PhotoFolder ?? string.Empty).Trim();
+        FontFamily = NormalizeFontFamily(FontFamily);
+        CustomFontPath = (CustomFontPath ?? string.Empty).Trim();
     }
 
     /// <summary>Restore the shipped look, keeping the folder the user picked.</summary>
@@ -128,6 +159,8 @@ internal sealed class Preferences
         SlideshowShuffle = true;
         KenBurns = true;
         PhotoSync = true;
+        FontFamily = DefaultFontFamily;
+        CustomFontPath = string.Empty;
     }
 
     internal static string NormalizeName(string? raw)
@@ -139,6 +172,35 @@ internal sealed class Preferences
         var name = words.FirstOrDefault() ?? string.Empty;
         name = new string(name.Where(ch => char.IsLetter(ch) || ch == '\'' || ch == '-').ToArray());
         return name.Length == 0 ? DefaultFirstName : name;
+    }
+
+    internal static string NormalizeFontFamily(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return DefaultFontFamily;
+
+        // Mirrors normalizeFontFamily() in script.js: quotes, backslashes, braces,
+        // semicolons and angle brackets are what could break out of the quoted CSS
+        // family name, so they never reach the page. Whitespace is collapsed, and a
+        // value that cleans away or is absurdly long falls back to the vendored face.
+        var builder = new StringBuilder(raw.Length);
+        foreach (var ch in raw)
+        {
+            if (char.IsControl(ch))
+            {
+                builder.Append(' ');
+                continue;
+            }
+
+            if (ch is '"' or '\'' or '\\' or ';' or '{' or '}' or '<' or '>') continue;
+            builder.Append(ch);
+        }
+
+        var cleaned = string.Join(
+            ' ',
+            builder.ToString().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+        if (cleaned.Length == 0 || cleaned.Length > MaxFontFamilyLength) return DefaultFontFamily;
+        return cleaned;
     }
 
     internal static string NormalizeColor(string? raw)
@@ -181,6 +243,10 @@ internal sealed class Preferences
         values.Add(("slideshowInterval", SlideshowInterval));
         values.Add(("slideshowShuffle", SlideshowShuffle));
         values.Add(("kenBurns", KenBurns));
+        // The family only; the imported bytes ride in their own push (BuildFontScript),
+        // because a data URL of a few megabytes has no business in a settings payload
+        // that is re-sent on every keystroke.
+        values.Add(("fontFamily", FontFamily));
 
         var script = new StringBuilder();
         script.AppendLine("(function () {");
@@ -214,6 +280,23 @@ internal sealed class Preferences
             "})();");
     }
 
+    /// <summary>
+    /// The imported font file, as a <c>data:</c> URL, through the same bridge. Sent
+    /// separately from the settings: the payload is the user's font (up to 4 MB of
+    /// base64) and only changes when they import something new. An empty string is a
+    /// real value — it removes the previously loaded face.
+    /// </summary>
+    internal static string BuildFontScript(string source)
+    {
+        return string.Join(
+            "\n",
+            "(function () {",
+            "  if (typeof window.livelyPropertyListener !== \"function\") { return false; }",
+            $"  window.livelyPropertyListener(\"customFont\", {JsonSerializer.Serialize(source)});",
+            "  return true;",
+            "})();");
+    }
+
     internal static string BuildSuspendScript(bool suspended)
     {
         return $"(function () {{ if (typeof window.livelyPropertyListener !== \"function\") {{ return false; }} " +
@@ -242,7 +325,9 @@ internal sealed class Preferences
             ["photoSync"] = PhotoSync,
             ["slideshowInterval"] = SlideshowInterval,
             ["slideshowShuffle"] = SlideshowShuffle,
-            ["kenBurns"] = KenBurns
+            ["kenBurns"] = KenBurns,
+            // The family only: the imported bytes are pushed once the page is ready.
+            ["fontFamily"] = FontFamily
         };
 
         // Same rule as the live push: the colour rides along only when it is the

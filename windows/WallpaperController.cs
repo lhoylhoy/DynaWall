@@ -121,6 +121,7 @@ internal sealed class WallpaperController : IDisposable
         {
             window.SetBackground(background);
             _ = window.PushSettingsAsync();
+            _ = window.PushFontAsync();
         }
     }
 

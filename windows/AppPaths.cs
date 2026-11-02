@@ -18,6 +18,12 @@ internal static class AppPaths
 
     internal static string PreferencesFile => Path.Combine(DataDirectory, "settings.json");
 
+    /// <summary>
+    /// Imported font files ("Add font…"), copied out of Downloads so the wallpaper
+    /// keeps its typeface after the original is moved.
+    /// </summary>
+    internal static string FontDirectory => Path.Combine(DataDirectory, "Fonts");
+
     internal static string LogFile => Path.Combine(DataDirectory, "dynawall.log");
 
     /// <summary>The web root mapped to <c>https://dynawall.local/</c>.</summary>

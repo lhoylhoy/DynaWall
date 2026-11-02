@@ -43,7 +43,14 @@
 
   /* Typography — Outfit first; a geometric fallback chain covers everything the
      vendored latin subset cannot (Avenir Next/Futura ship with macOS, Century
-     Gothic with Windows), and the system face closes the list. */
+     Gothic with Windows), and the system face closes the list.
+
+     This is the shipped look and the value script.js restores for "Outfit".
+     Picking another family (installed in Font Book / Windows Fonts, or imported
+     as a file) rewrites --font-sans on <html> with that family in front of this
+     same tail. An imported file adds no CSS font rule of its own: the bytes are
+     registered through document.fonts, so this stylesheet keeps exactly one
+     vendored face and nothing here ever reaches the network. */
   --font-sans: "Outfit", "Avenir Next", "Century Gothic", "Futura", -apple-system,
     BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 

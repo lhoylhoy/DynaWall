@@ -19,6 +19,13 @@ internal sealed class WallpaperWindow : Form
     private readonly WebView2 webView;
     private bool suspended;
 
+    /// <summary>
+    /// The font payload this display already holds (<c>null</c> = nothing sent yet).
+    /// An imported font is a multi-megabyte data URL, so it is only pushed when it
+    /// actually changed, never on every settings edit.
+    /// </summary>
+    private string? pushedFontSource;
+
     internal WallpaperWindow(WallpaperController owner)
     {
         this.owner = owner;
@@ -143,6 +150,7 @@ internal sealed class WallpaperWindow : Form
         IsReady = true;
         owner.ApplyPhotoMappingTo(this);
         await PushSettingsAsync();
+        await PushFontAsync();
         await PushPhotosAsync();
         await ApplySuspensionAsync();
         Log.Write("wallpaper page ready");
@@ -175,6 +183,30 @@ internal sealed class WallpaperWindow : Form
         catch (Exception ex)
         {
             Log.Write($"photo push failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Hand the imported font file (if any) to the page. Skipped when this display
+    /// already holds the same bytes, so typing in the settings window never re-sends
+    /// megabytes of base64.
+    /// </summary>
+    internal async Task PushFontAsync()
+    {
+        var core = ReadyCore();
+        if (core is null) return;
+
+        var source = owner.Preferences.CustomFontSource;
+        if (string.Equals(source, pushedFontSource, StringComparison.Ordinal)) return;
+
+        try
+        {
+            await core.ExecuteScriptAsync(Preferences.BuildFontScript(source));
+            pushedFontSource = source;
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"font push failed: {ex.Message}");
         }
     }
 

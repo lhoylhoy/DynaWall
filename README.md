@@ -79,7 +79,7 @@ SmartScreen (**More info → Run anyway**). The DMG is built on the Apple silico
 | `build-macos.sh` | Zero-dependency `swiftc` build that assembles and signs `dist/DynaWall.app` |
 | `build-dmg.sh` | Builds the app, then packs it with an `/Applications` symlink into `dist/DynaWall.dmg` |
 | `windows/DynaWall.csproj` | .NET 8 / WinForms project — single-file, self-contained, WebView2, curated wallpapers under `web/` |
-| `windows/*.cs` | Native Windows host: tray icon, settings window, WorkerW layering, WebView2 bridge, photo library, Run-key startup |
+| `windows/*.cs` | Native Windows host: tray icon, settings window, WorkerW layering, WebView2 bridge, photo library, installed/imported fonts (`FontLibrary.cs`), Run-key startup |
 | `windows/installer.iss` | Inno Setup 6 script for the per-user `DynaWall-Setup.exe` (no UAC prompt) |
 | `windows/build-release.ps1` | Publishes `DynaWall.exe`, the portable zip and the installer into `dist/` |
 | `windows/app.ico`, `windows/make-icon.cjs` | Windows icon set, generated from the macOS icon master with `sips` |
@@ -202,6 +202,8 @@ URL parameters (all optional, handy for quick experiments):
 | `shuffle` | `true` / `false` — random order instead of sequential | `?shuffle=false` |
 | `kenBurns` | `true` / `false` — slow zoom | `?kenburns=false` |
 | `photos` | comma separated list of image URLs | `?photos=images/03-deep-ocean.jpg` |
+| `font` | family name (`fontfamily` also works) | `?font=Georgia` |
+| `fonturl` | relative path or `data:` URL of a font file (`customfont` also works) | `?fonturl=assets/fonts/outfit-latin.woff2` |
 
 Example: `index.html?name=Alex&bgColor=%230b0f19` · `index.html?theme=night` pins the night palette.
 
@@ -302,6 +304,14 @@ that sizes itself to whatever is on screen:
 - **Drag and drop.** With **Custom folder…** selected, the folder row accepts a folder of images dragged from
   Finder: it becomes the collection, the slideshow starts, and the row shows the folder name and how many
   photos it found.
+- **Typography.** A **Typography** card sets the greeting and subtitle in **Outfit** (the shipped face),
+  **SF Pro**, **New York**, **SF Mono** or **Avenir Next** — each chip drawn in its own face — or in any family
+  installed in Font Book, listed in a **System font…** menu. **Add Font…** imports a downloaded `.ttf`, `.otf`,
+  `.ttc`, `.woff` or `.woff2` without installing it system-wide: DynaWall copies the file into
+  `~/Library/Application Support/DynaWall/Fonts`, registers it with CoreText, and reads the family name out of
+  the file so the popover preview and the desktop use the same face. Every stack still tails into the bundled
+  Outfit, so a font that is later uninstalled, renamed or deleted degrades to the shipped look instead of a
+  blank greeting.
 - **Startup.** A native **Launch at login** switch registers DynaWall with macOS (`SMAppService`) so it starts automatically when you log in, without having to open System Settings manually.
 - **Reset** in the footer restores the default subtitle, palette, slideshow and sync settings in one
   click (your chosen photo folder is kept).
@@ -322,6 +332,8 @@ that sizes itself to whatever is on screen:
 | Shuffle | `slideshowShuffle` | Random order instead of file-name order |
 | Slow zoom | `kenBurns` | Drift/zoom each photo for the length of its turn |
 | Next | — | Skip to the next photo now and restart the interval (shown while the slideshow is on) |
+| Font | `fontFamily` | Typography chips (**Outfit**, **SF Pro**, **New York**, **SF Mono**, **Avenir Next**), a **System font…** menu listing every family in Font Book, and **Add Font…** for a downloaded file |
+| Add Font… | `customFont` | Copies the picked `.ttf`/`.otf`/`.ttc`/`.woff`/`.woff2` (up to 4 MB) into Application Support, applies its family and pushes the bytes to the page as a `data:` URL |
 | Pause / Resume | — | Detaches the wallpaper from the desktop (the menu bar icon dims) |
 | Launch at login | `launchAtLogin` | Starts DynaWall automatically on login (registered with macOS via `SMAppService`) |
 | Reset | — | Restores the default subtitle, palette (`Auto`), slideshow, interval, shuffle, slow zoom and collection |
@@ -359,6 +371,8 @@ appears each time the popover button is pressed.
 - Settings changes while the app is closed are picked up on the next launch; changes in the popover apply
   immediately.
 - `defaults delete com.dynawall.macos` resets every macOS-side setting.
+- Imported fonts are copied to `~/Library/Application Support/DynaWall/Fonts`; deleting that folder makes
+  DynaWall fall back to the bundled Outfit (the family is still stored, so reselect a preset afterwards).
 - Want it at login? Turn on **Launch at login** in the menu bar popover (or manage it in **System Settings → General → Login Items**).
 
 ## Windows app (native)
@@ -415,7 +429,7 @@ shortcuts, and can register it to start when you sign in.
 
 | Item | Effect |
 | --- | --- |
-| Settings… | Greeting, palette, photo folder, slideshow and startup controls (double-clicking the tray icon does the same) |
+| Settings… | Greeting, typography, palette, photo folder, slideshow and startup controls (double-clicking the tray icon does the same) |
 | Next photo | Skips to the next photo now and restarts the interval |
 | Pause / Resume | Parks the wallpaper at 0 FPS without quitting |
 | Start with Windows | Adds or removes the per-user `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` entry |
@@ -423,7 +437,10 @@ shortcuts, and can register it to start when you sign in.
 
 Settings apply live: the window writes `settings.json`, pushes the changed values into every WebView2 and
 re-scans the folder if the photo source changed. **Reset** restores the shipped subtitle, palette, slideshow
-and sync settings but keeps your folder.
+and sync settings but keeps your folder. The **Typography** card lists the quick picks (**Outfit**, **Segoe UI**,
+**Georgia**, **Consolas**) plus every family installed in Windows, and **Add font…** copies a downloaded
+`.ttf`/`.otf`/`.ttc`/`.woff`/`.woff2` (up to 4 MB) into `%LOCALAPPDATA%\DynaWall\Fonts` and sends its bytes to
+the page as a `data:` URL — the file stays put even if you delete the original download.
 
 ### Diagnostics
 
@@ -444,7 +461,7 @@ Logs go to `%LOCALAPPDATA%\DynaWall\dynawall.log` (one 512 KB generation is kept
 - A custom folder with no supported images falls back to the bundled wallpapers, exactly like the web page.
 - The wallpaper runs without administrator rights; the installer is per-user for the same reason.
 - Uninstalling removes the program, shortcuts and Run entry but keeps `%LOCALAPPDATA%\DynaWall\` — delete
-  that folder to remove settings, logs and the WebView2 profile as well.
+  that folder to remove settings, logs, imported fonts and the WebView2 profile as well.
 
 ## Lively Wallpaper
 
@@ -462,6 +479,7 @@ Logs go to `%LOCALAPPDATA%\DynaWall\dynawall.log` (one 512 KB generation is kept
 | `slideshowInterval` | slider | Minutes between photos (1–120, default 15) |
 | `slideshowShuffle` | checkbox | Random order |
 | `kenBurns` | checkbox | Slow zoom on each photo |
+| `fontFamily` | textbox | Family for the greeting and subtitle — `Outfit` (default), `SF Pro`, an installed family, or a family the native hosts imported; clearing the field puts it back in `Outfit` |
 
 Lively talks to the page through `window.livelyPropertyListener(name, value)`: every change is applied
 instantly, cross-faded when needed, and cached in `localStorage`. Lively sends the *index* of a dropdown item,
@@ -483,6 +501,7 @@ so `theme` arrives as `0…5` — the page maps it back to the band name.
 | `slideshowinterval` | slider | Minutes between photos (1–120, default 15) |
 | `slideshowshuffle` | checkbox | Random order |
 | `kenburns` | checkbox | Slow zoom on each photo |
+| `fontfamily` | text input | Family for the greeting and subtitle (default `Outfit`); empty resets to `Outfit` |
 
 Values arrive through `window.wallpaperPropertyListener.applyUserProperties(...)`; colors are converted
 from Wallpaper Engine's `"r g b"` floats to hex automatically.
@@ -523,9 +542,10 @@ to `main` cannot clobber each other's nightly build, and the run page's summary 
 3. **URL query parameters**
 4. **`localStorage` cache** — `dynawall.firstName`, `dynawall.subtitle`, `dynawall.bgColor`,
    `dynawall.theme`, `dynawall.slideshow`, `dynawall.slideshowInterval`, `dynawall.slideshowShuffle`,
-   `dynawall.kenBurns`, `dynawall.photoSync`
+   `dynawall.kenBurns`, `dynawall.photoSync`, `dynawall.fontFamily` (the family only — an imported font file is
+   never cached, the host re-reads it and re-sends it as a `data:` URL on every load)
 5. **Built-in defaults** — `Developer`, `What are we building today?`, `#0d1117`, palette on `auto`,
-   slideshow off, 15 minutes, shuffled, slow zoom on, photos matched to the time of day
+   slideshow off, 15 minutes, shuffled, slow zoom on, photos matched to the time of day, `Outfit`
 
 The photo list is the one exception: `photos` is never cached, because the host resolves it fresh on every
 load (and the page falls back to `images/` when nobody sends one). `suspend` is not a setting at all — it is a
@@ -547,6 +567,14 @@ The one interaction to know about: a colour with no theme beside it pins `custom
   update the single `@font-face` rule in `style.css` to re-skin the wallpaper — nothing else has to change.
   Names with characters outside the latin subset (Cyrillic, CJK, …) fall back to the system face for those
   glyphs only, thanks to the `unicode-range` on the face.
+- Outfit is also the **default** rather than the only choice: the native hosts (and the `font`/`fonturl` URL
+  parameters, and the host manifests) can name any installed family, or hand over an imported font file as a
+  `data:` URL that the page registers with `document.fonts`. `applyTypography()` rewrites the `--font-sans`
+  token on `<html>` rather than any rule, so the stylesheet still declares the shipped stack and Outfit stays
+  the tail of every generated stack — a family that is missing, renamed or uninstalled lands back on the
+  vendored face instead of leaving the greeting blank. Font family names are cleaned the same way in
+  `script.js`, the macOS app and the Windows app (quotes, backslashes, braces, semicolons and angle brackets
+  removed, whitespace collapsed, 80 characters max).
 - **Typography**: the display scale is tuned for a wide geometric face rather than left at browser defaults —
   the greeting is tracked in (`-0.03em`, because Outfit's round forms open up at 90 px), leads at `1.06`
   instead of the default heading `1.15`, balances its line breaks (`text-wrap: balance` + `hyphens: none`, so

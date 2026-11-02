@@ -451,7 +451,32 @@ enum HexColor {
 /// outlines — and are registered with CoreText for the popover. Without them the
 /// preview would be set in SF Rounded while the desktop is set in Outfit, which
 /// is precisely the mismatch the preview exists to avoid.
+///
+/// The same registry serves the user's own typography: a family installed in Font
+/// Book is addressed by name, and an imported font file (`.ttf`/`.otf`/`.ttc`) is
+/// registered from `~/Library/Application Support/DynaWall/Fonts`, so the popover
+/// previews it exactly like the desktop. CoreText cannot read WOFF/WOFF2; those
+/// still set the desktop (the page loads the bytes through `FontFace`) while the
+/// card falls back to the system face.
 enum WallpaperFont {
+    /// The face vendored with the app; every font stack ends here.
+    static let defaultFamily = "Outfit"
+
+    /// One-click presets in the popover. `SF Pro` is the macOS system face rather
+    /// than an installed family, so `face(_:size:weight:)` asks for the system font.
+    static let presetFamilies = ["Outfit", "SF Pro", "New York", "SF Mono", "Avenir Next"]
+
+    /// What "Add Font…" accepts. CoreText can only register the first three;
+    /// WOFF/WOFF2 exist for the page's `FontFace` loader.
+    static let supportedExtensions: Set<String> = ["ttf", "otf", "ttc", "woff", "woff2"]
+
+    /// Largest imported file handed to the page as a data URL (base64 adds ~33%).
+    static let maxImportedBytes = 4 * 1024 * 1024
+
+    /// The family the preview card is set in. `WallpaperPreferences` keeps this in
+    /// step with the popover, so the `Font.custom` calls stay one-liners.
+    static var activeFamily: String = defaultFamily
+
     private static let regularName = "Outfit-Regular"
     private static let semiboldName = "Outfit-SemiBold"
 
@@ -484,20 +509,26 @@ enum WallpaperFont {
         _ = registration
     }
 
-    /// Wallpaper greeting face: Outfit at 600, exactly like `.greeting`.
+    /// Wallpaper greeting face: the chosen family at 600, Outfit when unset.
     ///
     /// Avenir Next (a geometric sans that ships with macOS) is the fallback if the
     /// bundled faces cannot be registered, so a damaged bundle still gets a closer
     /// match than the default system face.
-    static func semibold(size: CGFloat) -> Font {
-        registration
+    static func semibold(size: CGFloat, family: String = "") -> Font {
+        if let resolved = customFamily(family) {
+            return face(resolved, size: size, weight: .semibold)
+        }
+        return registration
             ? .custom(semiboldName, size: size)
             : .custom("AvenirNext-DemiBold", size: size)
     }
 
-    /// Wallpaper subtitle face: Outfit at 400, exactly like `.subtitle`.
-    static func regular(size: CGFloat) -> Font {
-        registration
+    /// Wallpaper subtitle face: the chosen family at 400, Outfit when unset.
+    static func regular(size: CGFloat, family: String = "") -> Font {
+        if let resolved = customFamily(family) {
+            return face(resolved, size: size, weight: .regular)
+        }
+        return registration
             ? .custom(regularName, size: size)
             : .custom("AvenirNext-Regular", size: size)
     }
@@ -505,6 +536,190 @@ enum WallpaperFont {
     /// CSS `letter-spacing` is in `em`; SwiftUI's `.tracking` is in points.
     static func tracking(size: CGFloat, em: CGFloat) -> CGFloat {
         size * em
+    }
+
+    // MARK: Family resolution
+
+    /// `nil` means "set this in the bundled Outfit face".
+    private static func customFamily(_ explicit: String) -> String? {
+        let candidate = explicit.isEmpty ? activeFamily : explicit
+        let family = normalizedFamily(candidate)
+        guard family.caseInsensitiveCompare(defaultFamily) != .orderedSame else { return nil }
+        return family
+    }
+
+    /// Trim and drop the characters that could break a CSS font stack or a
+    /// `UserDefaults` value pasted in by hand. Mirrors `normalizeFontFamily()` in
+    /// `script.js`, so both hosts and the page agree on the same name.
+    static func normalizedFamily(_ raw: String) -> String {
+        let stripped = raw
+            .replacingOccurrences(of: "\"", with: "")
+            .replacingOccurrences(of: "'", with: "")
+            .replacingOccurrences(of: "\\", with: "")
+            .replacingOccurrences(of: ";", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return stripped.isEmpty ? defaultFamily : stripped
+    }
+
+    /// Build a face for a family that is not the bundled Outfit.
+    ///
+    /// `SF Pro` is the macOS UI face, which is not addressable as an installed
+    /// family, so it resolves through `.system`. `Font.custom` falls back to the
+    /// system face when a family is missing (an uninstalled SF Mono, the file behind
+    /// an imported font removed by hand), which keeps the card readable either way.
+    private static func face(_ family: String, size: CGFloat, weight: Font.Weight) -> Font {
+        let key = family.lowercased()
+        if key == "sf pro" || key == "system sans" || key == "system" || key == "system-ui" {
+            return .system(size: size, weight: weight)
+        }
+        return .custom(family, size: size).weight(weight)
+    }
+
+    // MARK: Installed families
+
+    /// Symbol and technical faces: real fonts, but not typography for a greeting.
+    private static let ignoredFamilies: Set<String> = [
+        "Apple Braille", "Apple Color Emoji", "Apple Symbols", "LastResort",
+        "Keyboard", "GB18030 Bitmap", "Zapf Dingbats", "Webdings", "Wingdings"
+    ]
+
+    private static var cachedFamilies: [String] = []
+    private static var cachedFamiliesAt: Date = .distantPast
+    /// Long enough to keep typing cheap, short enough that a freshly installed
+    /// font appears without a relaunch.
+    private static let familiesCacheLifetime: TimeInterval = 30
+
+    /// Every family Font Book exposes, alphabetical.
+    ///
+    /// The system font manager is the only complete source (it also knows faces the
+    /// user installed after DynaWall started), so the answer is cached briefly
+    /// rather than stored: the popover body is rebuilt on every keystroke.
+    static func installedFamilies() -> [String] {
+        let now = Date()
+        if !cachedFamilies.isEmpty, now.timeIntervalSince(cachedFamiliesAt) < familiesCacheLifetime {
+            return cachedFamilies
+        }
+        let families = NSFontManager.shared.availableFontFamilies
+            .filter { family in
+                !family.hasPrefix(".") && !ignoredFamilies.contains(family)
+            }
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        cachedFamilies = families
+        cachedFamiliesAt = now
+        return families
+    }
+
+    // MARK: Imported files
+
+    /// `~/Library/Application Support/DynaWall/Fonts` — where a downloaded font is
+    /// copied so the desktop keeps its typeface if the original is moved.
+    static var importDirectory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory())
+                .appendingPathComponent("Library/Application Support", isDirectory: true)
+        return base
+            .appendingPathComponent("DynaWall", isDirectory: true)
+            .appendingPathComponent("Fonts", isDirectory: true)
+    }
+
+    /// Copy `source` into Application Support and return the new location.
+    ///
+    /// The copy carries a short unique suffix, so re-importing a file the user has
+    /// since replaced on disk is a *new* path: the page and the preview then read
+    /// the new bytes instead of a cached face. Older copies of the same stem are
+    /// deleted, so the folder holds one file per family rather than one per try.
+    static func importFont(from source: URL) -> URL? {
+        let ext = source.pathExtension.lowercased()
+        guard supportedExtensions.contains(ext) else { return nil }
+
+        let directory = importDirectory
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            dynaLog("font import folder could not be created: \(error.localizedDescription)")
+            return nil
+        }
+
+        let stem = source.deletingPathExtension().lastPathComponent
+        let suffix = String(UUID().uuidString.prefix(8)).lowercased()
+        let destination = directory.appendingPathComponent("\(stem)-\(suffix).\(ext)")
+
+        if let existing = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) {
+            for file in existing
+            where file.deletingPathExtension().lastPathComponent.hasPrefix(stem + "-")
+                && file.pathExtension.lowercased() == ext {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+
+        do {
+            try FileManager.default.copyItem(at: source, to: destination)
+        } catch {
+            dynaLog("font \(source.lastPathComponent) could not be imported: \(error.localizedDescription)")
+            return nil
+        }
+        return destination
+    }
+
+    /// The family name inside a font file, so the page and the preview address the
+    /// same face. CoreText cannot parse WOFF/WOFF2, so those fall back to a cleaned
+    /// file name (`Inter-Regular.woff2` → `Inter Regular`), which is also the name
+    /// the page's `FontFace` is registered under.
+    static func familyName(of url: URL, fallback: String) -> String {
+        if let descriptors = CTFontManagerCreateFontDescriptorsFromURL(url as CFURL) as? [CTFontDescriptor],
+           let descriptor = descriptors.first,
+           let family = CTFontDescriptorCopyAttribute(descriptor, kCTFontFamilyNameAttribute) as? String,
+           !family.isEmpty {
+            return family
+        }
+        let base = (fallback as NSString).deletingPathExtension
+        return normalizedFamily(base.replacingOccurrences(of: "-", with: " "))
+    }
+
+    /// Register a font file with CoreText for the lifetime of the process.
+    @discardableResult
+    static func registerCustomFont(atPath path: String) -> Bool {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let url = URL(fileURLWithPath: trimmed)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            dynaLog("imported font is missing: \(trimmed)")
+            return false
+        }
+        var error: Unmanaged<CFError>?
+        if CTFontManagerRegisterFontsForURL(url as CFURL, .process, &error) { return true }
+        if let error {
+            let description = String(describing: error.takeRetainedValue())
+            if description.localizedCaseInsensitiveContains("already") { return true }
+            dynaLog("imported font \(url.lastPathComponent) failed to register: \(description)")
+        }
+        return false
+    }
+
+    /// A font file as a `data:` URL the page can hand straight to `FontFace`.
+    static func dataURL(atPath path: String) -> String? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let url = URL(fileURLWithPath: trimmed)
+        guard let data = try? Data(contentsOf: url),
+              !data.isEmpty,
+              data.count <= maxImportedBytes else {
+            return nil
+        }
+        return "data:\(mimeType(forExtension: url.pathExtension));base64,\(data.base64EncodedString())"
+    }
+
+    private static func mimeType(forExtension pathExtension: String) -> String {
+        switch pathExtension.lowercased() {
+        case "otf": return "font/otf"
+        case "woff": return "font/woff"
+        case "woff2": return "font/woff2"
+        case "ttc": return "font/collection"
+        default: return "font/ttf"
+        }
     }
 
     private static func bundledURL(named name: String) -> URL? {
@@ -958,6 +1173,10 @@ final class WallpaperPreferences: ObservableObject {
         static let photoCollection = "photoCollection"
         static let photoSync = "photoSyncTimeOfDay"
         static let launchAtLogin = "launchAtLogin"
+        /// Greeting/subtitle family: an installed name or the imported file's family.
+        static let fontFamily = "fontFamily"
+        /// The imported font file copied into Application Support ("" = none).
+        static let customFontPath = "customFontPath"
     }
 
     static let defaultSubtitle = "What are we building today?"
@@ -1009,6 +1228,42 @@ final class WallpaperPreferences: ObservableObject {
     /// Keep the wallpaper's photo in step with the clock's palette band.
     @Published var photoSync: Bool {
         didSet { persist(photoSync, Key.photoSync) }
+    }
+
+    /// The family the greeting and subtitle are set in. `Outfit` is the vendored
+    /// default; any family installed in Font Book works, and an imported file is
+    /// addressed by the family name resolved when it was added.
+    @Published var fontFamily: String {
+        didSet {
+            let normalized = WallpaperFont.normalizedFamily(fontFamily)
+            if normalized != fontFamily {
+                fontFamily = normalized // didSet runs again with the clean value
+                return
+            }
+            // The preview card reads the face from the static registry, so it has to
+            // move before SwiftUI rebuilds the popover.
+            WallpaperFont.activeFamily = normalized
+            persist(normalized, Key.fontFamily)
+        }
+    }
+
+    /// Absolute path of a font file imported with "Add Font…" ("" = none).
+    ///
+    /// The file lives in Application Support, so the wallpaper keeps its typeface
+    /// after the download is moved or deleted. Registering it again on launch is
+    /// what makes the desktop and the popover preview agree from the first frame.
+    @Published var customFontPath: String {
+        didSet {
+            let trimmed = customFontPath.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed != customFontPath {
+                customFontPath = trimmed
+                return
+            }
+            if !trimmed.isEmpty {
+                WallpaperFont.registerCustomFont(atPath: trimmed)
+            }
+            persist(trimmed, Key.customFontPath)
+        }
     }
 
     /// Start DynaWall automatically when logging in to macOS.
@@ -1085,6 +1340,69 @@ final class WallpaperPreferences: ObservableObject {
         guard photoSync else { return summary + " · all photos, any time of day" }
         let band = (themePreset.slot ?? ThemeSlot.current()).label.lowercased()
         return summary + " · " + band + " photos right now"
+    }
+
+    // MARK: Typography
+
+    /// The imported font file as a `data:` URL for the page.
+    ///
+    /// Never persisted: the path is the setting, and the bytes are re-read on every
+    /// launch (and again whenever the file changes), which keeps UserDefaults small
+    /// and lets a re-import replace the face instead of caching the old one.
+    var customFontSource: String {
+        WallpaperFont.dataURL(atPath: customFontPath) ?? ""
+    }
+
+    /// The file name shown under the font picker, `""` when nothing was imported.
+    var importedFontName: String {
+        let path = customFontPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return "" }
+        let name = (path as NSString).lastPathComponent
+        return name.isEmpty ? path : name
+    }
+
+    /// One line of context for the typography card.
+    var fontFamilyHint: String {
+        let family = WallpaperFont.normalizedFamily(fontFamily)
+        if !importedFontName.isEmpty {
+            return "\(family) · imported from \(importedFontName)"
+        }
+        switch family.lowercased() {
+        case "outfit":
+            return "Outfit ships with DynaWall — no install, no download."
+        case "sf pro", "system sans":
+            return "SF Pro is the macOS system face."
+        case "new york":
+            return "New York is the editorial serif macOS ships."
+        case "sf mono":
+            return "SF Mono is macOS's monospaced face."
+        case "avenir next":
+            return "Avenir Next is the geometric sans macOS ships."
+        default:
+            return "\(family) is applied to the greeting and subtitle."
+        }
+    }
+
+    /// Import a downloaded font file, select it and remember it.
+    ///
+    /// The file is copied into Application Support first (so the wallpaper never
+    /// depends on the Downloads folder), then registered with CoreText for the
+    /// preview card. Returns `false` for an unreadable or unsupported file so the
+    /// popover can explain instead of silently doing nothing.
+    @discardableResult
+    func importFontFile(_ url: URL) -> Bool {
+        guard let destination = WallpaperFont.importFont(from: url) else { return false }
+        let family = WallpaperFont.familyName(of: destination, fallback: destination.lastPathComponent)
+        WallpaperFont.registerCustomFont(atPath: destination.path)
+        // The family goes first: the page needs a name to attach the bytes to.
+        if customFontPath != destination.path {
+            customFontPath = destination.path
+        }
+        if fontFamily != family {
+            fontFamily = family
+        }
+        dynaLog("imported font \(url.lastPathComponent) as \(family)")
+        return true
     }
 
     // MARK: Popover preview
@@ -1212,6 +1530,8 @@ final class WallpaperPreferences: ObservableObject {
         kenBurns = true
         photoCollection = .goldenGate
         photoSync = true
+        fontFamily = WallpaperFont.defaultFamily
+        customFontPath = ""
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -1231,7 +1551,9 @@ final class WallpaperPreferences: ObservableObject {
             Key.photoFolder: "",
             Key.photoCollection: PhotoCollection.goldenGate.rawValue,
             Key.photoSync: true,
-            Key.launchAtLogin: false
+            Key.launchAtLogin: false,
+            Key.fontFamily: WallpaperFont.defaultFamily,
+            Key.customFontPath: ""
         ])
 
         subtitleText = defaults.string(forKey: Key.subtitle) ?? Self.defaultSubtitle
@@ -1248,6 +1570,16 @@ final class WallpaperPreferences: ObservableObject {
             ?? .goldenGate
         photoSync = defaults.bool(forKey: Key.photoSync)
         launchAtLogin = LaunchAtLogin.isEnabled
+        fontFamily = WallpaperFont.normalizedFamily(
+            defaults.string(forKey: Key.fontFamily) ?? WallpaperFont.defaultFamily
+        )
+        customFontPath = defaults.string(forKey: Key.customFontPath) ?? ""
+        // `didSet` does not run during init, so the preview card and CoreText have to
+        // be told about the saved typography here (and not only when it changes).
+        WallpaperFont.activeFamily = fontFamily
+        if !customFontPath.isEmpty {
+            WallpaperFont.registerCustomFont(atPath: customFontPath)
+        }
     }
 
     /// The logged-in macOS account's first name, read on every call.
@@ -1286,6 +1618,23 @@ final class WallpaperPreferences: ObservableObject {
           window.livelyPropertyListener("slideshowInterval", \(slideshowIntervalMinutes));
           window.livelyPropertyListener("slideshowShuffle", \(slideshowShuffle ? "true" : "false"));
           window.livelyPropertyListener("kenBurns", \(kenBurns ? "true" : "false"));
+          window.livelyPropertyListener("fontFamily", \(Self.jsLiteral(WallpaperFont.normalizedFamily(fontFamily))));
+          return true;
+        })();
+        """
+    }
+
+    /// The imported font bytes, pushed separately from the settings.
+    ///
+    /// A font file is up to a few megabytes of base64; riding along in every
+    /// keystroke-sized settings push would re-send all of it while the subtitle is
+    /// typed. The page keeps the face it already loaded when the value is unchanged,
+    /// so this runs only when the imported file (or its absence) actually changes.
+    static func javaScriptFontUpdate(_ source: String) -> String {
+        """
+        (function () {
+          if (typeof window.livelyPropertyListener !== "function") { return false; }
+          window.livelyPropertyListener("customFont", \(jsLiteral(source)));
           return true;
         })();
         """
@@ -1323,6 +1672,13 @@ final class WallpaperPreferences: ObservableObject {
         fields.append("\"slideshowInterval\": \(slideshowIntervalMinutes)")
         fields.append("\"slideshowShuffle\": \(slideshowShuffle ? "true" : "false")")
         fields.append("\"kenBurns\": \(kenBurns ? "true" : "false")")
+        fields.append("\"fontFamily\": \(Self.jsLiteral(WallpaperFont.normalizedFamily(fontFamily)))")
+        // The imported face rides along so the first frame is already set in it; it
+        // is re-read from disk here rather than stored, so a replaced file wins.
+        let fontSource = customFontSource
+        if !fontSource.isEmpty {
+            fields.append("\"customFont\": \(Self.jsLiteral(fontSource))")
+        }
         if !photoURLs.isEmpty {
             fields.append("\"photos\": \(Self.jsArrayLiteral(photoURLs))")
         }
@@ -1426,6 +1782,8 @@ final class DesktopWindowController: NSObject, ObservableObject {
         /// What this page has already received, so a push only sends what changed.
         var pushedSettings: String?
         var pushedPhotos: [String]?
+        /// The imported font data URL the page already has (nil = never pushed).
+        var pushedFont: String?
         /// Occlusion notifications are registered per window and removed with it.
         var observers: [NSObjectProtocol] = []
 
@@ -1735,6 +2093,9 @@ final class DesktopWindowController: NSObject, ObservableObject {
         window.orderFrontRegardless()
 
         let entry = WallpaperWindow(window: window, webView: webView, screen: screen)
+        // The seed injected above already carries the imported font, so this display
+        // is up to date before its first frame and the (large) font push is skipped.
+        entry.pushedFont = preferences.customFontSource
         // Stand still as soon as this desktop is completely covered, and come back
         // when it is visible again: a wallpaper nobody can see must cost no frames.
         entry.observers.append(
@@ -1770,6 +2131,7 @@ final class DesktopWindowController: NSObject, ObservableObject {
 
         let settingsScript = preferences.javaScriptUpdate
         let photosURLs = photoLibrary.photoURLs()
+        let fontSource = preferences.customFontSource
         let color = HexColor.nsColor(preferences.bgColor)
 
         for entry in windows {
@@ -1796,6 +2158,16 @@ final class DesktopWindowController: NSObject, ObservableObject {
                 entry.webView.evaluateJavaScript(Self.photosJavaScriptUpdate(photosURLs)) { _, error in
                     if let error {
                         dynaLog("photo push failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+            // The imported font is megabytes of base64, so it travels on its own and
+            // only when the file (or its absence) changed — never on every keystroke.
+            if entry.pushedFont != fontSource {
+                entry.pushedFont = fontSource
+                entry.webView.evaluateJavaScript(WallpaperPreferences.javaScriptFontUpdate(fontSource)) { _, error in
+                    if let error {
+                        dynaLog("font push failed: \(error.localizedDescription)")
                     }
                 }
             }
@@ -2048,6 +2420,15 @@ private final class FolderDropTarget: ObservableObject {
     @Published var isTargeted = false
 }
 
+/// The result of the last "Add Font…" attempt, shown under the typography picker.
+///
+/// An `ObservableObject` rather than `@State` on purpose: the app is compiled with
+/// plain `swiftc`, which does not load SwiftUI's macro plugin, so the `@State`
+/// *macro* is unavailable here (`@StateObject` is still a plain property wrapper).
+private final class FontImportNotice: ObservableObject {
+    @Published var message: String?
+}
+
 /// A bezel-less `NSColorWell` that fills its whole parent.
 ///
 /// `ColorPicker` keeps its own 44×22 control centred inside whatever frame it is
@@ -2106,6 +2487,9 @@ struct SettingsPopoverView: View {
     /// A folder is hovering over the custom-folder row.
     @StateObject private var dropTarget = FolderDropTarget()
 
+    /// Why the last "Add Font…" attempt failed, shown under the picker.
+    @StateObject private var fontNotice = FontImportNotice()
+
     private var customColorBinding: Binding<Color> {
         Binding(
             get: { HexColor.color(preferences.customColorHex) },
@@ -2128,6 +2512,7 @@ struct SettingsPopoverView: View {
         VStack(alignment: .leading, spacing: 11) {
             previewCard
             greetingCard
+            typographyCard
             paletteCard
             photosCard
             startupCard
@@ -2192,7 +2577,7 @@ struct SettingsPopoverView: View {
                     // weight, the -3% tracking and the band's ink — which is what
                     // makes the two read as the same typography.
                     Text(preferences.previewGreeting)
-                        .font(WallpaperFont.semibold(size: 19))
+                        .font(WallpaperFont.semibold(size: 19, family: preferences.fontFamily))
                         .tracking(WallpaperFont.tracking(size: 19, em: -0.03))
                         .foregroundColor(HexColor.color(preferences.previewTextPrimaryHex))
                         .shadow(
@@ -2207,7 +2592,7 @@ struct SettingsPopoverView: View {
                         .frame(maxWidth: .infinity)
                     if !trimmedSubtitle.isEmpty {
                         Text(trimmedSubtitle)
-                            .font(WallpaperFont.regular(size: 11))
+                            .font(WallpaperFont.regular(size: 11, family: preferences.fontFamily))
                             .tracking(WallpaperFont.tracking(size: 11, em: 0.012))
                             .foregroundColor(HexColor.color(preferences.previewTextSecondaryHex))
                             .lineLimit(1)
@@ -2342,6 +2727,148 @@ struct SettingsPopoverView: View {
                     }
                 }
         }
+    }
+
+    // MARK: Typography
+
+    /// The one-click presets. Each entry is a real family name so the page's stack,
+    /// the preview card and an installed font all agree on what "New York" means;
+    /// `SF Pro` is the exception the renderer resolves to the system face.
+    private static let fontPresets: [(label: String, family: String)] = [
+        ("Outfit", "Outfit"),
+        ("SF Pro", "SF Pro"),
+        ("New York", "New York"),
+        ("SF Mono", "SF Mono"),
+        ("Avenir", "Avenir Next")
+    ]
+
+    private var fontFamilyBinding: Binding<String> {
+        Binding(
+            get: { preferences.fontFamily },
+            set: { selectFontFamily($0) }
+        )
+    }
+
+    private var typographyCard: some View {
+        card(systemImage: "textformat.alt", title: "Typography") {
+            VStack(alignment: .leading, spacing: 8) {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3),
+                    spacing: 6
+                ) {
+                    ForEach(Self.fontPresets, id: \.family) { preset in
+                        fontPresetChip(preset.label, family: preset.family)
+                    }
+                }
+                HStack(spacing: 6) {
+                    systemFontMenu
+                    addFontButton
+                }
+                Text(preferences.fontFamilyHint)
+                    .font(.system(size: 9.5))
+                    .foregroundColor(.secondary)
+                    .lineLimit(2)
+                if let message = fontNotice.message {
+                    Text(message)
+                        .font(.system(size: 9.5))
+                        .foregroundColor(.orange)
+                        .lineLimit(2)
+                }
+            }
+        }
+    }
+
+    /// A preset chip drawn *in its own face*, so the choice previews itself.
+    private func fontPresetChip(_ label: String, family: String) -> some View {
+        let selected = preferences.fontFamily.caseInsensitiveCompare(family) == .orderedSame
+        return Button {
+            selectFontFamily(family)
+        } label: {
+            HStack(spacing: 4) {
+                Text(label)
+                    .font(WallpaperFont.semibold(size: 11, family: family))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 0)
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 8, weight: .bold))
+                }
+            }
+            .foregroundColor(selected ? .accentColor : .primary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(selected ? Color.accentColor.opacity(0.16) : Color.primary.opacity(0.05))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(
+                        selected ? Color.accentColor.opacity(0.55) : Color.clear,
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Set the greeting and subtitle in \(family)")
+    }
+
+    /// The whole OS collection: every family Font Book exposes, with a checkmark on
+    /// the one in use. A menu is what macOS scrolls natively, so hundreds of families
+    /// cost nothing until it is opened.
+    private var systemFontMenu: some View {
+        Menu {
+            Picker("Installed fonts", selection: fontFamilyBinding) {
+                ForEach(WallpaperFont.installedFamilies(), id: \.self) { family in
+                    Text(family).tag(family)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "character.cursor.ibeam")
+                    .font(.system(size: 10, weight: .semibold))
+                Text("System font…")
+                    .font(.system(size: 11))
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundColor(.primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.05))
+            )
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .help("Every font installed on this Mac (Font Book)")
+    }
+
+    private var addFontButton: some View {
+        Button {
+            importFontFile()
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "plus")
+                    .font(.system(size: 9, weight: .bold))
+                Text("Add Font…")
+                    .font(.system(size: 11))
+            }
+            .foregroundColor(.primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.primary.opacity(0.05))
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Import a .ttf, .otf, .woff or .woff2 file without installing it system-wide")
     }
 
     // MARK: Section chrome
@@ -2822,6 +3349,47 @@ struct SettingsPopoverView: View {
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         preferences.photoFolderPath = url.path
+    }
+
+    /// Select a family, dropping an imported file when the user moves to a font that
+    /// does not come from it — otherwise the page would keep loading those bytes over
+    /// the newly chosen installed face.
+    private func selectFontFamily(_ family: String) {
+        let normalized = WallpaperFont.normalizedFamily(family)
+        if preferences.fontFamily != normalized {
+            preferences.fontFamily = normalized
+        }
+        if !preferences.customFontPath.isEmpty {
+            let imported = WallpaperFont.familyName(
+                of: URL(fileURLWithPath: preferences.customFontPath),
+                fallback: (preferences.customFontPath as NSString).lastPathComponent
+            )
+            if imported.caseInsensitiveCompare(normalized) != .orderedSame {
+                preferences.customFontPath = ""
+            }
+        }
+        fontNotice.message = nil
+    }
+
+    /// Pick a downloaded font file, copy it into Application Support and apply it.
+    private func importFontFile() {
+        let panel = NSOpenPanel()
+        panel.title = "Add a font to DynaWall"
+        panel.prompt = "Add Font"
+        panel.message = "Pick a .ttf, .otf, .woff or .woff2 file. DynaWall copies it into its own folder, so the original can be moved afterwards."
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = WallpaperFont.supportedExtensions
+            .sorted()
+            .compactMap { UTType(filenameExtension: $0) }
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        if preferences.importFontFile(url) {
+            fontNotice.message = nil
+        } else {
+            fontNotice.message = "\(url.lastPathComponent) is not a font DynaWall can read."
+        }
     }
 }
 

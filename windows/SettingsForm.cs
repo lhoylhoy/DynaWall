@@ -28,11 +28,21 @@ internal sealed class SettingsForm : Form
         "Custom color"
     };
 
+    /// <summary>
+    /// The families offered above the installed list. Every one of them ships with
+    /// Windows (or DynaWall itself), so the quick picks never point at a font the
+    /// user has to go and download first; an imported file is added on top.
+    /// </summary>
+    private static readonly string[] FontPresets = { "Outfit", "Segoe UI", "Georgia", "Consolas" };
+
     private readonly WallpaperController controller;
     private readonly TextBox firstNameBox = new();
     private readonly TextBox subtitleBox = new();
     private readonly ComboBox themeBox = new();
     private readonly Button colorButton = new();
+    private readonly ComboBox fontBox = new();
+    private readonly Button addFontButton = new();
+    private readonly Label fontHint = new();
     private readonly TextBox folderBox = new();
     private readonly CheckBox slideshowBox = new();
     private readonly NumericUpDown intervalBox = new();
@@ -78,6 +88,7 @@ internal sealed class SettingsForm : Form
         firstNameBox.TextChanged += OnTextChanged;
         subtitleBox.TextChanged += OnTextChanged;
         themeBox.SelectedIndexChanged += OnThemeChanged;
+        fontBox.SelectedIndexChanged += OnFontChanged;
         slideshowBox.CheckedChanged += OnOptionChanged;
         shuffleBox.CheckedChanged += OnOptionChanged;
         kenBurnsBox.CheckedChanged += OnOptionChanged;
@@ -168,6 +179,35 @@ internal sealed class SettingsForm : Form
         StyleButton(colorButton);
         colorButton.Click += (_, _) => PickColor();
 
+        fontBox.DropDownStyle = ComboBoxStyle.DropDownList;
+        fontBox.FlatStyle = FlatStyle.Flat;
+        fontBox.BackColor = Background;
+        fontBox.ForeColor = Ink;
+        fontBox.Margin = new Padding(0, 2, 8, 2);
+
+        StyleButton(addFontButton);
+        addFontButton.Text = "Add font…";
+        addFontButton.Click += (_, _) => AddFontFile();
+
+        fontHint.AutoSize = true;
+        fontHint.ForeColor = Muted;
+        fontHint.Margin = new Padding(0, 0, 0, 6);
+        fontHint.MaximumSize = new Size(430, 0); // wraps instead of widening the card
+
+        var fontRow = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            ColumnCount = 2,
+            BackColor = Surface,
+            Margin = new Padding(0)
+        };
+        fontRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        fontRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        fontRow.Controls.Add(fontBox, 0, 0);
+        fontRow.Controls.Add(addFontButton, 1, 0);
+
         var browseButton = new Button { Text = "Choose…", AutoSize = true };
         StyleButton(browseButton);
         browseButton.Click += (_, _) => ChooseFolder();
@@ -213,6 +253,9 @@ internal sealed class SettingsForm : Form
         AddCard(root, "Greeting",
             FieldRow("First name", firstNameBox),
             FieldRow("Subtitle", subtitleBox));
+        AddCard(root, "Typography",
+            FieldRow("Font", fontRow),
+            fontHint);
         AddCard(root, "Appearance",
             FieldRow("Theme", themeBox),
             FieldRow("Background", colorButton));
@@ -365,6 +408,7 @@ internal sealed class SettingsForm : Form
         subtitleBox.Text = Preferences.Subtitle;
         themeBox.SelectedIndex = Math.Max(0, Array.IndexOf(Preferences.ThemeModes, Preferences.Theme));
         UpdateColorButton();
+        LoadFontChoices();
         folderBox.Text = Preferences.PhotoFolder;
         slideshowBox.Checked = Preferences.Slideshow;
         intervalBox.Value = Math.Clamp(
@@ -444,6 +488,124 @@ internal sealed class SettingsForm : Form
         loading = true;
         startupBox.Checked = StartupRegistration.IsEnabled;
         loading = false;
+    }
+
+    /// <summary>
+    /// Fill the font list: the quick picks, every installed family, and whatever the
+    /// current family is (an imported face, or a family the user set by hand, must
+    /// still be selectable). Callers hold <see cref="loading"/> so selecting the
+    /// stored family does not look like a user change.
+    /// </summary>
+    private void LoadFontChoices()
+    {
+        var families = new List<string>(FontPresets);
+        families.AddRange(FontLibrary.InstalledFamilies());
+
+        var imported = string.Empty;
+        if (Preferences.CustomFontPath.Length > 0)
+        {
+            imported = FontLibrary.FamilyName(
+                Preferences.CustomFontPath, Path.GetFileName(Preferences.CustomFontPath));
+        }
+
+        foreach (var name in new[] { imported, Preferences.FontFamily })
+        {
+            if (name.Length == 0) continue;
+            if (families.Any(f => string.Equals(f, name, StringComparison.OrdinalIgnoreCase))) continue;
+            families.Add(name);
+        }
+
+        var selected = Preferences.FontFamily;
+        fontBox.BeginUpdate();
+        fontBox.Items.Clear();
+        fontBox.Items.AddRange(families.Cast<object>().ToArray());
+        fontBox.EndUpdate();
+
+        var index = families.FindIndex(f => string.Equals(f, selected, StringComparison.OrdinalIgnoreCase));
+        if (index >= 0) fontBox.SelectedIndex = index;
+
+        UpdateFontHint();
+    }
+
+    private void UpdateFontHint()
+    {
+        if (Preferences.CustomFontPath.Length > 0)
+        {
+            fontHint.Text =
+                $"\"{Preferences.FontFamily}\" is being served from {Path.GetFileName(Preferences.CustomFontPath)}. " +
+                "DynaWall keeps its own copy, so the original download can be moved or deleted.";
+            return;
+        }
+
+        fontHint.Text = string.Equals(
+            Preferences.FontFamily, Preferences.DefaultFontFamily, StringComparison.OrdinalIgnoreCase)
+            ? "Outfit ships with DynaWall. Any family you pick falls back to it when the font is missing."
+            : "Used for the greeting and subtitle; missing families fall back to the bundled Outfit.";
+    }
+
+    private void OnFontChanged(object? sender, EventArgs e)
+    {
+        if (loading) return;
+
+        var family = fontBox.SelectedItem as string ?? Preferences.DefaultFontFamily;
+        Preferences.FontFamily = family;
+
+        // The imported file only backs the family it resolved to: keeping it while
+        // another family is selected would load those bytes over the new face.
+        if (Preferences.CustomFontPath.Length > 0)
+        {
+            var imported = FontLibrary.FamilyName(
+                Preferences.CustomFontPath, Path.GetFileName(Preferences.CustomFontPath));
+            if (!string.Equals(imported, family, StringComparison.OrdinalIgnoreCase))
+            {
+                Preferences.CustomFontPath = string.Empty;
+            }
+        }
+
+        UpdateFontHint();
+        Commit();
+    }
+
+    /// <summary>
+    /// Pick a downloaded font file, copy it into DynaWall's own folder and apply it.
+    /// The copy is what keeps the wallpaper's typeface alive after the download is
+    /// cleaned out of the Downloads folder.
+    /// </summary>
+    private void AddFontFile()
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Title = "Add a font to DynaWall",
+            Filter = "Font files (*.ttf;*.otf;*.ttc;*.woff;*.woff2)|*.ttf;*.otf;*.ttc;*.woff;*.woff2" +
+                     "|All files (*.*)|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        var imported = FontLibrary.Import(dialog.FileName);
+        if (imported is null)
+        {
+            MessageBox.Show(
+                this,
+                $"{Path.GetFileName(dialog.FileName)} cannot be used as a wallpaper font.\n\n" +
+                "Pick a .ttf, .otf, .ttc, .woff or .woff2 file no larger than 4 MB.",
+                "DynaWall",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        Preferences.CustomFontPath = imported;
+        Preferences.FontFamily = FontLibrary.FamilyName(imported, Path.GetFileName(imported));
+
+        loading = true;
+        LoadFontChoices();
+        loading = false;
+
+        Commit();
+        Log.Write($"font {Path.GetFileName(imported)} imported as \"{Preferences.FontFamily}\"");
     }
 
     private void PickColor()

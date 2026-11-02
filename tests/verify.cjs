@@ -200,7 +200,9 @@ test('defaults win when every layer is empty', () => {
     slideshowShuffle: true,
     kenBurns: true,
     photoSync: true,
-    photos: []
+    photos: [],
+    fontFamily: 'Outfit',
+    customFont: ''
   });
 });
 
@@ -221,7 +223,9 @@ test('layers resolve independently per field', () => {
     slideshowShuffle: true,
     kenBurns: false,
     photoSync: true,
-    photos: []
+    photos: [],
+    fontFamily: 'Outfit',
+    customFont: ''
   });
 });
 
@@ -1114,10 +1118,11 @@ test('the preview card is set in the wallpaper’s Outfit face and band inks', (
   const swift = hostSwift();
   const preview = memberBody(swift, 'private var previewCard: some View');
 
-  // Same face, weight, tracking and ink as .greeting / .subtitle in style.css.
-  assert.match(preview, /WallpaperFont\.semibold\(size: 19\)/);
+  // Same face, weight, tracking and ink as .greeting / .subtitle in style.css —
+  // and the same family the page was told to use, so the card previews the choice.
+  assert.match(preview, /WallpaperFont\.semibold\(size: 19, family: preferences\.fontFamily\)/);
   assert.match(preview, /WallpaperFont\.tracking\(size: 19, em: -0\.03\)/);
-  assert.match(preview, /WallpaperFont\.regular\(size: 11\)/);
+  assert.match(preview, /WallpaperFont\.regular\(size: 11, family: preferences\.fontFamily\)/);
   assert.match(preview, /WallpaperFont\.tracking\(size: 11, em: 0\.012\)/);
   assert.match(preview, /previewTextPrimaryHex/);
   assert.match(preview, /previewTextSecondaryHex/);
@@ -1852,6 +1857,203 @@ test('the release workflow keeps installers downloadable', () => {
   ].forEach((link) => {
     assert.ok(readme.includes(link), `README must link ${link}`);
   });
+});
+
+/* -------------------------------------------------------------------------- *
+ * Font selection
+ * -------------------------------------------------------------------------- */
+
+group('Font selection');
+
+test('the font stack always ends on the vendored Outfit face', () => {
+  const declared = readText('style.css').match(/--font-sans:\s*([^;]+);/)[1].replace(/\s+/g, ' ');
+  // Outfit and an unset family are the same stack: the stylesheet's own value, so
+  // the shipped look never depends on script.js having run.
+  assert.equal(DynaWall.fontStack(''), declared, 'the script must reproduce --font-sans exactly');
+  assert.equal(DynaWall.fontStack('Outfit'), declared);
+  assert.ok(declared.startsWith('"Outfit"'), 'Outfit leads the fallback tail');
+  assert.ok(declared.endsWith('sans-serif'), 'a missing font still lands on a sans face');
+});
+
+test('a chosen family is prepended to that same tail', () => {
+  const tail = DynaWall.fontStack('');
+  assert.equal(DynaWall.fontStack('Charter'), `"Charter", ${tail}`);
+  assert.equal(DynaWall.fontStack('  New   York  '), `"New York", ${tail}`, 'whitespace is collapsed');
+  // A family the tail already lists still leads it: the runtime choice wins over
+  // the shipped fallback order, or picking Avenir Next would keep Outfit on screen.
+  assert.equal(DynaWall.fontStack('Avenir Next'), `"Avenir Next", ${tail}`);
+  // "SF Pro" is the platform UI face rather than an installed family.
+  assert.equal(DynaWall.fontStack('SF Pro'), DynaWall.fontStack('sf pro'));
+  assert.match(DynaWall.fontStack('sf pro'), /^-apple-system/);
+});
+
+test('normalizeFontFamily drops what could break out of a CSS family name', () => {
+  assert.equal(DynaWall.normalizeFontFamily('  Inter   Display '), 'Inter Display');
+  const hostile = DynaWall.normalizeFontFamily('Inter"; } body { x:"');
+  assert.equal(hostile, 'Inter body x:');
+  assert.ok(!/["'\\;{}<>]/.test(hostile), 'no quote, brace or semicolon survives');
+  assert.equal(DynaWall.normalizeFontFamily('Noto\tSans\u0000JP'), 'Noto Sans JP');
+});
+
+test('an empty or absurd family means "use Outfit"', () => {
+  assert.equal(DynaWall.normalizeFontFamily(''), undefined);
+  assert.equal(DynaWall.normalizeFontFamily('   '), undefined);
+  assert.equal(DynaWall.normalizeFontFamily('""'), undefined);
+  assert.equal(DynaWall.normalizeFontFamily('x'.repeat(80)), 'x'.repeat(80));
+  assert.equal(DynaWall.normalizeFontFamily('x'.repeat(81)), undefined);
+  assert.equal(DynaWall.normalizeFontFamily(42), undefined);
+  assert.equal(DynaWall.normalizeFontFamily(null), undefined);
+});
+
+test('an imported font file is accepted, a network fetch never is', () => {
+  const face = 'data:font/woff2;base64,d09GMgABAAAA';
+  assert.equal(DynaWall.normalizeCustomFont(face), face);
+  assert.equal(DynaWall.normalizeCustomFont(`  ${face}  `), face, 'outer whitespace is trimmed');
+  assert.equal(
+    DynaWall.normalizeCustomFont('data:application/octet-stream;base64,AAAA'),
+    'data:application/octet-stream;base64,AAAA'
+  );
+  // A face the host copied next to the page may be addressed relatively.
+  assert.equal(DynaWall.normalizeCustomFont('assets/fonts/inter.woff2'), 'assets/fonts/inter.woff2');
+  [
+    'https://fonts.example/inter.woff2',
+    'file:///Users/me/Inter.ttf',
+    'javascript:alert(1)',
+    '//fonts.example/inter.woff2',
+    'data:text/html;base64,PHNjcmlwdD4='
+  ].forEach((value) => {
+    assert.equal(DynaWall.normalizeCustomFont(value), undefined, `${value} must be rejected`);
+  });
+  // An empty string is a real value: it removes the face that was loaded before.
+  assert.equal(DynaWall.normalizeCustomFont(''), '');
+});
+
+test('the hosts and the URL accept a font family', () => {
+  assert.deepEqual(DynaWall.mapLivelyProperty('fontFamily', ' Inter  Display '), {
+    field: 'fontFamily',
+    value: 'Inter Display'
+  });
+  assert.deepEqual(DynaWall.mapLivelyProperty('customFont', 'data:font/ttf;base64,AA'), {
+    field: 'customFont',
+    value: 'data:font/ttf;base64,AA'
+  });
+  assert.deepEqual(
+    DynaWall.mapWallpaperEngineProperties({
+      fontfamily: { value: 'Charter' },
+      customfont: { value: 'data:font/otf;base64,AA' }
+    }),
+    [
+      { field: 'fontFamily', value: 'Charter' },
+      { field: 'customFont', value: 'data:font/otf;base64,AA' }
+    ]
+  );
+  // Clearing the host's control is a reset, not a dropped event.
+  assert.deepEqual(DynaWall.mapLivelyProperty('fontFamily', ''), {
+    field: 'fontFamily',
+    value: DynaWall.DEFAULT_CONFIG.fontFamily
+  });
+  assert.deepEqual(DynaWall.parseQueryParams('?font=Inter&fonturl=assets/fonts/inter.woff2'), {
+    fontFamily: 'Inter',
+    customFont: 'assets/fonts/inter.woff2'
+  });
+  assert.equal(DynaWall.DEFAULT_CONFIG.fontFamily, 'Outfit');
+  assert.equal(DynaWall.DEFAULT_CONFIG.customFont, '');
+});
+
+test('only the family is cached, never the font bytes', () => {
+  const storage = fakeStorage();
+  DynaWall.persistConfig({ fontFamily: 'Charter', customFont: 'data:font/ttf;base64,AA' }, storage);
+  assert.equal(storage.data.get('dynawall.fontFamily'), 'Charter');
+  assert.equal(storage.data.size, 1, 'customFont must not be written to localStorage');
+  assert.deepEqual(DynaWall.readStoredConfig(fakeStorage({ 'dynawall.fontFamily': 'Charter' })), {
+    fontFamily: 'Charter'
+  });
+  // A poisoned cache entry is dropped rather than injected.
+  assert.deepEqual(DynaWall.readStoredConfig(fakeStorage({ 'dynawall.fontFamily': '   ' })), {});
+});
+
+test('the host seed carries the family and the bytes, live IPC still wins', () => {
+  assert.deepEqual(
+    DynaWall.readSeed({
+      __dynawallSeed: { fontFamily: ' Charter ', customFont: 'data:font/ttf;base64,AA' }
+    }),
+    { fontFamily: 'Charter', customFont: 'data:font/ttf;base64,AA' }
+  );
+
+  const seeded = DynaWall.resolveConfig({
+    ipc: {},
+    seed: { fontFamily: 'Charter' },
+    url: { fontFamily: 'Georgia' },
+    storage: {},
+    defaults: DynaWall.DEFAULT_CONFIG
+  });
+  assert.equal(seeded.fontFamily, 'Charter', 'the seed is the host, so it beats the URL');
+  assert.equal(seeded.customFont, '', 'no imported face unless the host sends one');
+});
+
+test('the render pass rewrites --font-sans from the chosen family', () => {
+  const source = readText('script.js');
+  assert.match(source, /function applyTypography\(\)/);
+  assert.match(source, /root\.style\.setProperty\('--font-sans', fontStack\(family\)\)/);
+  assert.match(source, /root\.style\.removeProperty\('--font-sans'\)/);
+  assert.match(source, /registerCustomFont\(family, source\)/);
+  assert.match(source, /new FontFaceCtor\(family, 'url\("' \+ source \+ '"\)'/);
+  const calls = source.match(/^\s*applyTypography\(\);/gm) || [];
+  assert.equal(calls.length, 1, 'render() is the only caller');
+});
+
+test('both host manifests expose the family with the Outfit default', () => {
+  assert.equal(livelyProperties.fontFamily.type, 'textbox');
+  assert.equal(livelyProperties.fontFamily.value, DynaWall.DEFAULT_FONT_FAMILY);
+  assert.equal(wallpaperProject.general.properties.fontfamily.type, 'textinput');
+  assert.equal(wallpaperProject.general.properties.fontfamily.value, DynaWall.DEFAULT_FONT_FAMILY);
+  assert.deepEqual(DynaWall.mapLivelyProperty('fontFamily', livelyProperties.fontFamily.value), {
+    field: 'fontFamily',
+    value: 'Outfit'
+  });
+  assert.deepEqual(
+    DynaWall.mapWallpaperEngineProperties({ fontfamily: wallpaperProject.general.properties.fontfamily }),
+    [{ field: 'fontFamily', value: 'Outfit' }]
+  );
+});
+
+test('both native hosts ship the same font pipeline', () => {
+  const swift = hostSwift();
+  assert.match(swift, /static let defaultFamily = "Outfit"/);
+  assert.match(swift, /static func normalizedFamily\(_ raw: String\) -> String/);
+  assert.match(swift, /static func installedFamilies\(\) -> \[String\]/);
+  assert.match(swift, /static let maxImportedBytes = 4 \* 1024 \* 1024/);
+  assert.match(swift, /static func dataURL\(atPath path: String\) -> String\?/);
+  // The multi-megabyte payload rides its own push, and only when it changed.
+  assert.match(swift, /static func javaScriptFontUpdate\(_ source: String\) -> String/);
+  assert.match(swift, /entry\.pushedFont != fontSource/);
+  // The popover offers the presets, Font Book and a file picker.
+  assert.match(swift, /private var typographyCard: some View/);
+  assert.match(swift, /WallpaperFont\.installedFamilies\(\)/);
+  assert.match(swift, /panel\.allowedContentTypes = WallpaperFont\.supportedExtensions/);
+
+  const preferences = readText('windows/Preferences.cs');
+  assert.match(preferences, /internal const string DefaultFontFamily = "Outfit"/);
+  assert.match(preferences, /public string FontFamily \{ get; set; \} = DefaultFontFamily/);
+  assert.match(preferences, /internal static string BuildFontScript\(string source\)/);
+  assert.match(
+    preferences,
+    /\[JsonIgnore\]\s*internal string CustomFontSource => FontLibrary\.DataUrl\(CustomFontPath\)/,
+    'the font bytes must never be persisted'
+  );
+
+  const library = readText('windows/FontLibrary.cs');
+  assert.match(library, /internal const int MaxImportedBytes = 4 \* 1024 \* 1024/);
+  assert.match(library, /"\.ttf", "\.otf", "\.ttc", "\.woff", "\.woff2"/);
+  assert.match(library, /internal static string\? Import\(string\? sourcePath\)/);
+
+  const window = readText('windows/WallpaperWindow.cs');
+  assert.match(window, /internal async Task PushFontAsync\(\)/);
+  assert.match(window, /string\.Equals\(source, pushedFontSource, StringComparison\.Ordinal\)/);
+
+  const form = readText('windows/SettingsForm.cs');
+  assert.match(form, /AddCard\(root, "Typography"/);
+  assert.match(form, /FontLibrary\.InstalledFamilies\(\)/);
 });
 
 /* -------------------------------------------------------------------------- *

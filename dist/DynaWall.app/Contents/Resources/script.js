@@ -25,6 +25,14 @@
  * (the macOS app) hands the page its resolved list on every load and the page
  * falls back to the photos bundled in `images/` when no host speaks up.
  *
+ * Typography: the greeting and subtitle are set in the bundled Outfit face
+ * (`@font-face` in style.css) unless a host, the URL ('?font=Charter') or the
+ * cache names another family. A family installed on the machine is used as-is;
+ * an imported font file travels from the native host as a `data:` URL and is
+ * registered with `document.fonts`, so no download and no network are involved.
+ * Every stack keeps Outfit behind the chosen family, so a font that disappears
+ * falls back to the shipped look instead of a blank greeting.
+ *
  * Time-synced photos: with `photoSync` on (the default) the slideshow only
  * rotates through photos whose filename names the band active right now —
  * dawn/day/dusk/night, or the palette pinned in the host — so the picture on the
@@ -70,7 +78,13 @@
     // Only show photos whose filename matches the active time-of-day band.
     photoSync: true,
     // Sources injected by the macOS host (absolute scheme URLs); empty = bundled set.
-    photos: []
+    photos: [],
+    // Typography. `Outfit` is vendored with the wallpaper (see style.css), so the
+    // default never depends on what the machine happens to have installed. Any
+    // family installed in macOS Font Book / Windows Fonts replaces it, and
+    // `customFont` carries an imported font file the host read from disk.
+    fontFamily: 'Outfit',
+    customFont: ''
   });
 
   const STORAGE_KEYS = Object.freeze({
@@ -82,8 +96,10 @@
     slideshowInterval: 'dynawall.slideshowInterval',
     slideshowShuffle: 'dynawall.slideshowShuffle',
     kenBurns: 'dynawall.kenBurns',
-    photoSync: 'dynawall.photoSync'
-    // `photos` is deliberately not cached: the host re-sends it on every load.
+    photoSync: 'dynawall.photoSync',
+    fontFamily: 'dynawall.fontFamily'
+    // `photos` and `customFont` are deliberately not cached: the host re-sends them
+    // on every load (the font file as a data URL read from the imported copy).
   });
 
   /**
@@ -129,6 +145,39 @@
   const THEME_MODES = Object.freeze(['auto', 'dawn', 'day', 'dusk', 'night', 'custom']);
   /** The clock-driven bands, in the order a day passes through them. */
   const THEMES = Object.freeze(['dawn', 'day', 'dusk', 'night']);
+
+  /* ----------------------------------------------------------------------- *
+   * Typography
+   * ------------------------------------------------------------------------ */
+
+  /** The face vendored in assets/fonts; every font stack falls back to it. */
+  const DEFAULT_FONT_FAMILY = 'Outfit';
+
+  /**
+   * The tail of every font stack: the vendored Outfit face, then the geometric
+   * faces macOS and Windows ship, then the system UI face.
+   *
+   * A chosen family is prepended (`"Charter", <tail>`), so a font that was
+   * uninstalled, renamed or deleted can never leave the greeting blank — it lands
+   * back on the bundled Outfit, which needs no install and no network.
+   */
+  const FONT_STACK_TAIL =
+    '"Outfit", "Avenir Next", "Century Gothic", "Futura", -apple-system, ' +
+    'BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+
+  /**
+   * The "SF Pro" preset is the macOS system face rather than a family anyone
+   * installs, so its stack asks the platform for the UI font by name instead of
+   * quoting a family that may not exist.
+   */
+  const SYSTEM_SANS_STACK =
+    '-apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, ' +
+    '"Helvetica Neue", Arial, sans-serif';
+
+  /** A family longer than this is a paste accident, not a font name. */
+  const MAX_FONT_FAMILY_LENGTH = 80;
+  /** An imported font travels as base64; one wallpaper must stay well under 10 MB. */
+  const MAX_FONT_SOURCE_LENGTH = 6 * 1024 * 1024;
   /**
    * Background colour per band. Mirrors the `--bg-primary` token of each
    * `[data-theme]` block in style.css and `ThemeSlot.hex` in the macOS host.
@@ -372,6 +421,84 @@
   }
 
   /**
+   * A font family name, safe to interpolate into a `font-family` declaration.
+   *
+   * The family is always quoted when the stack is built, so spaces and CJK names
+   * are fine; quotes, backslashes, braces and semicolons are dropped because they
+   * are the only characters that could break out of that quote and rewrite the
+   * rest of the stylesheet. An empty value means "this source said nothing", which
+   * lets a live empty control reset the family to Outfit (see
+   * `resolveIpcFieldValue`).
+   */
+  function normalizeFontFamily(value) {
+    if (typeof value !== 'string') return undefined;
+    const cleaned = value
+      .replace(/[\u0000-\u001f\u007f]/g, ' ') // control characters
+      .replace(/["'\\;{}<>]/g, '') // style injection / declaration breakers
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!cleaned) return undefined;
+    if (cleaned.length > MAX_FONT_FAMILY_LENGTH) return undefined;
+    return cleaned;
+  }
+
+  /**
+   * An imported font file the host read from disk.
+   *
+   * Only `data:` URLs carrying a font (or a generic binary) payload and plain
+   * relative paths are accepted: the wallpaper must never fetch anything from the
+   * network, and `javascript:`/`file:` URLs are not fonts. An empty string is a
+   * real value — it removes the previously loaded face.
+   */
+  function normalizeCustomFont(value) {
+    if (typeof value !== 'string') return undefined;
+    const source = value.trim();
+    if (!source) return '';
+    if (source.length > MAX_FONT_SOURCE_LENGTH) return undefined;
+    if (/[\s"'\\]/.test(source)) return undefined; // data URLs and paths are one token
+    if (/^javascript:/i.test(source)) return undefined;
+
+    if (/^data:/i.test(source)) {
+      const header = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+)((?:;[a-z0-9=.+-]+)*);base64,/i.exec(source);
+      if (!header) return undefined;
+      const mime = header[1].toLowerCase();
+      const isFont =
+        mime.indexOf('font/') === 0 ||
+        mime.indexOf('application/font-') === 0 ||
+        mime.indexOf('application/x-font') === 0 ||
+        mime === 'application/octet-stream';
+      return isFont ? source : undefined;
+    }
+
+    // Anything with a scheme (http:, file:, blob:, //host) would leave the
+    // wallpaper's own folder; a relative path is the only other sane source.
+    if (/^[a-z][a-z0-9+.-]*:/i.test(source) || source.indexOf('//') === 0) return undefined;
+    return source;
+  }
+
+  /**
+   * The full `font-family` value for a configured family.
+   *
+   * Outfit (and an empty setting) resolves to the exact stack style.css declares,
+   * so the shipped look is byte-identical whether or not the runtime rewrites the
+   * token. A named family is quoted ahead of that same tail — including one the
+   * tail already lists (Avenir Next, Segoe UI), because the family the user picked
+   * has to win over the shipped fallback order.
+   */
+  function fontStack(family) {
+    const name = typeof family === 'string' ? family.trim() : '';
+    const key = name.toLowerCase();
+    if (!name || key === DEFAULT_FONT_FAMILY.toLowerCase()) {
+      return FONT_STACK_TAIL;
+    }
+    if (key === 'sf pro' || key === 'system sans' || key === 'system-ui') {
+      return SYSTEM_SANS_STACK;
+    }
+    const safe = name.replace(/["'\\;{}<>]/g, '').replace(/\s+/g, ' ').trim();
+    return safe ? `"${safe}", ${FONT_STACK_TAIL}` : FONT_STACK_TAIL;
+  }
+
+  /**
    * Photo sources: an array (macOS host), a JSON array string, or a comma
    * separated list (handy in the URL). Blank entries, anything containing
    * whitespace and `javascript:` URLs are dropped; duplicates are collapsed.
@@ -581,6 +708,10 @@
         return normalizeSlideshowInterval(rawValue);
       case 'photos':
         return normalizePhotos(rawValue);
+      case 'fontFamily':
+        return normalizeFontFamily(rawValue);
+      case 'customFont':
+        return normalizeCustomFont(rawValue);
       default:
         return undefined;
     }
@@ -596,12 +727,14 @@
    * last letter stuck on the desktop — and in `localStorage`, so it survived a
    * reload. An explicit empty string therefore resets the name to
    * `DEFAULT_CONFIG.firstName`; anything that is not a string is still ignored.
+   * The typography field follows the same rule: clearing the Lively textbox puts
+   * the greeting back in Outfit instead of keeping the last family.
    */
   function resolveIpcFieldValue(field, rawValue) {
     const value = normalizeFieldValue(field, rawValue);
     if (value !== undefined) return value;
-    if (field === 'firstName' && typeof rawValue === 'string') {
-      return DEFAULT_CONFIG.firstName;
+    if ((field === 'firstName' || field === 'fontFamily') && typeof rawValue === 'string') {
+      return DEFAULT_CONFIG[field];
     }
     return undefined;
   }
@@ -631,7 +764,11 @@
     kenburns: 'kenBurns',
     photosync: 'photoSync',
     timesync: 'photoSync',
-    dynamicphotos: 'photoSync'
+    dynamicphotos: 'photoSync',
+    font: 'fontFamily',
+    fontfamily: 'fontFamily',
+    fonturl: 'customFont',
+    customfont: 'customFont'
   });
 
   const LIVELY_FIELDS = Object.freeze({
@@ -645,6 +782,10 @@
     kenBurns: 'kenBurns',
     // Time-of-day photo bands; the macOS host's "Match time of day" toggle.
     photoSync: 'photoSync',
+    // Typography: an installed family name and, when the user imported a font
+    // file, the `data:` URL of those bytes (sent by the native hosts).
+    fontFamily: 'fontFamily',
+    customFont: 'customFont',
     // The macOS host reuses this key to hand the page its resolved photo list.
     photos: 'photos'
   });
@@ -658,7 +799,9 @@
     slideshowinterval: 'slideshowInterval',
     slideshowshuffle: 'slideshowShuffle',
     kenburns: 'kenBurns',
-    photosync: 'photoSync'
+    photosync: 'photoSync',
+    fontfamily: 'fontFamily',
+    customfont: 'customFont'
   });
 
   function ownLookup(map, key) {
@@ -853,7 +996,11 @@
       photoTimer: 0,
       photoFailures: 0,
       photoToken: 0,
-      photoSignature: ''
+      photoSignature: '',
+      // The imported face currently registered with the document, and the exact
+      // source it was built from (so an unchanged push is not decoded again).
+      customFontFace: null,
+      customFontSource: ''
     };
 
     function prefersReducedMotion() {
@@ -904,6 +1051,76 @@
     function applySubtitle() {
       if (elements.subtitle.textContent !== state.config.subtitle) {
         elements.subtitle.textContent = state.config.subtitle;
+      }
+    }
+
+    /**
+     * Point the greeting and subtitle at the chosen typeface.
+     *
+     * The token lives on <html>, so one property covers both rules and the
+     * mini-preview-free hosts (Lively, Wallpaper Engine, a browser) need no
+     * extra markup. Outfit is left to style.css: the stylesheet already declares
+     * the exact same stack, so the shipped look never depends on script.js.
+     *
+     * An imported font file arrives from the host as a `data:` URL (the native
+     * apps copy the user's file into Application Support / LocalAppData and read
+     * it back); registering it with `document.fonts` puts it in the CSS font
+     * matching set under the family name the host resolved, which is why the
+     * family — not the URL — is what `--font-sans` names.
+     */
+    function applyTypography() {
+      const root = doc.documentElement;
+      const family =
+        typeof state.config.fontFamily === 'string' && state.config.fontFamily
+          ? state.config.fontFamily
+          : DEFAULT_FONT_FAMILY;
+      const source = state.config.customFont || '';
+
+      if (family.toLowerCase() === DEFAULT_FONT_FAMILY.toLowerCase() && !source) {
+        root.style.removeProperty('--font-sans');
+      } else {
+        root.style.setProperty('--font-sans', fontStack(family));
+      }
+
+      registerCustomFont(family, source);
+    }
+
+    /** Load (or replace) the imported face behind `family`. */
+    function registerCustomFont(family, source) {
+      if (source === state.customFontSource) return;
+      state.customFontSource = source;
+
+      const fonts = doc.fonts;
+      if (state.customFontFace && fonts && typeof fonts.delete === 'function') {
+        try {
+          fonts.delete(state.customFontFace);
+        } catch (error) {
+          /* A face that never finished loading cannot be removed; harmless. */
+        }
+      }
+      state.customFontFace = null;
+      if (!source) return;
+
+      const FontFaceCtor = win.FontFace || (typeof FontFace !== 'undefined' ? FontFace : null);
+      if (!FontFaceCtor || !fonts || typeof fonts.add !== 'function') return;
+
+      try {
+        const face = new FontFaceCtor(family, 'url("' + source + '")', {
+          weight: '100 900',
+          style: 'normal',
+          display: 'swap'
+        });
+        fonts.add(face);
+        state.customFontFace = face;
+        if (typeof face.load === 'function') {
+          // A file that will not decode leaves the stack on Outfit rather than
+          // blanking the greeting; the status is only useful to diagnostics.
+          face.load().catch(function () {
+            state.customFontFace = null;
+          });
+        }
+      } catch (error) {
+        state.customFontFace = null;
       }
     }
 
@@ -1261,6 +1478,7 @@
     function render(options) {
       const animate = !options || options.animate !== false;
       applyTheme();
+      applyTypography();
       applySubtitle();
       applySlideshow();
       state.period = getGreetingPeriod(new Date());
@@ -1505,6 +1723,10 @@
     normalizeColor: normalizeColor,
     normalizeTheme: normalizeTheme,
     normalizeSlideshowInterval: normalizeSlideshowInterval,
+    DEFAULT_FONT_FAMILY: DEFAULT_FONT_FAMILY,
+    normalizeFontFamily: normalizeFontFamily,
+    normalizeCustomFont: normalizeCustomFont,
+    fontStack: fontStack,
     photoBasename: photoBasename,
     classifyPhotos: classifyPhotos,
     getPhotosForSlot: getPhotosForSlot,

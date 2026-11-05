@@ -760,7 +760,7 @@ test('the automatic tick stays in the active band; Next may leave it', () => {
 });
 
 test('the macOS host mirrors the curated collections and the photo actions', () => {
-  const swift = fs.readFileSync(path.join(ROOT, 'macos', 'DynaWallApp.swift'), 'utf8');
+  const swift = hostSwift();
   // Every curated picture is spelled out in the host, so bundled mode never sweeps
   // the 4K/5K/HEIC duplicates sitting in the same folder.
   DynaWall.BUNDLED_PHOTOS.forEach((photo) => {
@@ -967,7 +967,7 @@ test('the photo stack fades with the palette instead of snapping it', () => {
 });
 
 test('the macOS host mirrors the same bands, colours, inks and hours', () => {
-  const swift = fs.readFileSync(path.join(ROOT, 'macos', 'DynaWallApp.swift'), 'utf8');
+  const swift = hostSwift();
   const primary = memberBody(swift, 'var textPrimaryHex: String');
   const secondary = memberBody(swift, 'var textSecondaryHex: String');
   DynaWall.THEMES.forEach((theme) => {
@@ -1003,7 +1003,7 @@ group('Menu bar popover');
 
 /** The native host source. */
 function hostSwift() {
-  return fs.readFileSync(path.join(ROOT, 'macos', 'DynaWallApp.swift'), 'utf8');
+  return readText('macos/DynaWallApp.swift');
 }
 
 /** Source of a member, from its signature to the first 4-space closing brace. */
@@ -2009,7 +2009,7 @@ test('a seed is normalised exactly like an IPC value', () => {
 });
 
 test('the macOS host seeds the page, suspends it and keeps its own clock', () => {
-  const swift = fs.readFileSync(path.join(ROOT, 'macos', 'DynaWallApp.swift'), 'utf8');
+  const swift = hostSwift();
   // First paint is the user's wallpaper: the seed is injected before parsing.
   assert.match(swift, /injectionTime: \.atDocumentStart/);
   assert.match(swift, /func javaScriptSeed\(photoURLs: \[String\]\) -> String/);
@@ -3213,7 +3213,7 @@ test('every host owns the Desktop widgets switch', () => {
   assert.equal(project.general.properties.widgets.type, 'bool');
   assert.equal(project.general.properties.widgets.value, DynaWall.DEFAULT_CONFIG.widgets);
 
-  const swift = fs.readFileSync(path.join(ROOT, 'macos/DynaWallApp.swift'), 'utf8');
+  const swift = hostSwift();
   assert.match(swift, /@Published var widgets: Bool/, 'the popover needs a stored setting');
   assert.match(swift, /static let widgets = "desktopWidgets"/, 'and a UserDefaults key');
   assert.match(
@@ -3241,9 +3241,9 @@ test('every host owns the Desktop widgets switch', () => {
 test('every host owns a switch for each satellite', () => {
   const lively = readJson('LivelyProperties.json');
   const project = readJson('project.json');
-  const swift = fs.readFileSync(path.join(ROOT, 'macos/DynaWallApp.swift'), 'utf8');
-  const prefs = fs.readFileSync(path.join(ROOT, 'windows/Preferences.cs'), 'utf8');
-  const form = fs.readFileSync(path.join(ROOT, 'windows/SettingsForm.cs'), 'utf8');
+  const swift = hostSwift();
+  const prefs = readText('windows/Preferences.cs');
+  const form = readText('windows/SettingsForm.cs');
 
   // One switch per satellite, named off the same catalogue the page uses, in all four
   // hosts: Lively's checkbox, Wallpaper Engine's bool, the popover's Toggle and the
@@ -3595,10 +3595,10 @@ test('both search fields answer a replayed click, not only a form submit', () =>
 });
 
 test('the Windows host forwards desktop clicks into a card without taking any', () => {
-  const clicks = fs.readFileSync(path.join(ROOT, 'windows/DesktopClicks.cs'), 'utf8');
-  const host = fs.readFileSync(path.join(ROOT, 'windows/DesktopHost.cs'), 'utf8');
-  const window = fs.readFileSync(path.join(ROOT, 'windows/WallpaperWindow.cs'), 'utf8');
-  const controller = fs.readFileSync(path.join(ROOT, 'windows/WallpaperController.cs'), 'utf8');
+  const clicks = readText('windows/DesktopClicks.cs');
+  const host = readText('windows/DesktopHost.cs');
+  const window = readText('windows/WallpaperWindow.cs');
+  const controller = readText('windows/WallpaperController.cs');
 
   // A low-level watch that never consumes: every click is passed straight on, so the
   // desktop keeps drag-select, right-click, icons and the context menu.

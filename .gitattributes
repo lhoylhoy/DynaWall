@@ -1,0 +1,13 @@
+# Enforce LF endings across all platforms (prevents Windows CI CRLF checkout issues)
+* text=auto eol=lf
+
+# Binary assets
+*.png binary
+*.ico binary
+*.icns binary
+*.jpg binary
+*.jpeg binary
+*.woff2 binary
+*.ttf binary
+*.heic binary
+

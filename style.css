@@ -625,6 +625,31 @@ html.is-widgets-off .widget-orbit {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* Satellite footprints — S, M and L.
+ *
+ * The click tally in `localStorage` ranks the glyphs against each other
+ * (`computeWidgetSizes()` in script.js), and these are the sizes that ranking wears: the
+ * app the user actually opens grows, the one that is never touched shrinks, and the
+ * baseline everyone starts at is M. Both spellings are honoured — the class the
+ * controller sets and the attribute a host script can set on its own — and neither
+ * draws anything: the glyph is still the whole button, only bigger. The monogram scales
+ * with `--widget-size` and the vector strokes stay `non-scaling-stroke`, so a large
+ * satellite is a larger mark rather than a thicker one. */
+.widget-btn.is-size-s,
+.widget-btn[data-size="s"] {
+  --widget-size: clamp(1.8rem, 2.2vw, 2.4rem);
+}
+
+.widget-btn.is-size-m,
+.widget-btn[data-size="m"] {
+  --widget-size: clamp(2.4rem, 2.9vw, 3.2rem);
+}
+
+.widget-btn.is-size-l,
+.widget-btn[data-size="l"] {
+  --widget-size: clamp(3rem, 3.6vw, 4rem);
+}
+
 .widget-icon {
   /* The glyph fills the button now that there is no circle behind it. Stroked, not
      filled: one hairline weight reads as an icon at any size, and `non-scaling-stroke`

@@ -4114,6 +4114,372 @@ test('a shortcut opens the browser, a built-in opens its card', () => {
 });
 
 /* -------------------------------------------------------------------------- *
+ * Widget footprints — S, M and L, earned by opening the glyphs
+ * -------------------------------------------------------------------------- */
+
+group('Widget footprints');
+
+test('the orbit wears three footprints, and a larger glyph is not a heavier one', () => {
+  // Comments are stripped first: a `,` inside one would otherwise split a selector list.
+  const css = readText('style.css').replace(/\/\*[\s\S]*?\*\//g, '');
+
+  /** The declarations of the first rule whose selector list mentions `selector`. */
+  const declarationsFor = (selector) => {
+    const rule = /([^{}]+)\{([^{}]*)\}/g;
+    let match = rule.exec(css);
+    while (match) {
+      const selectors = match[1].split(',').map((part) => part.trim());
+      if (selectors.indexOf(selector) !== -1) return match[2];
+      match = rule.exec(css);
+    }
+    return '';
+  };
+
+  /** The `clamp()` stops a tier declares, as numbers in rem. */
+  const footprintOf = (selector) => {
+    const match = /--widget-size:\s*clamp\(([^)]+)\)/.exec(declarationsFor(selector));
+    assert.ok(match, `${selector} declares no --widget-size`);
+    return match[1].split(',').map((value) => parseFloat(value));
+  };
+
+  const small = footprintOf('.widget-btn.is-size-s');
+  const medium = footprintOf('.widget-btn.is-size-m');
+  const large = footprintOf('.widget-btn.is-size-l');
+  assert.deepEqual(small, [1.8, 2.2, 2.4], 'S: the app that is barely opened');
+  assert.deepEqual(medium, [2.4, 2.9, 3.2], 'M: the baseline every glyph starts at');
+  assert.deepEqual(large, [3, 3.6, 4], 'L: the app the user lives in');
+
+  // The hierarchy reads at any viewport width, so every stop of every clamp is ordered.
+  for (let stop = 0; stop < 3; stop += 1) {
+    assert.ok(
+      small[stop] < medium[stop] && medium[stop] < large[stop],
+      `the footprints are not ordered at stop ${stop}`
+    );
+  }
+  // The attribute is the spelling a host script can set without touching classes.
+  assert.equal(
+    declarationsFor('.widget-btn[data-size="s"]'),
+    declarationsFor('.widget-btn.is-size-s'),
+    'the class and the attribute say the same thing'
+  );
+  assert.equal(
+    declarationsFor('.widget-btn[data-size="l"]'),
+    declarationsFor('.widget-btn.is-size-l')
+  );
+
+  // A footprint is a size and nothing else: no plate, no ring, no border-radius, no
+  // background. The glyph stays the whole button, only bigger.
+  [
+    '.widget-btn.is-size-s',
+    '.widget-btn[data-size="s"]',
+    '.widget-btn.is-size-m',
+    '.widget-btn[data-size="m"]',
+    '.widget-btn.is-size-l',
+    '.widget-btn[data-size="l"]'
+  ].forEach((selector) => {
+    const rest = declarationsFor(selector)
+      .replace(/--widget-size:[^;]+;?/, '')
+      .trim();
+    assert.equal(rest, '', `${selector} draws more than a footprint`);
+  });
+
+  // The baseline `:root` token and the M tier agree, so an untouched orbit and a ranked
+  // one never disagree about what "medium" means; the marks scale with the footprint
+  // without the strokes thickening with it.
+  assert.match(
+    css,
+    /:root\s*\{[^}]*--widget-size:\s*clamp\(2\.4rem, 2\.9vw, 3\.2rem\)/,
+    'M is the baseline the page starts at'
+  );
+  assert.match(css, /\.widget-monogram\s*\{[^}]*font-size:\s*calc\(var\(--widget-size\)/);
+  assert.match(
+    css,
+    /\.widget-icon\s*\{[^}]*vector-effect:\s*non-scaling-stroke/,
+    'a big glyph is not a thick one'
+  );
+});
+
+test('an open is counted, and the tally survives a reload in localStorage', () => {
+  const storage = fakeStorage();
+  assert.equal(DynaWall.WIDGET_USAGE_KEY, 'dynawall.widgetUsage');
+  assert.equal(
+    DynaWall.STORAGE_KEYS.widgetUsage,
+    undefined,
+    'a tally is earned on the wallpaper, not pushed by a host control'
+  );
+  assert.deepEqual(DynaWall.readWidgetUsage(storage), {}, 'nothing opened, nothing ranked');
+
+  assert.deepEqual(DynaWall.recordWidgetUsage(storage, 'music'), { music: 1 });
+  assert.deepEqual(DynaWall.recordWidgetUsage(storage, 'music'), { music: 2 }, 'every open counts');
+  assert.deepEqual(DynaWall.recordWidgetUsage(storage, 'news'), { music: 2, news: 1 });
+  assert.deepEqual(DynaWall.readWidgetUsage(storage), { music: 2, news: 1 }, 'it round-trips');
+  assert.deepEqual(JSON.parse(storage.getItem(DynaWall.WIDGET_USAGE_KEY)), { music: 2, news: 1 });
+
+  // One machine's tally is one machine's: a second store starts empty.
+  assert.deepEqual(DynaWall.readWidgetUsage(fakeStorage()), {});
+
+  assert.equal(DynaWall.writeWidgetUsage(storage, { youtube: 4 }), true);
+  assert.deepEqual(DynaWall.readWidgetUsage(storage), { youtube: 4 }, 'a tally can be replaced');
+  assert.equal(DynaWall.clearWidgetUsage(storage), true);
+  assert.deepEqual(DynaWall.readWidgetUsage(storage), {}, 'and forgotten, which resets the orbit to M');
+  assert.deepEqual(
+    DynaWall.recordWidgetUsage(storage, ''),
+    {},
+    'no id, no count: the `+` is a control, not an app'
+  );
+
+  // Anything hand-edited, truncated or foreign is simply no tally — the orbit stays at
+  // its baseline instead of throwing on load.
+  ['{oops', 'null', '[]', '""', '"text"', '{"music":{"count":2}}'].forEach((raw) => {
+    assert.deepEqual(
+      DynaWall.readWidgetUsage(fakeStorage({ 'dynawall.widgetUsage': raw })),
+      {},
+      `${raw} is not a tally`
+    );
+  });
+  assert.deepEqual(
+    DynaWall.readWidgetUsage(
+      fakeStorage({
+        'dynawall.widgetUsage': '{"music":-2,"news":"3","":7,"weather":2.9,"youtube":"x"}'
+      })
+    ),
+    { news: 3, weather: 2 },
+    'only whole, positive counts under a real id survive'
+  );
+
+  // A cache that is blocked or absent is not a broken wallpaper: the page still counts
+  // what it opened this session, it just cannot keep it.
+  const blocked = {
+    getItem() {
+      throw new Error('denied');
+    },
+    setItem() {
+      throw new Error('denied');
+    }
+  };
+  assert.deepEqual(DynaWall.readWidgetUsage(blocked), {});
+  assert.equal(DynaWall.writeWidgetUsage(blocked, { music: 1 }), false);
+  assert.equal(DynaWall.clearWidgetUsage(blocked), false);
+  assert.deepEqual(DynaWall.recordWidgetUsage(blocked, 'music'), { music: 1 });
+  assert.deepEqual(DynaWall.readWidgetUsage(null), {});
+  assert.equal(DynaWall.writeWidgetUsage(null, { music: 1 }), false);
+  assert.deepEqual(DynaWall.recordWidgetUsage(null, 'music'), { music: 1 });
+});
+
+test('usage ranks the glyphs into S, M and L, and never splits a tie', () => {
+  const orbit = ['music', 'news', 'youtube', 'weather'];
+  assert.deepEqual(DynaWall.WIDGET_SIZE_TIERS, ['s', 'm', 'l'], 'three footprints, smallest first');
+
+  // A fresh install: nothing has been opened, so nothing is ranked and every glyph is
+  // the baseline. Equal counts are never split into an arbitrary hierarchy.
+  assert.deepEqual(DynaWall.computeWidgetSizes(orbit, {}), ['m', 'm', 'm', 'm']);
+  assert.deepEqual(DynaWall.computeWidgetSizes(orbit, null), ['m', 'm', 'm', 'm']);
+  assert.deepEqual(
+    DynaWall.computeWidgetSizes(orbit, { music: 6, news: 6, youtube: 6, weather: 6 }),
+    ['m', 'm', 'm', 'm'],
+    'however often they were all opened'
+  );
+
+  // One app the user lives in grows; the untouched ones shrink. There is no middle rung
+  // to sit in when only two counts exist, so the orbit is S and L.
+  assert.deepEqual(DynaWall.computeWidgetSizes(orbit, { music: 4 }), ['l', 's', 's', 's']);
+  assert.deepEqual(DynaWall.computeWidgetSizes(['music', 'news'], { news: 2 }), ['s', 'l']);
+  // A tied pair is a pair: the same count is always the same footprint.
+  assert.deepEqual(DynaWall.computeWidgetSizes(orbit, { music: 2, news: 2 }), ['l', 'l', 's', 's']);
+  // Three rungs, three tiers.
+  assert.deepEqual(DynaWall.computeWidgetSizes(['a', 'b', 'c'], { a: 0, b: 1, c: 2 }), [
+    's',
+    'm',
+    'l'
+  ]);
+  // A wider hand keeps the ends at the ends and the middle in the middle.
+  assert.deepEqual(
+    DynaWall.computeWidgetSizes(['a', 'b', 'c', 'd', 'e', 'f'], {
+      a: 0,
+      b: 0,
+      c: 5,
+      d: 6,
+      e: 9,
+      f: 12
+    }),
+    ['s', 's', 'm', 'm', 'l', 'l']
+  );
+
+  // Only the glyphs on the desktop are ranked: the tally of a satellite that was
+  // switched off must not drag the hierarchy around.
+  assert.deepEqual(
+    DynaWall.computeWidgetSizes(['news', 'youtube'], { music: 50, news: 1, youtube: 3 }),
+    ['s', 'l']
+  );
+  // An id the page has never counted is an app nobody opened.
+  assert.deepEqual(DynaWall.computeWidgetSizes(['ghost', 'news'], { news: 3 }), ['s', 'l']);
+  assert.deepEqual(DynaWall.computeWidgetSizes(['a'], {}), ['m'], 'one glyph has nothing to compare');
+  assert.deepEqual(DynaWall.computeWidgetSizes([], {}), []);
+  assert.deepEqual(DynaWall.computeWidgetSizes(null, null), []);
+
+  // Every answer is one of the three footprints, whatever the counts look like.
+  DynaWall.computeWidgetSizes(['a', 'b', 'c', 'd'], { a: 1, b: 7, c: 3, d: 7 }).forEach((tier) => {
+    assert.ok(DynaWall.WIDGET_SIZE_TIERS.indexOf(tier) !== -1, `${tier} is not a footprint`);
+  });
+});
+
+test('a hand of mixed footprints stays balanced, clear and repeatable', () => {
+  const sizes = [33, 44, 55, 44];
+  const largest = Math.max.apply(null, sizes);
+  const greeting = { x: 510, y: 470, width: 900, height: 96 };
+  const subtitle = { x: 810, y: 600, width: 300, height: 28 };
+  const block = { left: 510, top: 470, right: 1410, bottom: 628 };
+  const centreX = (block.left + block.right) / 2;
+  const options = {
+    width: 1920,
+    height: 1080,
+    sizes: sizes,
+    count: sizes.length,
+    margin: 40,
+    gap: 18,
+    clearance: 48,
+    reach: 128,
+    avoid: [greeting, subtitle],
+    seed: 20260115
+  };
+
+  const points = DynaWall.scatterWidgets(options);
+  assert.equal(points.length, sizes.length, 'one position per glyph, whatever its footprint');
+  assert.deepEqual(DynaWall.scatterWidgets(options), points, 'the same seed deals the same hand');
+  assert.notDeepEqual(
+    DynaWall.scatterWidgets(Object.assign({}, options, { seed: 777 })),
+    points,
+    'a new page load deals a new hand'
+  );
+
+  // The rules have to hold for every hand, not for the one seed the test starts from.
+  for (let seed = 1; seed <= 40; seed += 1) {
+    const hand = DynaWall.scatterWidgets(Object.assign({}, options, { seed: seed }));
+    let leftWeight = 0;
+    let rightWeight = 0;
+    let leftCount = 0;
+    let rightCount = 0;
+
+    hand.forEach((point, index) => {
+      const size = sizes[index];
+      // Each glyph keeps its own footprint on the wallpaper...
+      assert.ok(
+        point.x >= options.margin && point.y >= options.margin,
+        `seed ${seed} laid a ${size}px glyph off the top or left edge`
+      );
+      assert.ok(
+        point.x + size <= options.width - options.margin &&
+          point.y + size <= options.height - options.margin,
+        `seed ${seed} laid a ${size}px glyph off the bottom or right edge`
+      );
+      // ...inside the ring its own size earns...
+      const grow = options.clearance + options.reach + size;
+      assert.ok(
+        point.x >= block.left - grow &&
+          point.y >= block.top - grow &&
+          point.x + size <= block.right + grow &&
+          point.y + size <= block.bottom + grow,
+        `seed ${seed} threw the ${size}px glyph out of its ring`
+      );
+      // ...and clear of the greeting's halo.
+      [greeting, subtitle].forEach((box) => {
+        const clear =
+          point.x >= box.x + box.width + options.clearance ||
+          point.x + size <= box.x - options.clearance ||
+          point.y >= box.y + box.height + options.clearance ||
+          point.y + size <= box.y - options.clearance;
+        assert.ok(clear, `seed ${seed} laid a ${size}px glyph over the greeting`);
+      });
+
+      if (point.x + size / 2 < centreX) {
+        leftWeight += size;
+        leftCount += 1;
+      } else {
+        rightWeight += size;
+        rightCount += 1;
+      }
+    });
+
+    // Neither flank carries more glyph weight than one large satellite's worth, so the
+    // big glyphs are spread across the composition instead of collecting on a side.
+    assert.ok(
+      Math.abs(leftWeight - rightWeight) <= largest,
+      `seed ${seed} unbalanced the flanks by ${Math.abs(leftWeight - rightWeight)}px`
+    );
+    // The counts are level too: no flank is empty and none is crowded.
+    assert.ok(Math.abs(leftCount - rightCount) <= 1, `seed ${seed} piled the glyphs on one flank`);
+    assert.ok(leftCount > 0 && rightCount > 0, `seed ${seed} put every glyph on one side`);
+
+    // No two glyphs touch: the gap is measured between their real footprints.
+    for (let first = 0; first < hand.length; first += 1) {
+      for (let second = first + 1; second < hand.length; second += 1) {
+        const apart =
+          hand[first].x + sizes[first] + options.gap <= hand[second].x ||
+          hand[second].x + sizes[second] + options.gap <= hand[first].x ||
+          hand[first].y + sizes[first] + options.gap <= hand[second].y ||
+          hand[second].y + sizes[second] + options.gap <= hand[first].y;
+        assert.ok(apart, `seed ${seed} let two glyphs overlap`);
+      }
+    }
+  }
+
+  // A footprint the caller could not measure falls back to the one size it did pass,
+  // which is what an older host that measures a single glyph relies on.
+  const fallback = DynaWall.scatterWidgets({
+    width: 1920,
+    height: 1080,
+    size: 44,
+    sizes: [0],
+    count: 2,
+    margin: 40,
+    gap: 18,
+    clearance: 48,
+    reach: 128,
+    avoid: [greeting],
+    seed: 5
+  });
+  assert.equal(fallback.length, 2);
+  fallback.forEach((point) => {
+    assert.ok(Number.isFinite(point.x) && Number.isFinite(point.y), 'no NaN coordinates');
+  });
+});
+
+test('the orbit wears what the tally earned, and the `+` stays baseline', () => {
+  const script = readText('script.js');
+  // The key, the ranking and the cache are all in the pure half: a host script can read
+  // what the page knows without a DOM.
+  assert.match(script, /const WIDGET_USAGE_KEY = 'dynawall\.widgetUsage'/);
+  assert.match(script, /function computeWidgetSizes\(activeIds, usage\)/);
+  assert.match(script, /usage: readWidgetUsage\(storage\)/, 'the tally is read before the first deal');
+  // Every deal ranks the glyphs, then measures each one on its own before placing it.
+  assert.match(script, /const tiers = sizeTiers\(active\)/);
+  assert.match(script, /button\.classList\.add\('is-size-' \+ name\)/);
+  assert.match(
+    script,
+    /button\.setAttribute\('data-size', name\)/,
+    'CSS and a host script share one handle'
+  );
+  assert.match(script, /const measured = button\.offsetWidth;/, 'each glyph is measured on its own');
+  assert.match(script, /sizes: sizes,/, 'the ring is dealt with the real footprints');
+  // The `+` is a control, not an app: it never takes part in the ranking.
+  assert.match(script, /if \(!id\) return 'm'/);
+  // An open is a use, and only a changed hierarchy re-deals the hand.
+  assert.match(script, /if \(button\) noteUsage\(usageIdOf\(button\)\)/, 'opening a card counts');
+  assert.match(script, /noteUsage\(service\.id\)/, 'and so does opening a shortcut');
+  assert.match(
+    script,
+    /if \(sizeTiers\(placedButtons\(\)\)\.join\(''\) !== before\) scatter\(\);/,
+    'an open that leaves every tier where it was never reshuffles the desktop'
+  );
+
+  const markup = readText('index.html');
+  assert.ok(
+    !/data-size=/.test(markup),
+    'the markup ships the baseline: only the tally decides a footprint'
+  );
+});
+
+/* -------------------------------------------------------------------------- *
  * Premium surface: quick actions, live preview, resilience
  * -------------------------------------------------------------------------- */
 

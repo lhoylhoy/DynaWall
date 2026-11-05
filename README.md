@@ -51,6 +51,7 @@ certutil -hashfile DynaWall-Setup.exe SHA256    # Windows equivalent
 | Slideshow | Off by default. Cross-fades every 1–60 min, in order or shuffled, optional slow zoom, with a scrim that keeps the greeting readable |
 | Time-synced photos | On by default: only photos whose filename names the active band (`dawn`, `day`, `dusk`, `night`) are shown; untagged photos are spread across the four bands |
 | Widgets | Four clickable satellites — **Music**, **News**, **YouTube**, **Weather** — opening frosted cards. Each can be switched off individually; nothing is fetched before a card opens (weather uses keyless Open-Meteo) |
+| Widget footprints | The glyphs are ranked by how often you open them: **S** for the ones you never touch, **M** as the baseline, **L** for the one you live in. The tally lives in `localStorage` and is balanced across both sides of the greeting on every deal |
 | Typography | **Outfit** (default), **Google Sans Flex**, **Space Grotesk** and **Geist** ship with the app; any system or imported font also works |
 | Dependencies | None. Fonts and twelve wallpapers are bundled; the only network call is the weather forecast |
 
@@ -176,6 +177,11 @@ the artifact.
   launch); settings in the `com.dynawall.macos` defaults domain (`defaults delete com.dynawall.macos`
   resets them); imported fonts in `~/Library/Application Support/DynaWall/Fonts`.
 - **Windows** — settings, logs and the WebView2 profile in `%LOCALAPPDATA%\DynaWall\`.
+- **Everywhere** — the shortcut list and how often each glyph was opened are cached in `localStorage`
+  (`dynawall.customServices`, `dynawall.widgetUsage`), never pushed by a host control.
+  `DynaWall.clearWidgetUsage(localStorage)` from the console empties the tally, which puts every glyph
+  back on the baseline; `DynaWall.computeWidgetSizes(ids, DynaWall.readWidgetUsage(localStorage))`
+  shows the ranking it produces.
 
 ## Releases
 

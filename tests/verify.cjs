@@ -2916,8 +2916,8 @@ test('the popup is inert until a satellite opens it', () => {
   const collapsed = (markup.match(/aria-expanded="false"/g) || []).length;
   assert.equal(
     collapsed,
-    DynaWall.WIDGETS.length + 1,
-    'one per satellite, plus the `+` that opens the manager'
+    DynaWall.WIDGETS.length,
+    'one per satellite: the orbit holds services and nothing else'
   );
   assert.equal(
     (markup.match(/aria-expanded=/g) || []).length,
@@ -3383,7 +3383,7 @@ test('a hidden satellite is hidden for real: unplaced, unclickable, and its card
   assert.match(script, /button\.hidden = !visible/, 'a hidden satellite leaves the layout');
   assert.match(script, /if \(!visible && state\.activeId === id\) closeWidget\(\)/, 'and its card');
   assert.match(script, /function scatter\(\) \{\n\s+if \(!state\.enabled\) return;/, 'nothing is placed while off');
-  // Only the glyphs actually on screen are dealt — built-in, custom and the `+` alike.
+  // Only the glyphs actually on screen are dealt — built-in and custom alike.
   assert.match(script, /function placedButtons\(\)[\s\S]{0,120}return !button\.hidden;/);
   assert.match(script, /const active = placedButtons\(\);/, 'only the visible ones are dealt');
   assert.match(script, /count: active\.length/, 'and the ring is sized for them');
@@ -3925,9 +3925,10 @@ test('a shortcut address is a plain https page, or nothing at all', () => {
   );
 });
 
-test('a shortcut wears a curated glyph, or its own initials', () => {
-  // The catalogue is line art in the built-in satellites' own language, and each mark
-  // names words — never hosts — so it cannot become a second allowlist.
+test('a shortcut wears an official brand mark, or its own initials', () => {
+  // The catalogue is line art in the built-in satellites' own language: a handful of
+  // plain shapes per mark, drawn in the wallpaper's own ink at the same stroke weight,
+  // and nothing is ever fetched for it.
   const ids = DynaWall.SERVICE_ICONS.map((icon) => icon.id);
   assert.equal(new Set(ids).size, ids.length, 'every mark has its own id');
   DynaWall.SERVICE_ICONS.forEach((icon) => {
@@ -3935,25 +3936,106 @@ test('a shortcut wears a curated glyph, or its own initials', () => {
     assert.match(icon.paths, /^<(path|circle|rect)/, `${icon.id} is drawn from plain shapes`);
     assert.ok(
       !/https?:/.test(icon.paths + ' ' + icon.hints.join(' ')),
-      `${icon.id} must not name a host: the CSP owns that list`
+      `${icon.id} must not name a host in its words: the CSP owns that list`
     );
+    assert.ok(
+      !/<image|href|url\(|@import|stroke-width/.test(icon.paths),
+      `${icon.id} is drawn, not borrowed: no picture, no link, no local weight`
+    );
+    // A host is only ever compared with the address the user pasted; it is never a
+    // policy, and it never reaches a request.
+    (icon.domains || []).forEach((domain) => {
+      assert.match(domain, /^[a-z0-9-]+(\.[a-z0-9-]+)+$/, `${icon.id}: "${domain}" is a bare host`);
+    });
   });
 
-  assert.equal(DynaWall.serviceIconId('ChatGPT', 'https://chat.openai.com'), 'sparkle');
-  assert.equal(DynaWall.serviceIconId('GitHub', 'https://github.com'), 'git');
-  assert.equal(DynaWall.serviceIconId('Spotify', 'https://open.spotify.com'), 'wave');
-  assert.equal(DynaWall.serviceIconId('Twitch', 'https://www.twitch.tv'), 'play');
-  assert.equal(DynaWall.serviceIconId('Notes', 'https://notion.so'), 'page');
-  assert.equal(DynaWall.serviceIconId('Somewhere', 'https://example.com'), '', 'no match, no mark');
+  // Two brands can never claim the same host: which mark an address wears would
+  // otherwise depend on catalogue order rather than on the address.
+  const claimed = [];
+  DynaWall.SERVICE_ICONS.forEach((icon) => {
+    (icon.domains || []).forEach((domain) => claimed.push(domain));
+  });
+  assert.equal(new Set(claimed).size, claimed.length, 'every host belongs to exactly one brand');
+
+  // Every brand the ring knows, resolved from the address — which is asked first, so
+  // `x.com` is a brand rather than a letter and `chat.openai.com` is ChatGPT.
+  [
+    ['ChatGPT', 'https://chat.openai.com', 'chatgpt'],
+    ['OpenAI', 'https://chatgpt.com', 'chatgpt'],
+    ['GitHub', 'https://github.com', 'github'],
+    ['Spotify', 'https://open.spotify.com', 'spotify'],
+    ['Discord', 'https://discord.com', 'discord'],
+    ['Reddit', 'https://reddit.com', 'reddit'],
+    ['Slack', 'https://app.slack.com', 'slack'],
+    ['X', 'https://x.com', 'x'],
+    ['', 'https://twitter.com/ada', 'x'],
+    ['Twitch', 'https://www.twitch.tv', 'twitch'],
+    ['Notion', 'https://notion.so', 'notion'],
+    ['Figma', 'https://figma.com', 'figma'],
+    ['Instagram', 'https://instagram.com', 'instagram'],
+    ['Netflix', 'https://netflix.com', 'netflix'],
+    ['Gmail', 'https://mail.google.com', 'gmail'],
+    ['Drive', 'https://drive.google.com', 'drive'],
+    ['Docs', 'https://docs.google.com', 'docs'],
+    ['WhatsApp', 'https://web.whatsapp.com', 'whatsapp'],
+    ['Telegram', 'https://t.me/ada', 'telegram'],
+    ['Apple', 'https://apple.com', 'apple'],
+    ['LinkedIn', 'https://linkedin.com', 'linkedin'],
+    ['Claude', 'https://claude.ai', 'claude'],
+    ['Gemini', 'https://gemini.google.com', 'gemini'],
+    ['Linear', 'https://linear.app', 'linear'],
+    ['YouTube Music', 'https://music.youtube.com', 'youtubemusic'],
+    ['YouTube', 'https://youtu.be/ada', 'youtube']
+  ].forEach(([title, url, expected]) => {
+    assert.equal(DynaWall.serviceIconId(title, url), expected, `${title || url} wears ${expected}`);
+  });
+
+  // A service that is not a brand still reads as its kind, and one that is nothing at
+  // all falls through to its initials instead of to somebody else's logo.
+  [
+    ['Notes', 'https://example.com/notes', 'page'],
+    ['Chat', 'https://chat.example.com', 'talk'],
+    ['Music', 'https://soundcloud.com', 'wave'],
+    ['Video', 'https://vimeo.com', 'play'],
+    ['Calendar', 'https://calendly.com', 'calendar'],
+    ['Mail', 'https://proton.me', 'mail'],
+    ['Code', 'https://gitlab.com', 'code'],
+    ['Design', 'https://canva.com', 'pen'],
+    ['Photos', 'https://unsplash.com', 'camera'],
+    ['Maps', 'https://maps.example.com', 'globe'],
+    ['Assistant', 'https://copilot.microsoft.com', 'sparkle'],
+    ['Somewhere', 'https://example.com', '']
+  ].forEach(([title, url, expected]) => {
+    assert.equal(DynaWall.serviceIconId(title, url), expected, `${title} wears ${expected || 'nothing'}`);
+  });
+  assert.equal(DynaWall.serviceIconId('', ''), '', 'nothing in, no mark out');
+  assert.equal(
+    DynaWall.serviceIconId('Somewhere', 'https://example.com'),
+    '',
+    'no match, no mark: the monogram takes over'
+  );
 
   assert.match(
-    DynaWall.serviceIconMarkup('git'),
+    DynaWall.serviceIconMarkup('github'),
     /^<svg class="widget-icon" viewBox="0 0 24 24"/,
     'a curated glyph is the satellite glyph class, so it is stroked white'
   );
   assert.equal(DynaWall.serviceIconMarkup('nope'), '');
-  assert.equal(DynaWall.normalizeServiceIcon('GIT'), 'git', 'a stored id is read case-insensitively');
+  assert.equal(
+    DynaWall.normalizeServiceIcon('GITHUB'),
+    'github',
+    'a stored id is read case-insensitively'
+  );
   assert.equal(DynaWall.normalizeServiceIcon('nope'), '');
+
+  // A shortcut saved before the brands arrived keeps a mark: `git` was the branch
+  // diagram, and it is the octocat under the id that means it today.
+  assert.equal(DynaWall.normalizeServiceIcon('git'), 'github', 'the legacy id is read as its brand');
+  assert.match(
+    DynaWall.serviceIconMarkup('git'),
+    /^<svg class="widget-icon"/,
+    'and it paints the mark, not an empty box'
+  );
 
   // The fallback is two capitals in the same ink, never a broken icon.
   assert.equal(DynaWall.serviceMonogram('GitHub', 'https://github.com'), 'GH');
@@ -3961,11 +4043,20 @@ test('a shortcut wears a curated glyph, or its own initials', () => {
   assert.equal(DynaWall.serviceMonogram('Figma', 'https://figma.com'), 'FI');
   assert.equal(DynaWall.serviceMonogram('X', 'https://x.example'), 'X');
   assert.equal(DynaWall.serviceMonogram('', 'https://example.com'), 'EX', 'unnamed: the host names it');
-  assert.match(DynaWall.serviceGlyphMarkup({ title: 'Figma' }), /class="widget-monogram"/);
+  assert.match(
+    DynaWall.serviceGlyphMarkup({ title: 'Somewhere', url: 'https://example.com' }),
+    /class="widget-monogram"/,
+    'a service nobody has a mark for wears its initials'
+  );
   assert.match(
     DynaWall.serviceGlyphMarkup({ title: 'GitHub', icon: 'git' }),
     /^<svg class="widget-icon"/,
     'a curated mark beats the monogram'
+  );
+  assert.match(
+    DynaWall.serviceGlyphMarkup({ title: 'Figma', icon: 'figma' }),
+    /^<svg class="widget-icon"/,
+    'and a brand beats it too'
   );
   assert.equal(
     DynaWall.serviceMonogram('<img src=x onerror=alert(1)>', 'https://example.com'),
@@ -3974,13 +4065,44 @@ test('a shortcut wears a curated glyph, or its own initials', () => {
   );
 });
 
+test('a shortcut to YouTube wears the satellite that is already in the ring', () => {
+  // One design language, not two: a YouTube or YouTube Music shortcut draws the very
+  // same badge its built-in satellite draws, character for character. The catalogue
+  // cannot drift from index.html, and the two never need separate artwork.
+  const markup = readText('index.html');
+  const satellitePaths = (widget) => {
+    const start = markup.indexOf('id="widget-btn-' + widget + '"');
+    assert.ok(start !== -1, `${widget} is in the markup`);
+    const end = markup.indexOf('</button>', start);
+    return Array.from(markup.slice(start, end).matchAll(/<path d="([^"]+)"/g)).map(
+      (match) => match[1]
+    );
+  };
+
+  [
+    ['youtube', 'youtube'],
+    ['youtubemusic', 'music']
+  ].forEach(([id, widget]) => {
+    const icon = DynaWall.SERVICE_ICONS.find((entry) => entry.id === id);
+    assert.ok(icon, `${id} has a mark in the catalogue`);
+    const drawn = satellitePaths(widget);
+    assert.ok(drawn.length > 0, `${widget}'s satellite draws something`);
+    drawn.forEach((d) => {
+      assert.ok(
+        icon.paths.indexOf('d="' + d + '"') !== -1,
+        `${id}: the shortcut draws the satellite's own shape`
+      );
+    });
+  });
+});
+
 
 test('a shortcut is a record, and the stored list is made safe', () => {
   assert.deepEqual(DynaWall.createCustomService('GitHub', 'https://github.com/froilan', { index: 2 }), {
     id: 'service-2',
     title: 'GitHub',
     url: 'https://github.com/froilan',
-    icon: 'git'
+    icon: 'github'
   });
   assert.equal(
     DynaWall.createCustomService('', 'https://example.com').title,
@@ -3997,6 +4119,24 @@ test('a shortcut is a record, and the stored list is made safe', () => {
     DynaWall.createCustomService('Odd', 'https://example.com', { icon: 'nope' }).icon,
     '',
     'an unknown mark falls back to the initials'
+  );
+
+  // A record saved while the catalogue was all placeholders upgrades itself: the mark
+  // it wears is the one the address names, not the one it was given back then.
+  assert.equal(
+    DynaWall.createCustomService('ChatGPT', 'https://chat.openai.com', { icon: 'sparkle' }).icon,
+    'chatgpt',
+    'a generic assistant mark yields to the official knot'
+  );
+  assert.equal(
+    DynaWall.createCustomService('GitHub', 'https://github.com', { icon: 'wave' }).icon,
+    'github',
+    'and so does any other category mark the address contradicts'
+  );
+  assert.equal(
+    DynaWall.createCustomService('Somewhere', 'https://example.com', { icon: 'github' }).icon,
+    'github',
+    'a brand already on a record is never traded for a category guess'
   );
 
   // A stored list is JSON, and anything in it may be hand-edited: it is read defensively.
@@ -4017,6 +4157,11 @@ test('a shortcut is a record, and the stored list is made safe', () => {
     services.map((service) => service.id),
     ['service-1', 'service-2'],
     'ids follow the list position, so they can never collide'
+  );
+  assert.deepEqual(
+    services.map((service) => service.icon),
+    ['github', 'chatgpt'],
+    'and a mark saved as a placeholder is read as the brand the address names'
   );
   assert.deepEqual(DynaWall.normalizeCustomServices('not json'), []);
   assert.deepEqual(DynaWall.normalizeCustomServices('{}'), []);
@@ -4048,11 +4193,11 @@ test('shortcuts survive a reload in localStorage, and nowhere else', () => {
     'the list round-trips through the cache'
   );
 
-  // The stored shape is the minimum: no ids, no derived marks — the id is a handle the
-  // page mints, and the mark is recomputed from the title and the address on load.
+  // The stored shape is the minimum: no ids, no derived handles — the id is a handle
+  // the page mints, and the mark is the one the title and the address name.
   assert.deepEqual(JSON.parse(storage.getItem(DynaWall.CUSTOM_SERVICES_KEY)), [
-    { title: 'GitHub', url: 'https://github.com/', icon: 'git' },
-    { title: 'ChatGPT', url: 'https://chat.openai.com/', icon: 'sparkle' }
+    { title: 'GitHub', url: 'https://github.com/', icon: 'github' },
+    { title: 'ChatGPT', url: 'https://chat.openai.com/', icon: 'chatgpt' }
   ]);
 
   // A cache that is blocked or absent is not a broken wallpaper.
@@ -4098,17 +4243,44 @@ test('the scatter deals any number of glyphs, custom ones included', () => {
   assert.deepEqual(DynaWall.scatterWidgets(options), points, 'the same seed deals the same hand');
 });
 
-test('the orbit grows a matching `+` without becoming a fifth widget', () => {
+test('the orbit holds services only, and the shortcut manager lives in the card header', () => {
   const markup = readText('index.html');
-  assert.match(markup, /id="widget-btn-add"/);
-  assert.match(markup, /class="widget-btn widget-btn-add"/);
-  assert.match(markup, /id="widget-btn-add"[\s\S]{0,400}aria-label="Add a favourite service"/);
-  assert.match(
-    markup,
-    /id="widget-btn-add"[\s\S]{0,400}aria-expanded="false"/,
-    'the `+` announces itself like its neighbours, before the script ever runs'
+  // The ring is the composition: four built-in services plus whatever shortcuts the user
+  // keeps. The old trailing `+` is gone, so nothing orbits the greeting but an app.
+  assert.ok(!/widget-btn-add/.test(markup), 'no `+` satellite is left in the markup');
+  assert.ok(!/data-action="manage-services"/.test(markup), 'the manager is not a satellite');
+
+  const orbit = /<nav class="widget-orbit"[\s\S]*?<\/nav>/.exec(markup);
+  assert.ok(orbit, 'the orbit must be a nav in the markup');
+  assert.ok(!/widget-btn-add/.test(orbit[0]), 'and the ring itself carries no manager button');
+  assert.deepEqual(
+    Array.from(orbit[0].matchAll(/data-widget="([a-z]+)"/g)).map((match) => match[1]),
+    DynaWall.WIDGETS.map((widget) => widget.id),
+    'the orbit is exactly the four built-ins, in catalogue order'
   );
-  assert.match(markup, /data-action="manage-services"/, 'the manager is a control, not a satellite');
+
+  // The function moved into the card: an action in the header, immediately before the
+  // close button, so it is reachable from every widget the wallpaper can open.
+  const header = /<header class="widget-modal-header">([\s\S]*?)<\/header>/.exec(markup);
+  assert.ok(header, 'the card must have a header');
+  assert.match(header[1], /id="widget-modal-services"/, 'the manager is a header action');
+  assert.match(header[1], /class="widget-modal-action"/);
+  assert.match(header[1], /title="Manage shortcuts"/);
+  assert.match(header[1], /aria-label="Manage shortcuts"/);
+  assert.match(header[1], /id="widget-modal-close"/);
+  assert.ok(
+    header[1].indexOf('id="widget-modal-services"') < header[1].indexOf('id="widget-modal-close"'),
+    'the manager sits just before the close button'
+  );
+  // Both marks ship together: the stylesheet cross-fades them, so going back is a turn of
+  // one glyph rather than a control appearing out of nowhere.
+  assert.match(header[1], /widget-modal-action-glyph--add/);
+  assert.match(header[1], /widget-modal-action-glyph--back/);
+  assert.ok(
+    !/aria-expanded/.test(header[1]),
+    'the action is a view switch inside an open dialog, not a popup of its own'
+  );
+
   assert.ok(
     !/data-widget="add"/.test(markup),
     'the markup list and the catalogue stay an exact match: the manager is not a widget'
@@ -4119,10 +4291,30 @@ test('the orbit grows a matching `+` without becoming a fifth widget', () => {
     'and the catalogue never grows a manager entry'
   );
 
-  // The `+` is the same bare glyph at the same size — just quieter — and the monogram is
-  // typeset in the wallpaper's own face so a shortcut never looks like a broken icon.
+  // The header action wears the close button's disc, hover and focus ring, and the two
+  // glyphs share one cell so the swap happens in place.
   const css = readText('style.css');
-  assert.match(css, /\.widget-btn-add\s*\{[^}]*opacity:\s*0?\.\d+/, 'the way in is quieter');
+  assert.ok(!/\.widget-btn-add\s*\{/.test(css), 'the orbit `+` has no styling left');
+  assert.match(
+    css,
+    /\.widget-modal-action\s*\{[^}]*width:\s*1\.85rem[^}]*height:\s*1\.85rem[^}]*border-radius:\s*50%/,
+    'the header action is the same disc as the close button'
+  );
+  assert.match(css, /\.widget-modal-action:hover\s*\{[^}]*background-color:/, 'and its frosted hover');
+  assert.match(css, /\.widget-modal-action:focus-visible\s*\{[^}]*outline:/, 'with a focus ring');
+  assert.match(
+    css,
+    /\.widget-modal-action-glyph\s*\{[^}]*grid-area:\s*1\s*\/\s*1/,
+    'one cell, two glyphs'
+  );
+  assert.match(
+    css,
+    /\.widget-modal-action\[data-mode="back"\]\s+\.widget-modal-action-glyph--back\s*\{[^}]*opacity:\s*1/,
+    'the state script.js flips is what shows the arrow'
+  );
+
+  // The shortcut marks themselves are untouched: the monogram is typeset in the
+  // wallpaper's own face so a shortcut never looks like a broken icon.
   assert.match(css, /\.widget-monogram\s*\{[^}]*font-family:\s*var\(--font-sans\)/);
   assert.match(css, /\.widget-monogram\s*\{[^}]*font-size:\s*calc\(var\(--widget-size\)/);
   assert.match(css, /\.widget-service-glyph\s*\{[^}]*color:\s*var\(--widget-ink\)/);
@@ -4130,17 +4322,74 @@ test('the orbit grows a matching `+` without becoming a fifth widget', () => {
   assert.match(css, /\.widget-service-form\s*\{[^}]*flex-direction:\s*column/);
 });
 
+test('the header action opens the manager and hands the widget back', () => {
+  const script = readText('script.js');
+
+  // The orbit no longer knows about a manager button at all: the controller looks up the
+  // card's own action, and a host page without it still gets its four cards.
+  assert.match(script, /const servicesActionNode = doc\.getElementById\('widget-modal-services'\)/);
+  assert.ok(!/addButton/.test(script), 'nothing in the controller still reaches for the old `+`');
+
+  // On a widget it opens the manager, remembering the card first…
+  assert.match(script, /servicesActionNode\.addEventListener\('click'/, 'the header action is wired');
+  assert.match(script, /openWidget\(SERVICE_MANAGER_ID\)/);
+  assert.match(
+    script,
+    /if \(wasOpen && state\.activeId !== SERVICE_MANAGER_ID\) state\.returnWidgetId = state\.activeId;/,
+    'the card that led into the manager is remembered'
+  );
+
+  // …and on the manager it goes straight back to that card, or closes when there is
+  // nothing behind it (a manager opened on its own by a host script).
+  assert.match(
+    script,
+    /if \(state\.activeId === SERVICE_MANAGER_ID\) \{[\s\S]{0,220}widgetById\(state\.returnWidgetId\)/,
+    'the same control goes back'
+  );
+  assert.match(script, /if \(behind && openWidget\(behind\.id\)\) return;/, 'back lands on the widget');
+  assert.match(script, /state\.returnWidgetId = '';/, 'closing forgets the card behind the manager');
+
+  // The one control says where it goes: `+` on a widget, an arrow named after the
+  // destination on the manager.
+  assert.match(script, /function syncServicesAction\(\)/);
+  assert.match(script, /syncServicesAction\(\);/, 'every open repaints the header action');
+  assert.match(script, /const behind = manager \? widgetById\(state\.returnWidgetId\) : null;/);
+  assert.match(script, /'Back to ' \+ behind\.title/, 'the arrow names the card it returns to');
+  assert.match(script, /servicesActionNode\.setAttribute\('data-mode', manager \? 'back' : 'add'\)/);
+  assert.match(
+    script,
+    /servicesActionNode\.setAttribute\('aria-label', label\)/,
+    'and says so to a screen reader'
+  );
+
+  // The manager's own badge is drawn, not borrowed: the `+` is no longer a satellite whose
+  // glyph could be cloned into the header.
+  assert.match(script, /const SERVICES_BADGE_MARKUP =/);
+  assert.match(script, /if \(id === SERVICE_MANAGER_ID\) return SERVICES_BADGE_MARKUP;/);
+
+  // A switch between two views of one open dialog is not an open: the tally counts the
+  // satellites that brought the card up, and the focus home stays the satellite too.
+  assert.match(script, /const wasOpen = Boolean\(state\.activeId\);/);
+  assert.match(script, /if \(!wasOpen\) state\.lastFocus = doc\.activeElement;/);
+  assert.match(script, /if \(button && !wasOpen\) noteUsage\(usageIdOf\(button\)\)/);
+});
+
 test('a shortcut opens the browser, a built-in opens its card', () => {
   const script = readText('script.js');
   // Two clicks, two destinations: a shortcut leaves for the default browser through the
   // native bridge, and the built-ins still open their own cards in the wallpaper.
   assert.match(script, /openExternal\(win, service\.url\)/, 'a shortcut leaves for the browser');
-  assert.match(script, /openWidget\(SERVICE_MANAGER_ID\)/, 'the `+` opens the manager');
+  assert.match(
+    script,
+    /openExternal\(win, service\.url\)[\s\S]{0,400}noteUsage\(service\.id\)/,
+    'and counts as a use like any other glyph'
+  );
+  assert.match(script, /openWidget\(SERVICE_MANAGER_ID\)/, 'the header action opens the manager');
   assert.match(script, /if \(id === SERVICE_MANAGER_ID\) renderServices\(\)/, 'and the card paints it');
   assert.match(
     script,
-    /bar\.insertBefore\(button, addButton \|\| null\)/,
-    'a shortcut joins the same orbit, before the `+`'
+    /bar\.appendChild\(button\)/,
+    'a shortcut simply joins the orbit: there is no `+` to be inserted before'
   );
   assert.match(script, /readCustomServices\(storage\)/, 'the list is restored before the first deal');
   assert.match(
@@ -4149,7 +4398,6 @@ test('a shortcut opens the browser, a built-in opens its card', () => {
     'and cached on every change'
   );
   assert.match(script, /rebuildServiceButtons\(\);/, 'the satellites are rebuilt, not re-dealt by hand');
-  assert.match(script, /addButton\.setAttribute\('aria-expanded'/, 'the `+` reports its card');
   assert.match(
     script,
     /button\.setAttribute\('data-service', service\.id\)/,
@@ -4502,7 +4750,7 @@ test('a hand of mixed footprints stays balanced, clear and repeatable', () => {
   });
 });
 
-test('the orbit wears what the tally earned, and the `+` stays baseline', () => {
+test('the orbit wears what the tally earned, and an id-less control stays baseline', () => {
   const script = readText('script.js');
   // The key, the ranking and the cache are all in the pure half: a host script can read
   // what the page knows without a DOM.
@@ -4519,10 +4767,15 @@ test('the orbit wears what the tally earned, and the `+` stays baseline', () => 
   );
   assert.match(script, /const measured = button\.offsetWidth;/, 'each glyph is measured on its own');
   assert.match(script, /sizes: sizes,/, 'the ring is dealt with the real footprints');
-  // The `+` is a control, not an app: it never takes part in the ranking.
+  // A control with no id — a page that put one of its own in the ring — never takes part
+  // in the ranking, so it cannot drag the scale down.
   assert.match(script, /if \(!id\) return 'm'/);
   // An open is a use, and only a changed hierarchy re-deals the hand.
-  assert.match(script, /if \(button\) noteUsage\(usageIdOf\(button\)\)/, 'opening a card counts');
+  assert.match(
+    script,
+    /if \(button && !wasOpen\) noteUsage\(usageIdOf\(button\)\)/,
+    'opening a card counts, switching views inside it does not'
+  );
   assert.match(script, /noteUsage\(service\.id\)/, 'and so does opening a shortcut');
   assert.match(
     script,

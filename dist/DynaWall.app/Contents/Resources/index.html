@@ -74,11 +74,12 @@
 
            The four below are the built-in services. script.js adds one more satellite
            per custom shortcut the user keeps (ChatGPT, GitHub, …), all dealt the same
-           hand, plus the trailing `+` that opens the manager card. The orbit itself is
-           pointer-transparent, so only the buttons are hit targets — script.js measures
-           them and tells the native host where the cursor may click, which is what keeps
-           the rest of the desktop on the Finder (drag-select, right-click, Mission
-           Control). -->
+           hand — and nothing else: adding a shortcut is a control in the card header
+           (`#widget-modal-services`), so no stray glyph ever orbits the greeting. The
+           orbit itself is pointer-transparent, so only the buttons are hit targets —
+           script.js measures them and tells the native host where the cursor may click,
+           which is what keeps the rest of the desktop on the Finder (drag-select,
+           right-click, Mission Control). -->
       <nav class="widget-orbit" id="widget-bar" aria-label="Desktop widgets">
         <button
           type="button"
@@ -159,26 +160,10 @@
           </svg>
         </button>
 
-        <!-- The orbit's one control: a glyph in exactly the same ink as the satellites,
-             quieter so the services stay the composition. It is deliberately *not* a
-             `data-widget` button — it opens the manager card rather than a card of its
-             own — which is also what keeps the satellite list in index.html and the
-             catalogue in script.js an exact match. -->
-        <button
-          type="button"
-          class="widget-btn widget-btn-add"
-          id="widget-btn-add"
-          data-action="manage-services"
-          title="Add a service"
-          aria-label="Add a favourite service"
-          aria-haspopup="dialog"
-          aria-controls="widget-modal"
-          aria-expanded="false"
-        >
-          <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-        </button>
+        <!-- Nothing else orbits the greeting: the ring is the services themselves — the
+             four built-ins above and any shortcut script.js adds from localStorage. The
+             way to add one lives in the card header (see #widget-modal-services), so the
+             wallpaper composition stays exactly as minimal as the picture behind it. -->
       </nav>
 
       <!-- Frosted-glass widget viewport. Always in the DOM, only visible once a
@@ -200,6 +185,41 @@
               <h2 class="widget-modal-title" id="widget-modal-title">Widget</h2>
               <p class="widget-modal-caption" id="widget-modal-caption"></p>
             </div>
+            <!-- One control with two jobs, painted by script.js: on a widget it is the
+                 way into the shortcuts manager (`+`), and on the manager it is the way
+                 back to the widget that led there (`←`). Both glyphs ship here so the
+                 swap is a stylesheet fade rather than a re-render; the label names the
+                 destination and is rewritten with the state. -->
+            <button
+              type="button"
+              class="widget-modal-action"
+              id="widget-modal-services"
+              data-mode="add"
+              title="Manage shortcuts"
+              aria-label="Manage shortcuts"
+              aria-controls="widget-modal-body"
+            >
+              <svg
+                class="widget-modal-action-glyph widget-modal-action-glyph--add"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M12 5v14M5 12h14" />
+              </svg>
+              <svg
+                class="widget-modal-action-glyph widget-modal-action-glyph--back"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+                aria-hidden="true"
+                focusable="false"
+              >
+                <path d="M19 12H5M11 18l-6-6 6-6" />
+              </svg>
+            </button>
             <button type="button" class="widget-modal-close" id="widget-modal-close" aria-label="Close widget">
               <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
                 <path d="M6 6l12 12M18 6L6 18" />

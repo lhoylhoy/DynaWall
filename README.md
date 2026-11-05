@@ -51,6 +51,7 @@ certutil -hashfile DynaWall-Setup.exe SHA256    # Windows equivalent
 | Slideshow | Off by default. Cross-fades every 1–60 min, in order or shuffled, optional slow zoom, with a scrim that keeps the greeting readable |
 | Time-synced photos | On by default: only photos whose filename names the active band (`dawn`, `day`, `dusk`, `night`) are shown; untagged photos are spread across the four bands |
 | Widgets | Four clickable satellites — **Music**, **News**, **YouTube**, **Weather** — opening frosted cards. Each can be switched off individually; nothing is fetched before a card opens (weather uses keyless Open-Meteo) |
+| Shortcuts | Add your own services (GitHub, ChatGPT, Spotify, …) from the `+` in any card header: each becomes another satellite, wearing the official brand mark, that opens in your default browser. The header's arrow takes you back to the widget you were reading |
 | Widget footprints | The glyphs are ranked by how often you open them: **S** for the ones you never touch, **M** as the baseline, **L** for the one you live in. The tally lives in `localStorage` and is balanced across both sides of the greeting on every deal |
 | Typography | **Outfit** (default), **Google Sans Flex**, **Space Grotesk** and **Geist** ship with the app; any system or imported font also works |
 | Dependencies | None. Fonts and twelve wallpapers are bundled; the only network call is the weather forecast |
@@ -200,11 +201,14 @@ git push origin v1.0.0
   [Google Sans Flex](https://fonts.google.com/specimen/Google+Sans+Flex),
   [Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk) and
   [Geist](https://fonts.google.com/specimen/Geist) — all SIL OFL 1.1, licences in `assets/fonts/`.
-- Brand marks: the YouTube Music, YouTube and Google News glyphs on the satellites are trademarks of
-  Google LLC, traced to the official geometry as line art purely to identify the app each one opens.
-  They ship as path data in `index.html` (no image files, no requests); DynaWall is not affiliated with
-  or endorsed by Google. The weather glyph is a plain cloud — Open-Meteo is a data source, not a brand
-  the wallpaper dresses as.
+- Brand marks: the YouTube Music, YouTube and Google News glyphs on the satellites, and the marks a
+  shortcut can wear (GitHub, OpenAI/ChatGPT, Spotify, Discord, Reddit, Slack, X, Notion, Figma,
+  Instagram, Twitch, Netflix, Gmail, Drive, Docs, WhatsApp, Telegram, Apple, LinkedIn, Linear, Claude
+  and Gemini), are trademarks of their respective owners, traced to the official geometry as line art
+  purely to identify the app each one opens. They ship as path data in `index.html` and `script.js` —
+  no image files, no sprite sheet, no icons fetched at runtime — and DynaWall is not affiliated with or
+  endorsed by any of them. A shortcut nothing matches wears its own initials instead. The weather glyph
+  is a plain cloud — Open-Meteo is a data source, not a brand the wallpaper dresses as.
 - Photos: six Golden Gate 5K time-of-day wallpapers plus six generated abstracts, free to replace via
   `GOLDEN_GATE_PHOTOS` / `ABSTRACT_PHOTOS` in `script.js`.
 - Weather: keyless [Open-Meteo](https://open-meteo.com/) forecast, requested only when the card opens.

@@ -3600,24 +3600,35 @@ test('a shortcut wears a high-res favicon, with fallback to the generic window',
   assert.equal(genericIcon.id, DynaWall.GENERIC_ICON_ID);
   assert.match(genericIcon.paths, /^<rect/);
 
-  // Favicon URL resolver
+  // Favicon URL resolver: arbitrary domains use the favicon service
   assert.equal(
-    DynaWall.serviceFaviconUrl('https://github.com/'),
-    'https://www.google.com/s2/favicons?domain=github.com&sz=128'
+    DynaWall.serviceFaviconUrl('https://example.com/app'),
+    'https://www.google.com/s2/favicons?domain=example.com&sz=128'
   );
   assert.equal(
-    DynaWall.serviceFaviconUrl('https://open.spotify.com/track/123', 64),
-    'https://www.google.com/s2/favicons?domain=open.spotify.com&sz=64'
+    DynaWall.serviceFaviconUrl('https://news.ycombinator.com/item?id=1', 64),
+    'https://www.google.com/s2/favicons?domain=news.ycombinator.com&sz=64'
   );
   assert.equal(DynaWall.serviceFaviconUrl(''), '');
 
+  // Presets wear transparent vector overrides so adaptive dark/light SVGs never render as opaque white boxes
+  assert.match(DynaWall.serviceFaviconUrl('https://github.com/'), /^data:image\/svg\+xml;/);
+  assert.match(DynaWall.serviceFaviconUrl('https://chatgpt.com/'), /^data:image\/svg\+xml;/);
+
   // Markup generation
-  const service = { title: 'GitHub', url: 'https://github.com/' };
-  const markup = DynaWall.serviceGlyphMarkup(service);
-  assert.match(markup, /class="widget-favicon"/);
-  assert.match(markup, /domain=github\.com/);
-  assert.match(markup, /alt="GitHub"/);
-  assert.match(markup, /class="widget-fallback"/);
+  const customService = { title: 'Hacker News', url: 'https://news.ycombinator.com/' };
+  const customMarkup = DynaWall.serviceGlyphMarkup(customService);
+  assert.match(customMarkup, /class="widget-favicon"/);
+  assert.match(customMarkup, /domain=news\.ycombinator\.com/);
+  assert.match(customMarkup, /alt="Hacker News"/);
+  assert.match(customMarkup, /class="widget-fallback"/);
+
+  const presetService = { title: 'GitHub', url: 'https://github.com/' };
+  const presetMarkup = DynaWall.serviceGlyphMarkup(presetService);
+  assert.match(presetMarkup, /class="widget-favicon"/);
+  assert.match(presetMarkup, /data:image\/svg\+xml/);
+  assert.match(presetMarkup, /alt="GitHub"/);
+  assert.match(presetMarkup, /class="widget-fallback"/);
 
   // Fallback markup for empty or missing URL
   assert.equal(

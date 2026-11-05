@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Drawing;
 using System.Text.Json;
 
@@ -124,9 +125,9 @@ internal static class WidgetBridge
                     if (root.TryGetProperty("url", out var target) &&
                         target.ValueKind == JsonValueKind.String &&
                         target.GetString() is { } value &&
-                        IsBrowserUrl(value))
+                        TryNormalizeBrowserUrl(value, out var canonical))
                     {
-                        url = value;
+                        url = canonical;
                     }
 
                     break;
@@ -135,13 +136,33 @@ internal static class WidgetBridge
     }
 
     /// <summary>
+    /// Accept a plain <c>https</c> address and hand back the canonical form of it.
+    ///
+    /// The page built the string, so the host parses it itself and starts the shell from
+    /// <see cref="Uri.AbsoluteUri"/>: the browser receives one RFC 3986 URL — with the
+    /// dot segments resolved and every non-ASCII or reserved character escaped — rather
+    /// than the raw text, which a quoting bug in a future caller could still split.
+    /// </summary>
+    internal static bool TryNormalizeBrowserUrl(
+        string target,
+        [NotNullWhen(true)] out string? canonical)
+    {
+        canonical = null;
+
+        if (!Uri.TryCreate(target, UriKind.Absolute, out var uri)
+            || uri.Scheme != Uri.UriSchemeHttps
+            || string.IsNullOrEmpty(uri.Host))
+        {
+            return false;
+        }
+
+        canonical = uri.AbsoluteUri;
+        return true;
+    }
+
+    /// <summary>
     /// Only a plain <c>https</c> address ever reaches the browser: no <c>file:</c>, no
     /// <c>javascript:</c>, no scheme that would hand a URL to an installed app.
     /// </summary>
-    internal static bool IsBrowserUrl(string target)
-    {
-        return Uri.TryCreate(target, UriKind.Absolute, out var uri)
-               && uri.Scheme == Uri.UriSchemeHttps
-               && !string.IsNullOrEmpty(uri.Host);
-    }
+    internal static bool IsBrowserUrl(string target) => TryNormalizeBrowserUrl(target, out _);
 }

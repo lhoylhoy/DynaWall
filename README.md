@@ -120,7 +120,7 @@ cross-faded where needed and cached in `localStorage`.
 **macOS** — macOS 12+ with Xcode Command Line Tools (`xcode-select --install`):
 
 ```bash
-./build-macos.sh                          # ad-hoc signed Universal 2 bundle at dist/DynaWall.app
+./build-macos.sh                          # ad-hoc signed, hardened-runtime Universal 2 app bundle
 open dist/DynaWall.app
 ./build-dmg.sh                            # also packages dist/DynaWall.dmg
 DYNAWALL_ARCHS="arm64" ./build-macos.sh   # single slice while iterating locally

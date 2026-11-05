@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  The only capability DynaWall needs under the hardened runtime.
+
+	  On macOS 12 the login item is registered through AppleScript against
+	  System Events (see LaunchAtLogin in DynaWallApp.swift). A hardened process
+	  may only send Apple events to another application when it carries this
+	  entitlement; without it that fallback fails with -1743 and the switch on
+	  the startup card does nothing. macOS 13+ uses SMAppService and needs none
+	  of this.
+
+	  No App Sandbox here: the app has to read the user's own photo folder, and
+	  `com.apple.security.automation.apple-events` is a hardened-runtime
+	  entitlement, not a sandbox one.
+	-->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+</dict>
+</plist>

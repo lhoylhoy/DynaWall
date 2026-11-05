@@ -66,9 +66,9 @@ for font in outfit google-sans-flex space-grotesk geist; do
   )
 done
 
-for asset in index.html style.css script.js "${FONT_ASSETS[@]}"; do
+for asset in index.html style.css script.js "${FONT_ASSETS[@]}" macos/DynaWall.entitlements; do
   if [[ ! -f "$ROOT/$asset" ]]; then
-    echo "error: missing web wallpaper asset: $asset" >&2
+    echo "error: missing build input: $asset" >&2
     exit 1
   fi
 done
@@ -159,8 +159,16 @@ for arch in $ARCHS; do
   fi
 done
 
-echo "==> Signing (ad-hoc)"
-codesign --force --sign - --timestamp=none "$APP_BUNDLE"
+echo "==> Signing (ad-hoc, hardened runtime)"
+# `--options runtime` turns on the hardened runtime, so the kernel itself enforces the
+# platform's protections (library validation, W^X, no DYLD_* injection) for the whole
+# process — including anything that would otherwise be injected into the host that
+# holds the WebKit message handlers. The ad-hoc identity stays: DynaWall ships
+# un-notarised, and `--entitlements` is what keeps the macOS 12 login-item fallback
+# able to talk to System Events under that runtime.
+codesign --force --sign - --options runtime \
+  --entitlements "$ROOT/macos/DynaWall.entitlements" \
+  --timestamp=none "$APP_BUNDLE"
 codesign --verify --verbose=2 "$APP_BUNDLE"
 
 echo "==> Built $APP_BUNDLE ($BUILT_ARCHS)"

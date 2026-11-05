@@ -1166,12 +1166,21 @@ internal sealed class SettingsForm : Form
             ? photos.FolderPath
             : Path.Combine(AppPaths.WebRoot, "images");
 
+        if (!Directory.Exists(target))
+        {
+            Log.Write($"the photo folder could not be revealed: {target} is missing");
+            return;
+        }
+
         try
         {
-            Process.Start(new ProcessStartInfo
+            // The folder is the file name, not an argument to the shell's file manager:
+            // a path is data, and handing it to the shell as the thing to open means
+            // there is no command line for a quote, a space or an ampersand in it to
+            // break out of.
+            using var process = Process.Start(new ProcessStartInfo
             {
-                FileName = "explorer.exe",
-                Arguments = $"\"{target}\"",
+                FileName = target,
                 UseShellExecute = true
             });
         }

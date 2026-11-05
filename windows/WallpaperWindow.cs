@@ -16,6 +16,13 @@ internal sealed class WallpaperWindow : Form
     private const int WsExNoActivate = 0x08000000;
     private const int WsExToolWindow = 0x00000080;
 
+    /// <summary>
+    /// The one document this host loads. WebView2 serves the bundle under a virtual
+    /// host name, so the page has a real <c>https</c> origin of its own: everything
+    /// that arrives from it (or tries to replace it) is measured against this URI.
+    /// </summary>
+    private static readonly string BundledPageUri = $"https://{PhotoLibrary.BundledHost}/index.html";
+
     private readonly WallpaperController owner;
     private readonly WebView2 webView;
     private bool suspended;
@@ -154,10 +161,15 @@ internal sealed class WallpaperWindow : Form
 
             core.NavigationCompleted += OnNavigationCompleted;
             core.ProcessFailed += OnProcessFailed;
+            // The wallpaper is one document: the desktop has no address bar and no way
+            // back, so a page that navigated away would silently replace the user's
+            // desktop with remote content that keeps the host's message bridge.
+            core.NavigationStarting += OnNavigationStarting;
+            core.NewWindowRequested += OnNewWindowRequested;
             // Widgets: the page reports where it accepts a click and asks for the
             // browser when the user picks a link.
             core.WebMessageReceived += OnWebMessage;
-            core.Navigate($"https://{PhotoLibrary.BundledHost}/index.html");
+            core.Navigate(BundledPageUri);
 
             Log.Write($"web view starting on display {owner.DisplayLabel(this)} ({Bounds.Width}×{Bounds.Height})");
         }
@@ -165,6 +177,41 @@ internal sealed class WallpaperWindow : Form
         {
             Log.Write($"web view failed to start: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Hold the web view on its own bundle.
+    ///
+    /// A redirect, a script that assigns <c>location</c>, a dropped file or an anchor
+    /// the page never meant to keep all end here: only the bundled
+    /// <c>index.html</c> is ever allowed to load, so remote content can never take the
+    /// desktop's place and inherit its message bridge.
+    /// </summary>
+    private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
+    {
+        if (IsBundledPage(e.Uri)) return;
+
+        e.Cancel = true;
+        Log.Write($"refused a navigation away from the wallpaper: {e.Uri}");
+    }
+
+    /// <summary>
+    /// A link the user picked belongs in their browser, never in a popup over the
+    /// desktop: the window request is absorbed, and the address goes to
+    /// <see cref="OpenInBrowser"/>, which is the one gate every link passes through.
+    /// </summary>
+    private void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
+    {
+        e.Handled = true;
+        OpenInBrowser(e.Uri);
+    }
+
+    /// <summary>Whether <paramref name="uri"/> is the bundled page this host loads.</summary>
+    private static bool IsBundledPage(string? uri)
+    {
+        // Host names are case-insensitive and WebView2 has already canonicalised the
+        // URL it reports, so an ordinal, case-insensitive compare is exact here.
+        return string.Equals(uri, BundledPageUri, StringComparison.OrdinalIgnoreCase);
     }
 
     private void OnProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
@@ -178,6 +225,14 @@ internal sealed class WallpaperWindow : Form
     /// </summary>
     private void OnWebMessage(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
+        // Only the wallpaper page may drive the host: a document that somehow ended up
+        // in this view does not get to answer for the desktop's widgets.
+        if (!IsBundledPage(e.Source))
+        {
+            Log.Write($"refused a widget message from {e.Source}");
+            return;
+        }
+
         string json;
         try
         {
@@ -225,9 +280,18 @@ internal sealed class WallpaperWindow : Form
     /// <summary>Hand an <c>https</c> link to the default browser; the wallpaper never navigates.</summary>
     private static void OpenInBrowser(string url)
     {
+        // One gate for every link the page can produce. `WidgetBridge` parses it and
+        // returns the canonical RFC 3986 form, so the shell receives an `https` address
+        // and never the raw text the page typed.
+        if (!WidgetBridge.TryNormalizeBrowserUrl(url, out var canonical))
+        {
+            Log.Write($"refused to open a link that is not https: {url}");
+            return;
+        }
+
         try
         {
-            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(canonical)
             {
                 UseShellExecute = true
             });

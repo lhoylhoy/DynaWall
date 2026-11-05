@@ -1254,8 +1254,20 @@ enum LaunchAtLogin {
         }
     }
 
+    /// A bundle path is data, not script: a quote or a backslash in it
+    /// (`/Applications/My "Tools"/DynaWall.app`) must not close the AppleScript
+    /// literal and let the rest of the path run as code. Backslashes go first, or the
+    /// backslash that escapes a quote would itself be escaped twice.
+    private static func appleScriptString(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\r", with: "\\r")
+            .replacingOccurrences(of: "\n", with: "\\n")
+    }
+
     private static func legacyIsEnabled() -> Bool {
-        let path = Bundle.main.bundlePath
+        let path = appleScriptString(Bundle.main.bundlePath)
         let script = "tell application \"System Events\" to get count of (every login item whose path is \"\(path)\")"
         if let appleScript = NSAppleScript(source: script) {
             var errorInfo: NSDictionary?
@@ -1268,7 +1280,7 @@ enum LaunchAtLogin {
     }
 
     private static func legacySet(enabled: Bool) {
-        let path = Bundle.main.bundlePath
+        let path = appleScriptString(Bundle.main.bundlePath)
         let script: String
         if enabled {
             script = "tell application \"System Events\" to make login item at end with properties {path:\"\(path)\", hidden:false}"
@@ -3077,6 +3089,47 @@ final class DesktopWindowController: NSObject, ObservableObject {
 // MARK: - Web view callbacks
 
 extension DesktopWindowController: WKNavigationDelegate {
+    /// The wallpaper is one document and nothing else.
+    ///
+    /// The desktop has no address bar, no back button and no chrome of any kind, so a
+    /// page that navigated away would silently replace the user's wallpaper with remote
+    /// content — and that content would inherit the `dynawallOpenURL` and
+    /// `dynawallInteractivity` message handlers. Only the bundled `index.html` loads;
+    /// every other navigation is cancelled, and a link the user actually clicked is
+    /// handed to their browser instead of being followed in the frame.
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        let target = navigationAction.request.url
+
+        if isBundledPage(target) {
+            decisionHandler(.allow)
+            return
+        }
+
+        if navigationAction.navigationType == .linkActivated,
+           let target,
+           WidgetMessageHandler.isBrowserURL(target.absoluteString) {
+            NSWorkspace.shared.open(target)
+        } else {
+            dynaLog("refused a navigation away from the wallpaper: \(target?.absoluteString ?? "<none>")")
+        }
+
+        decisionHandler(.cancel)
+    }
+
+    /// Whether `url` is the bundled `index.html`: the only document this host loads.
+    ///
+    /// The two paths are compared rather than their strings, because the request URL
+    /// and `indexURL` are built by different code paths and a bundle under a folder
+    /// whose name needs percent-encoding would otherwise compare unequal to itself.
+    private func isBundledPage(_ url: URL?) -> Bool {
+        guard let url, url.isFileURL, let indexURL else { return false }
+        return url.standardizedFileURL.path == indexURL.standardizedFileURL.path
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard let entry = entry(for: webView) else { return }
         entry.isReady = true
@@ -3096,6 +3149,8 @@ extension DesktopWindowController: WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        // A cancelled navigation is the guard above doing its job, not a failure.
+        guard (error as NSError).code != NSURLErrorCancelled else { return }
         dynaLog("wallpaper failed to load: \(error.localizedDescription)")
     }
 }

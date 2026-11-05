@@ -2396,6 +2396,148 @@ test('the docs describe the universal build, the DPI fix and the checksums', () 
 });
 
 /* -------------------------------------------------------------------------- *
+ * Navigation guards
+ * -------------------------------------------------------------------------- */
+
+group('Navigation guards');
+
+test('the macOS web view only ever loads the bundled wallpaper page', () => {
+  const swift = hostSwift();
+
+  // `didFinish` runs after the navigation happened; the policy decision is the guard.
+  assert.match(
+    swift,
+    /func webView\(\s*_ webView: WKWebView,\s*decidePolicyFor navigationAction: WKNavigationAction,\s*decisionHandler: @escaping \(WKNavigationActionPolicy\) -> Void\s*\) \{/,
+    'the navigation delegate must decide every navigation before it happens'
+  );
+
+  const decision = memberBody(swift, 'decidePolicyFor navigationAction: WKNavigationAction');
+  assert.match(decision, /if isBundledPage\(target\) \{/, 'the bundled page is the one load allowed');
+  assert.match(decision, /decisionHandler\(\.allow\)/);
+  assert.match(decision, /decisionHandler\(\.cancel\)/, 'every other navigation is cancelled');
+  assert.match(decision, /navigationType == \.linkActivated/, 'a clicked link is not a wallpaper');
+  assert.match(
+    decision,
+    /WidgetMessageHandler\.isBrowserURL\(target\.absoluteString\)/,
+    'only https may leave the app'
+  );
+  assert.match(decision, /NSWorkspace\.shared\.open\(target\)/, 'a clicked link opens in the browser');
+
+  // "The bundled page" is a path, not a string prefix: the request URL and `indexURL`
+  // are built by different code paths (percent-encoding, symlinks).
+  const guard = memberBody(swift, 'private func isBundledPage(_ url: URL?) -> Bool');
+  assert.match(guard, /url\.isFileURL/, 'a file URL is the only kind this host loads');
+  assert.match(guard, /url\.standardizedFileURL\.path == indexURL\.standardizedFileURL\.path/);
+
+  // WebKit reports a cancelled policy decision as a load failure; it is the guard at work.
+  const provisional = memberBody(swift, 'didFailProvisionalNavigation navigation: WKNavigation!');
+  assert.match(provisional, /NSURLErrorCancelled/, 'a refused navigation is not a broken wallpaper');
+});
+
+test('LaunchAtLogin escapes the bundle path before it becomes AppleScript', () => {
+  const swift = hostSwift();
+
+  const escape = memberBody(swift, 'private static func appleScriptString(_ value: String) -> String');
+  // Backslashes first: escaping a quote first would then escape the escaping backslash.
+  assert.ok(
+    escape.includes('.replacingOccurrences(of: "\\\\", with: "\\\\\\\\")'),
+    'backslashes must be doubled'
+  );
+  assert.ok(
+    escape.includes('.replacingOccurrences(of: "\\"", with: "\\\\\\"")'),
+    'a quote must not be able to close the AppleScript literal'
+  );
+  assert.ok(escape.includes('.replacingOccurrences(of: "\\n", with: "\\\\n")'), 'no raw line break');
+
+  ['private static func legacyIsEnabled() -> Bool', 'private static func legacySet(enabled: Bool)'].forEach(
+    (signature) => {
+      const body = memberBody(swift, signature);
+      assert.match(body, /let path = appleScriptString\(Bundle\.main\.bundlePath\)/);
+      assert.ok(
+        !/let path = Bundle\.main\.bundlePath/.test(body),
+        `${signature} must never interpolate the raw path`
+      );
+    }
+  );
+});
+
+test('the macOS build signs the bundle with the hardened runtime', () => {
+  const build = readText('build-macos.sh');
+  assert.match(build, /codesign --force --sign - --options runtime/, 'the hardened runtime must be on');
+  assert.match(
+    build,
+    /--entitlements "\$ROOT\/macos\/DynaWall\.entitlements"/,
+    'the runtime has to keep the Apple-events capability the login item needs'
+  );
+  assert.match(build, /codesign --verify --verbose=2 "\$APP_BUNDLE"/, 'the signature is verified');
+  assert.match(build, /macos\/DynaWall\.entitlements/, 'a missing entitlements file fails the build');
+
+  const entitlements = fs.readFileSync(path.join(ROOT, 'macos/DynaWall.entitlements'), 'utf8');
+  assert.match(
+    entitlements,
+    /<key>com\.apple\.security\.automation\.apple-events<\/key>\s*<true\/>/,
+    'the macOS 12 login-item fallback sends Apple events to System Events'
+  );
+  assert.match(
+    fs.readFileSync(path.join(ROOT, 'macos/Info.plist'), 'utf8'),
+    /<key>NSAppleEventsUsageDescription<\/key>/,
+    'TCC asks the user for automation with this string'
+  );
+});
+
+test('the Windows web view is held on the bundled wallpaper page', () => {
+  const window = readText('windows/WallpaperWindow.cs');
+
+  assert.match(
+    window,
+    /private static readonly string BundledPageUri = \$"https:\/\/\{PhotoLibrary\.BundledHost\}\/index\.html";/,
+    'the one page this host loads has to be named once'
+  );
+  assert.match(window, /core\.NavigationStarting \+= OnNavigationStarting/);
+  assert.match(window, /core\.NewWindowRequested \+= OnNewWindowRequested/);
+  assert.match(window, /core\.Navigate\(BundledPageUri\)/);
+
+  const starting = memberBody(window, 'private void OnNavigationStarting(');
+  assert.match(starting, /if \(IsBundledPage\(e\.Uri\)\) return;/);
+  assert.match(starting, /e\.Cancel = true/, 'a navigation away from the bundle is refused');
+
+  const popup = memberBody(window, 'private void OnNewWindowRequested(');
+  assert.match(popup, /e\.Handled = true/, 'no untracked popup over the desktop');
+  assert.match(popup, /OpenInBrowser\(e\.Uri\)/, 'a link still reaches the browser');
+
+  // The bridge answers one origin: the wallpaper page.
+  const message = memberBody(window, 'private void OnWebMessage(');
+  assert.match(message, /if \(!IsBundledPage\(e\.Source\)\)/, 'a foreign document cannot drive the host');
+});
+
+test('the Windows bridge hands the shell a canonical URL, not the page string', () => {
+  const bridge = readText('windows/WidgetBridge.cs');
+  const normalize = memberBody(bridge, 'internal static bool TryNormalizeBrowserUrl(');
+  assert.match(normalize, /Uri\.TryCreate\(target, UriKind\.Absolute, out var uri\)/);
+  assert.match(normalize, /uri\.Scheme != Uri\.UriSchemeHttps/, 'only https reaches the browser');
+  assert.match(normalize, /string\.IsNullOrEmpty\(uri\.Host\)/, 'an https: without a host is not a link');
+  assert.match(normalize, /canonical = uri\.AbsoluteUri;/, 'the shell gets RFC 3986, not the raw string');
+  assert.match(bridge, /url = canonical;/, 'the parsed message carries the canonical URL');
+
+  // Every route to Process.Start goes through that one gate.
+  const window = readText('windows/WallpaperWindow.cs');
+  const open = memberBody(window, 'private static void OpenInBrowser(string url)');
+  assert.match(open, /WidgetBridge\.TryNormalizeBrowserUrl\(url, out var canonical\)/);
+  assert.match(open, /ProcessStartInfo\(canonical\)/);
+});
+
+test('the Windows settings window reveals a folder without a command line', () => {
+  const form = readText('windows/SettingsForm.cs');
+  const reveal = memberBody(form, 'private void RevealPhotoFolder()');
+
+  assert.ok(!/explorer\.exe/.test(reveal), 'no shell process with a hand-quoted argument list');
+  assert.ok(!/Arguments\s*=/.test(reveal), 'a folder is the file name, never an argument');
+  assert.match(reveal, /Directory\.Exists\(target\)/, 'a folder that went away is not launched');
+  assert.match(reveal, /FileName = target/);
+  assert.match(reveal, /UseShellExecute = true/);
+});
+
+/* -------------------------------------------------------------------------- *
  * Font selection
  * -------------------------------------------------------------------------- */
 
@@ -3621,7 +3763,7 @@ test('the Windows host forwards desktop clicks into a card without taking any', 
   const bridge = fs.readFileSync(path.join(ROOT, 'windows/WidgetBridge.cs'), 'utf8');
   assert.match(bridge, /dynawall:interactivity/);
   assert.match(bridge, /dynawall:open-url/);
-  assert.match(bridge, /uri\.Scheme == Uri\.UriSchemeHttps/, 'only https reaches the browser');
+  assert.match(bridge, /uri\.Scheme (?:==|!=) Uri\.UriSchemeHttps/, 'only https reaches the browser');
 });
 
 test('only https leaves the wallpaper for the browser', () => {

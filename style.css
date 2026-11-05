@@ -653,14 +653,16 @@ html.is-widgets-off .widget-orbit {
 
 .widget-icon {
   /* The glyph fills the button now that there is no circle behind it. Stroked, not
-     filled: one hairline weight reads as an icon at any size, and `non-scaling-stroke`
-     keeps that weight from thickening as the glyph grows — crisp on a Retina display
-     without a second asset. */
+     filled: one weight reads as an icon at any size, and `non-scaling-stroke` keeps that
+     weight from thickening as the glyph grows — crisp on a Retina display without a
+     second asset. `2.5` is that weight: at the S, M and L footprints a 2px stroke is
+     only 3%–4% of the mark, so it thins out to a grey thread. A quarter of a unit more
+     holds the line on a high-DPI screen without turning the outline into a filled blob. */
   width: 100%;
   height: 100%;
   fill: none;
   stroke: currentColor;
-  stroke-width: 2;
+  stroke-width: 2.5;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
@@ -668,8 +670,8 @@ html.is-widgets-off .widget-orbit {
 
 /* `vector-effect` is not an inherited property, so the declaration above — which sits on
    the `<svg>` itself — never reaches the shapes inside it: without this rule a glyph's
-   stroke is `2` in *user units* and thickens with the button, so the L footprint would
-   read as a bold mark rather than the same hairline as S. It has to be set per shape. */
+   stroke is `2.5` in *user units* and thickens with the button, so the L footprint would
+   read as a bold mark rather than the same weight as S. It has to be set per shape. */
 .widget-icon > * {
   vector-effect: non-scaling-stroke;
 }
@@ -862,7 +864,7 @@ html.is-suspended .widget-btn {
   height: 52%;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.7;
+  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -925,7 +927,7 @@ html.is-suspended .widget-btn {
   grid-area: 1 / 1;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.9;
+  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
   transition:
@@ -981,7 +983,7 @@ html.is-suspended .widget-btn {
 .widget-modal-close svg {
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.9;
+  stroke-width: 2.2;
   stroke-linecap: round;
 }
 
@@ -1139,7 +1141,7 @@ html.is-suspended .widget-btn {
   height: 0.95rem;
   fill: none;
   stroke: var(--text-secondary);
-  stroke-width: 1.8;
+  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
   opacity: 0.75;
@@ -1280,7 +1282,7 @@ html.is-suspended .widget-btn {
   height: 0.78rem;
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.9;
+  stroke-width: 2.2;
   stroke-linecap: round;
 }
 
@@ -1315,7 +1317,7 @@ html.is-suspended .widget-btn {
   height: 3.1rem;
   fill: none;
   stroke: var(--widget-ink);
-  stroke-width: 1.35;
+  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
   opacity: 0.92;

@@ -29,11 +29,15 @@ internal static class Program
         // forms from a worker thread.
         SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
 
-        var openSettings = args is { Length: > 0 } && Array.Exists(args, a =>
-            string.Equals(a, "--settings", StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(a, "-s", StringComparison.OrdinalIgnoreCase));
+        var isAutoStart = args is { Length: > 0 } && Array.Exists(args, a =>
+            string.Equals(a, "--autostart", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(a, "--silent", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(a, "-b", StringComparison.OrdinalIgnoreCase));
 
-        using var context = new TrayApplicationContext(openSettings);
+        // When launched interactively (e.g. double-clicking DynaWall.exe), always open
+        // Settings so the user sees the app is alive and running. Only background startup
+        // (--autostart) stays purely in the system tray.
+        using var context = new TrayApplicationContext(openSettingsOnStart: !isAutoStart);
         using var showSettings = new EventWaitHandle(
             initialState: false, EventResetMode.AutoReset, ShowSettingsEventName);
         var registration = ThreadPool.RegisterWaitForSingleObject(

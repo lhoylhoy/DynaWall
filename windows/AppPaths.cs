@@ -26,8 +26,73 @@ internal static class AppPaths
 
     internal static string LogFile => Path.Combine(DataDirectory, "dynawall.log");
 
-    /// <summary>The web root mapped to <c>https://dynawall.local/</c>.</summary>
-    internal static string WebRoot => Path.Combine(AppContext.BaseDirectory, "web");
+    /// <summary>
+    /// The web root mapped to <c>https://dynawall.local/</c>.
+    /// Uses the local <c>web/</c> directory next to the executable if present;
+    /// otherwise unpacks embedded assets to <c>%LOCALAPPDATA%\DynaWall\web</c>
+    /// so the single <c>DynaWall.exe</c> runs standalone with no extra files needed.
+    /// </summary>
+    internal static string WebRoot
+    {
+        get
+        {
+            var localWeb = Path.Combine(AppContext.BaseDirectory, "web");
+            if (Directory.Exists(localWeb) && File.Exists(Path.Combine(localWeb, "index.html")))
+            {
+                return localWeb;
+            }
+
+            var appDataWeb = Path.Combine(DataDirectory, "web");
+            EnsureEmbeddedWebAssets(appDataWeb);
+            return appDataWeb;
+        }
+    }
+
+    private static void EnsureEmbeddedWebAssets(string targetDir)
+    {
+        var targetIndex = Path.Combine(targetDir, "index.html");
+        var versionFile = Path.Combine(targetDir, ".version");
+        var currentVersion = typeof(AppPaths).Assembly.GetName().Version?.ToString() ?? "1.0.0";
+
+        if (File.Exists(targetIndex) && File.Exists(versionFile) &&
+            string.Equals(File.ReadAllText(versionFile).Trim(), currentVersion, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(targetDir);
+            var assembly = typeof(AppPaths).Assembly;
+            var resourceNames = assembly.GetManifestResourceNames();
+
+            foreach (var name in resourceNames)
+            {
+                if (!name.StartsWith("web/", StringComparison.OrdinalIgnoreCase)) continue;
+
+                var relativePath = name.Substring(4).Replace('/', Path.DirectorySeparatorChar);
+                var fullPath = Path.Combine(targetDir, relativePath);
+                var parentDir = Path.GetDirectoryName(fullPath);
+                if (!string.IsNullOrEmpty(parentDir))
+                {
+                    Directory.CreateDirectory(parentDir);
+                }
+
+                using var stream = assembly.GetManifestResourceStream(name);
+                if (stream is null) continue;
+
+                using var file = File.Create(fullPath);
+                stream.CopyTo(file);
+            }
+
+            File.WriteAllText(versionFile, currentVersion);
+            Log.Write($"unpacked embedded web wallpaper into {targetDir}");
+        }
+        catch (Exception ex)
+        {
+            Log.Write($"could not unpack embedded web assets: {ex.Message}");
+        }
+    }
 
     internal static void EnsureDataDirectory()
     {

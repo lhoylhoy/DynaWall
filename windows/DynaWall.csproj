@@ -64,6 +64,23 @@
     <Content Include="..\images\04-mint-fog.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\images\05-candy-sky.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="..\images\06-graphite.jpg" Link="web\images\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+
+    <EmbeddedResource Include="../index.html" LogicalName="web/index.html" />
+    <EmbeddedResource Include="../style.css" LogicalName="web/style.css" />
+    <EmbeddedResource Include="../script.js" LogicalName="web/script.js" />
+    <EmbeddedResource Include="../assets/fonts/**/*" LogicalName="web/assets/fonts/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../images/iClarified-macOS-27-Golden-Gate-Wallpaper-5K-Light.jpg" LogicalName="web/images/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../images/iClarified-macOS-27-Golden-Gate-Day-Wallpaper.jpg" LogicalName="web/images/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../images/iClarified-macOS-27-Golden-Gate-Sunset-Wallpaper.jpg" LogicalName="web/images/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../images/iClarified-macOS-27-Golden-Gate-Evening-Wallpaper.jpg" LogicalName="web/images/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../images/iClarified-macOS-27-Golden-Gate-Night-Wallpaper.jpg" LogicalName="web/images/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../images/iClarified-macOS-27-Golden-Gate-Wallpaper-5K-Dark.jpg" LogicalName="web/images/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../images/01-neon-dusk.jpg" LogicalName="web/images/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../images/02-solar-flare.jpg" LogicalName="web/images/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../images/03-deep-ocean.jpg" LogicalName="web/images/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../images/04-mint-fog.jpg" LogicalName="web/images/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../images/05-candy-sky.jpg" LogicalName="web/images/%(Filename)%(Extension)" />
+    <EmbeddedResource Include="../images/06-graphite.jpg" LogicalName="web/images/%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

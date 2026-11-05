@@ -41,7 +41,7 @@ internal static class StartupRegistration
             if (enabled)
             {
                 // Quoted: the installer's per-user path contains spaces.
-                key.SetValue(ValueName, $"\"{ExecutablePath}\"", RegistryValueKind.String);
+                key.SetValue(ValueName, $"\"{ExecutablePath}\" --autostart", RegistryValueKind.String);
             }
             else
             {

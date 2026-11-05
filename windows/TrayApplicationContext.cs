@@ -104,6 +104,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
             settingsForm.Show();
             settingsForm.Activate();
+            settingsForm.BringToFront();
             return;
         }
 
@@ -111,6 +112,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         settingsForm.FormClosed += (_, _) => settingsForm = null;
         settingsForm.Show();
         settingsForm.Activate();
+        settingsForm.BringToFront();
     }
 
     private void TogglePause()

@@ -52,6 +52,9 @@ if (-not (Test-Path (Join-Path $publish 'web\index.html'))) {
     throw 'the published web wallpaper is missing from publish\web'
 }
 
+Write-Host '==> Copying standalone DynaWall.exe'
+Copy-Item (Join-Path $publish 'DynaWall.exe') (Join-Path $dist 'DynaWall.exe') -Force
+
 Write-Host '==> Packing the portable build'
 $zip = Join-Path $dist 'DynaWall-Windows-Portable.zip'
 if (Test-Path $zip) { Remove-Item $zip -Force }
@@ -77,6 +80,7 @@ if ($LASTEXITCODE -ne 0) { throw "Inno Setup compiler failed with exit code $LAS
 $setup = Join-Path $dist 'DynaWall-Setup.exe'
 if (-not (Test-Path $setup)) { throw 'DynaWall-Setup.exe was not produced' }
 
-Get-Item $zip, $setup | ForEach-Object {
+$standalone = Join-Path $dist 'DynaWall.exe'
+Get-Item $standalone, $zip, $setup | ForEach-Object {
     Write-Host ('    {0} ({1:N1} MB)' -f $_.Name, ($_.Length / 1MB))
 }

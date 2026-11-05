@@ -2965,6 +2965,55 @@ test('the satellites are bare white glyphs, not glass buttons', () => {
   assert.match(css, /backdrop-filter:\s*blur\(var\(--glass-blur\)\)/, 'the card is frosted');
   assert.match(css, /\.widget-modal\s*\{[^}]*border-radius:\s*var\(--glass-radius\)/);
 });
+test('the built-in satellites wear the official brand marks', () => {
+  // Each satellite is named after the app it opens (`YouTube Music`, `Google News`,
+  // `YouTube`) and its card's rows all go to that app's site, so the glyph is that app's
+  // own mark — traced to the official geometry, drawn in the wallpaper's one ink. Still
+  // no asset file and no request: the mark is path data in the page.
+  const markup = readText('index.html');
+
+  /** The glyph of one satellite: from its `data-widget` to the `</svg>` that closes it. */
+  const glyphOf = (id) => {
+    const match = new RegExp(`data-widget="${id}"[\\s\\S]*?</svg>`).exec(markup);
+    assert.ok(match, `the ${id} satellite lost its glyph`);
+    return match[0];
+  };
+
+  // YouTube Music is a disc with its ring and a play triangle, not a generic note.
+  const music = glyphOf('music');
+  assert.match(music, /<circle cx="12" cy="12" r="10\.9"/, 'the disc');
+  assert.match(music, /<circle cx="12" cy="12" r="6\.05"/, 'the ring inside it');
+  assert.match(music, /M9\.9 15\.2V8\.8l5\.6 3\.2Z/, 'the play triangle');
+  assert.ok(!/M9 17\.5V5\.2/.test(music), 'the old music note must be gone');
+
+  // YouTube's badge is 24 wide for every 16.9 tall. The old glyph was nearly square
+  // (21.8 x 19.6), which is why it read as a plain rounded rectangle rather than the logo.
+  const youtube = glyphOf('youtube');
+  const badge = /M3\.8 4\.32h16\.4[\s\S]*?H3\.8[\s\S]*?Z/.exec(youtube);
+  assert.ok(badge, 'the badge outline is missing');
+  const badgeWidth = 22.92 - 1.08;
+  const badgeHeight = 19.68 - 4.32;
+  assert.ok(
+    Math.abs(badgeWidth / badgeHeight - 24 / 16.9) < 0.05,
+    `the badge lost the logo's aspect ratio (${(badgeWidth / badgeHeight).toFixed(2)}:1)`
+  );
+  assert.match(youtube, /M9\.77 15\.24V8\.76L15\.47 12Z/, 'the optical play triangle');
+
+  // Google News is the folded page with the app icon's 2 x 2 cells.
+  const news = glyphOf('news');
+  assert.match(news, /M17\.9 6\.3H10v7\.9h7\.9Z/, 'the cell block');
+  assert.match(news, /M14 6\.3v7\.9M10 10\.2h7\.9/, 'split into the four cells');
+
+  // The marks are line art, not filled plates: the only fill allowed is the ink itself.
+  ['music', 'news', 'youtube', 'weather'].forEach((id) => {
+    const glyph = glyphOf(id);
+    const fills = Array.from(glyph.matchAll(/fill="([^"]+)"/g)).map((match) => match[1]);
+    fills.forEach((fill) => {
+      assert.equal(fill, 'currentColor', `the ${id} glyph fills with ${fill}, not the ink`);
+    });
+  });
+});
+
 test('the satellites ring the greeting, scattered rather than evenly placed', () => {
   const viewport = {
     width: 1920,
@@ -4196,6 +4245,15 @@ test('the orbit wears three footprints, and a larger glyph is not a heavier one'
     css,
     /\.widget-icon\s*\{[^}]*vector-effect:\s*non-scaling-stroke/,
     'a big glyph is not a thick one'
+  );
+  // …and this is the half that actually does it: `vector-effect` is not inherited, so the
+  // declaration on the `<svg>` never reaches the shapes inside it. Without the child rule
+  // a stroke is `2` in *user units* and thickens with the button (measured in the browser:
+  // S drew 2.7px, L drew 4.3px), so L would read as a bold mark next to a hairline S.
+  assert.match(
+    css,
+    /\.widget-icon\s*>\s*\*\s*\{[^}]*vector-effect:\s*non-scaling-stroke/,
+    'the shapes themselves carry the constant stroke'
   );
 });
 

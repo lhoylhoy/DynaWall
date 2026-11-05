@@ -1138,6 +1138,28 @@
   const WIDGET_REACH_RATIO = 0.16;
 
   /**
+   * Where the satellites' click tally is cached.
+   *
+   * Deliberately outside `STORAGE_KEYS`, for the same reason the shortcut list is: that
+   * map is the one-to-one mirror of the configuration fields (`dynawall.firstName` …)
+   * a host control can push, and a tally is not one of those — it is earned on the
+   * wallpaper by opening the glyphs. The value is a JSON object of `{ [id]: count }`.
+   */
+  const WIDGET_USAGE_KEY = 'dynawall.widgetUsage';
+
+  /** A tally stops climbing here: the ranking only ever compares counts with each other. */
+  const MAX_WIDGET_USAGE = 1000000;
+
+  /**
+   * The three footprints a satellite can wear, smallest first.
+   *
+   * S is the app that is barely opened, M is the baseline every glyph starts at, L is
+   * the one the user lives in. style.css owns what each of them measures; script.js only
+   * ever names them.
+   */
+  const WIDGET_SIZE_TIERS = Object.freeze(['s', 'm', 'l']);
+
+  /**
    * A tiny deterministic PRNG (mulberry32).
    *
    * The scatter has to be repeatable — the same seed must deal the same arrangement —
@@ -1164,31 +1186,183 @@
     );
   }
 
+  /* ----------------------------------------------------------------------- *
+   * Satellite usage — how often each glyph is opened
+   *
+   * The apps a wallpaper offers are not equally interesting: two of them get opened
+   * every day and the rest are never touched. Counting the opens is what lets the ring
+   * say so — the glyph that gets used grows, the one that does not shrinks — without a
+   * settings panel and without a single request. Everything below is pure and
+   * storage-shaped, so the page, a host script and the headless tests all rank the same
+   * way.
+   * ------------------------------------------------------------------------ */
+
+  /** A satellite id as it is cached: a short, trimmed string (`''` when it names nothing). */
+  function normalizeWidgetUsageId(value) {
+    if (value === undefined || value === null) return '';
+    return clipText(value, 64);
+  }
+
   /**
-   * Scatter `count` satellites of `size` px around the greeting.
+   * A stored tally, made safe: `{ [id]: count }` with whole, positive counts only.
+   *
+   * Hand-edited, truncated or foreign JSON is simply no tally — the orbit then stays at
+   * its baseline instead of throwing on load — and a count that is not a number, is
+   * negative or is fractional is dropped or rounded down rather than trusted.
+   */
+  function normalizeWidgetUsage(rawValue) {
+    let list = rawValue;
+    if (typeof list === 'string') {
+      if (!list.trim()) return {};
+      try {
+        list = JSON.parse(list);
+      } catch (error) {
+        return {};
+      }
+    }
+    if (!list || typeof list !== 'object' || Array.isArray(list)) return {};
+
+    const usage = {};
+    Object.keys(list).forEach(function (key) {
+      const id = normalizeWidgetUsageId(key);
+      const count = Math.floor(Number(list[key]));
+      if (!id || !Number.isFinite(count) || count <= 0) return;
+      usage[id] = Math.min(count, MAX_WIDGET_USAGE);
+    });
+    return usage;
+  }
+
+  /** The tally cached on this machine, or `{}` when there is none (or no storage). */
+  function readWidgetUsage(storage) {
+    if (!storage || typeof storage.getItem !== 'function') return {};
+    let raw = null;
+    try {
+      raw = storage.getItem(WIDGET_USAGE_KEY);
+    } catch (error) {
+      return {}; // storage can be blocked (private mode, disabled cookies)
+    }
+    if (raw === null) return {};
+    return normalizeWidgetUsage(raw);
+  }
+
+  /** Cache the tally. Best-effort: a blocked `localStorage` is not a broken wallpaper. */
+  function writeWidgetUsage(storage, usage) {
+    if (!storage || typeof storage.setItem !== 'function') return false;
+    try {
+      storage.setItem(WIDGET_USAGE_KEY, JSON.stringify(normalizeWidgetUsage(usage)));
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Count one open of `id` and cache the new tally.
+   *
+   * Returns the tally the cache now holds, so the caller can keep its own copy in step
+   * — which is also what lets a blocked `localStorage` still rank the apps this session
+   * instead of freezing every glyph at its baseline.
+   */
+  function recordWidgetUsage(storage, id) {
+    const usage = readWidgetUsage(storage);
+    const key = normalizeWidgetUsageId(id);
+    if (!key) return usage;
+    usage[key] = Math.min((Number(usage[key]) || 0) + 1, MAX_WIDGET_USAGE);
+    writeWidgetUsage(storage, usage);
+    return usage;
+  }
+
+  /** Forget every count: the orbit goes back to all-baseline. */
+  function clearWidgetUsage(storage) {
+    return writeWidgetUsage(storage, {});
+  }
+
+  /**
+   * The S, M or L tier of each satellite on the desktop, in the order given.
+   *
+   * Only the active ids are ranked, and only against each other: the glyphs the user
+   * has switched off have no place in the comparison. With no tally at all — a fresh
+   * install, a reset — every glyph is M, because equal counts must never be split into
+   * an arbitrary hierarchy. Once the counts differ, the span between the least and the
+   * most opened app is divided in thirds: the top third wears L, the bottom third wears
+   * S and whatever falls between stays M. Identical counts always land in the same
+   * third, so two apps opened the same number of times are always the same size.
+   *
+   * Returns an array of `'s' | 'm' | 'l'`, aligned with `activeIds`.
+   */
+  function computeWidgetSizes(activeIds, usage) {
+    const ids = Array.isArray(activeIds) ? activeIds : [];
+    if (ids.length === 0) return [];
+    const tally = usage && typeof usage === 'object' ? usage : {};
+
+    const counts = ids.map(function (id) {
+      const count = Math.floor(Number(tally[normalizeWidgetUsageId(id)]));
+      return Number.isFinite(count) && count > 0 ? Math.min(count, MAX_WIDGET_USAGE) : 0;
+    });
+
+    let lowest = Infinity;
+    let highest = -Infinity;
+    counts.forEach(function (count) {
+      lowest = Math.min(lowest, count);
+      highest = Math.max(highest, count);
+    });
+
+    // Nothing to rank: an unused orbit, or one where every glyph has been opened as
+    // often as its neighbours. Both wear the baseline rather than inventing an order.
+    if (highest === lowest) {
+      return ids.map(function () {
+        return 'm';
+      });
+    }
+
+    const span = highest - lowest;
+    return counts.map(function (count) {
+      const relative = (count - lowest) / span;
+      if (relative >= 2 / 3) return 'l';
+      if (relative <= 1 / 3) return 's';
+      return 'm';
+    });
+  }
+
+  /**
+   * Scatter `count` satellites around the greeting.
    *
    * The satellites belong to the greeting, not to the screen. Each one is thrown out
    * from the text block along a random ray — a random angle, then a random distance
-   * between `clearance` px of air and `reach` px further out — so the four land in a
-   * loose ring around the type. That is what makes the wallpaper look dealt rather
-   * than laid out while keeping the four together: a satellite that wandered off into
-   * an empty corner stops reading as part of the composition.
+   * between `clearance` px of air and `reach` px further out — so they land in a loose
+   * ring around the type. That is what makes the wallpaper look dealt rather than laid
+   * out while keeping them together: a satellite that wandered off into an empty corner
+   * stops reading as part of the composition.
    *
    * The block they orbit is the union of the `avoid` rects (the greeting and the
    * subtitle, in viewport pixels) — the satellites have to keep off those anyway, so
-   * they are the same thing. Three rules keep a hand playable: no two satellites may
-   * come within `gap` px of each other, none may break the ring, and no quadrant of the
-   * ring may take more than half of them, so the greeting never ends up with every
-   * satellite piled on one side. Where a candidate cannot satisfy all of that, the one
-   * with the most air around it wins; a wallpaper with no room for a ring at all falls
-   * back to an even spread of the safe area.
+   * they are the same thing.
+   *
+   * `size` is one footprint for every satellite; `sizes` gives each of them its own
+   * (`[33, 44, 55, 44]` for a hand of mixed glyphs), which is what the usage tiers are
+   * made of. Bounds, ring clearance and collision padding are measured against the
+   * individual footprint, so a large glyph is never laid out as if it were small.
+   * `size` stays the fallback for a `sizes` entry that is missing or nonsense, which is
+   * also what an older host that measures one glyph for all of them passes.
+   *
+   * Four rules keep a hand playable. No two satellites may come within `gap` px of each
+   * other, none may break the ring, and neither flank of the greeting may take more
+   * than half of them (`Math.ceil(count / 2)`), so the type never ends up with every
+   * satellite piled on one side. Among the candidates that satisfy those three, the one
+   * that leaves the two flanks closest to equal *weight* — the S, M and L glyphs summed
+   * as the area they occupy — and to equal count, on a ray of its own, wins; that is
+   * what disperses the large glyphs instead of letting them collect on one side. Where
+   * a candidate cannot satisfy the hard rules, the one with the most air around it
+   * wins; a wallpaper with no room for a ring at all falls back to an even spread of
+   * the safe area, so a crowded screen is a smaller composition rather than a missing
+   * glyph.
    *
    * `margin` keeps the satellites off the screen edges; `inset`
    * (`{ top, right, bottom, left }`) overrides an edge on its own, which the bottom
    * one needs — the wallpaper runs behind the Dock and the Windows taskbar, and a
    * satellite there would be invisible and unclickable.
    *
-   * Returns `[{ x, y }]` — the top-left corner of each satellite, in order.
+   * Returns `[{ x, y }]` — the top-left corner of each satellite, in the order given.
    */
   function scatterWidgets(options) {
     const settings = options || {};
@@ -1202,7 +1376,18 @@
     const reach = Math.max(0, Number(settings.reach) || 0);
     const random = createRandom(settings.seed);
     const attempts = 60;
-    const cap = Math.max(2, Math.ceil(count / 2));
+    // Half the hand per flank, rounded up: the greeting is the axis of the composition,
+    // so neither side may take more than its share of the glyphs.
+    const cap = Math.ceil(count / 2);
+
+    // The footprint of each satellite: `sizes` when the caller has measured them, the one
+    // `size` for all of them when it has not.
+    const footprints = [];
+    const given = Array.isArray(settings.sizes) ? settings.sizes : [];
+    for (let index = 0; index < count; index += 1) {
+      const measured = Number(given[index]);
+      footprints.push(Math.max(1, Number.isFinite(measured) && measured > 0 ? measured : size));
+    }
 
     const inset = settings.inset || {};
     const edge = function (value) {
@@ -1244,40 +1429,78 @@
       block.bottom = Math.max(block.bottom, y + boxHeight);
     });
 
-    // Where a satellite's centre is allowed: the viewport inside the insets, minus half
-    // a satellite. With no greeting to orbit, its middle is the centre of the ring.
-    const xBounds = {
-      min: edge(inset.left) + size / 2,
-      max: Math.max(edge(inset.left) + size / 2, width - edge(inset.right) - size / 2)
+    // Where a satellite's *centre* is allowed: the viewport inside the insets, minus half
+    // of that satellite. A large glyph has less room than a small one, and each one is
+    // kept whole on the wallpaper.
+    const rangeFor = function (min, max) {
+      // A viewport narrower than the glyph leaves no range at all: collapse to the middle
+      // of what is there rather than letting the clamp run backwards.
+      return max >= min ? { min: min, max: max } : { min: (min + max) / 2, max: (min + max) / 2 };
     };
-    const yBounds = {
-      min: edge(inset.top) + size / 2,
-      max: Math.max(edge(inset.top) + size / 2, height - edge(inset.bottom) - size / 2)
+    const boxFor = function (footprint) {
+      const half = footprint / 2;
+      return {
+        x: rangeFor(edge(inset.left) + half, width - edge(inset.right) - half),
+        y: rangeFor(edge(inset.top) + half, height - edge(inset.bottom) - half)
+      };
     };
-    const centreX = block ? (block.left + block.right) / 2 : (xBounds.min + xBounds.max) / 2;
-    const centreY = block ? (block.top + block.bottom) / 2 : (yBounds.min + yBounds.max) / 2;
     // The ring, measured to the satellite's own edge: half the text block, `clearance`
     // of air and half a satellite — so a ray that stops at the ring leaves a rect that
     // is exactly `clearance` from the type, and one that travels `reach` further is that
     // much further out again.
-    const ringX = (block ? (block.right - block.left) / 2 : 0) + clearance + size / 2;
-    const ringY = (block ? (block.bottom - block.top) / 2 : 0) + clearance + size / 2;
-    // A ring needs its centre on screen: a text block larger than the wallpaper leaves
-    // nothing to orbit, and the plain spread takes over.
-    const orbits =
-      centreX >= xBounds.min &&
-      centreX <= xBounds.max &&
-      centreY >= yBounds.min &&
-      centreY <= yBounds.max;
+    const ringFor = function (footprint) {
+      return {
+        x: (block ? (block.right - block.left) / 2 : 0) + clearance + footprint / 2,
+        y: (block ? (block.bottom - block.top) / 2 : 0) + clearance + footprint / 2
+      };
+    };
+    // The ring turns around the middle of the text block, or around the middle of the
+    // safe area when there is no greeting to orbit.
+    const centreX = block
+      ? (block.left + block.right) / 2
+      : (edge(inset.left) + width - edge(inset.right)) / 2;
+    const centreY = block
+      ? (block.top + block.bottom) / 2
+      : (edge(inset.top) + height - edge(inset.bottom)) / 2;
 
     const placed = [];
-    const counts = [0, 0, 0, 0];
+    // The ray each placed satellite took, for the dispersion half of the score.
+    const angles = [];
     const points = [];
+    let leftCount = 0;
+    let rightCount = 0;
+    let leftWeight = 0;
+    let rightWeight = 0;
 
-    for (let index = 0; index < count; index += 1) {
+    // Largest first: a big glyph has the fewest places to go, so it picks its ray while
+    // the ring is still empty and the small ones close the gaps around it. Ties keep the
+    // caller's order, so the same seed still deals exactly the same hand.
+    const order = footprints.map(function (footprint, index) {
+      return index;
+    });
+    order.sort(function (first, second) {
+      if (footprints[second] !== footprints[first]) return footprints[second] - footprints[first];
+      return first - second;
+    });
+
+    for (let step = 0; step < order.length; step += 1) {
+      const item = order[step];
+      const footprint = footprints[item];
+      const bounds = boxFor(footprint);
+      const ring = ringFor(footprint);
+      // A ring needs its centre on screen: a text block larger than the wallpaper leaves
+      // nothing to orbit, and the plain spread takes over.
+      const orbits =
+        centreX >= bounds.x.min &&
+        centreX <= bounds.x.max &&
+        centreY >= bounds.y.min &&
+        centreY <= bounds.y.max;
+
       let best = null;
-      let bestDepth = Infinity;
-      let bestQuadrant = 0;
+      let bestOverlap = Infinity;
+      let bestScore = Infinity;
+      let bestSide = 'left';
+      let bestAngle = 0;
 
       for (let attempt = 0; attempt < attempts; attempt += 1) {
         let satelliteX;
@@ -1291,12 +1514,12 @@
           const rayX = Math.cos(angle);
           const rayY = Math.sin(angle);
           const haloDistance = Math.min(
-            rayX === 0 ? Infinity : ringX / Math.abs(rayX),
-            rayY === 0 ? Infinity : ringY / Math.abs(rayY)
+            rayX === 0 ? Infinity : ring.x / Math.abs(rayX),
+            rayY === 0 ? Infinity : ring.y / Math.abs(rayY)
           );
           const screenDistance = Math.min(
-            rayLimit(centreX, xBounds, rayX),
-            rayLimit(centreY, yBounds, rayY)
+            rayLimit(centreX, bounds.x, rayX),
+            rayLimit(centreY, bounds.y, rayY)
           );
           if (screenDistance <= haloDistance && attempt < attempts - 1) continue;
 
@@ -1305,22 +1528,24 @@
           satelliteX = centreX + rayX * distance;
           satelliteY = centreY + rayY * distance;
         } else {
-          satelliteX = xBounds.min + random() * (xBounds.max - xBounds.min);
-          satelliteY = yBounds.min + random() * (yBounds.max - yBounds.min);
+          satelliteX = bounds.x.min + random() * (bounds.x.max - bounds.x.min);
+          satelliteY = bounds.y.min + random() * (bounds.y.max - bounds.y.min);
         }
 
         // Floating point can leave the safe box by a hair; CSS pixels cannot.
-        satelliteX = Math.min(Math.max(satelliteX, xBounds.min), xBounds.max);
-        satelliteY = Math.min(Math.max(satelliteY, yBounds.min), yBounds.max);
+        satelliteX = Math.min(Math.max(satelliteX, bounds.x.min), bounds.x.max);
+        satelliteY = Math.min(Math.max(satelliteY, bounds.y.min), bounds.y.max);
 
-        const quadrant = (satelliteX < centreX ? 0 : 1) + (satelliteY < centreY ? 0 : 2);
-        if (counts[quadrant] >= cap && attempt < attempts - 1) continue;
+        const side = satelliteX < centreX ? 'left' : 'right';
+        // Half the hand per flank: a candidate that would crowd this side is passed over
+        // unless it is the last one, so a tight screen still lays every glyph out.
+        if ((side === 'left' ? leftCount : rightCount) >= cap && attempt < attempts - 1) continue;
 
         const rect = {
-          left: satelliteX - size / 2,
-          top: satelliteY - size / 2,
-          right: satelliteX + size / 2,
-          bottom: satelliteY + size / 2
+          left: satelliteX - footprint / 2,
+          top: satelliteY - footprint / 2,
+          right: satelliteX + footprint / 2,
+          bottom: satelliteY + footprint / 2
         };
         let depth = 0;
         avoid.forEach(function (box) {
@@ -1329,17 +1554,54 @@
         placed.forEach(function (box) {
           depth = Math.max(depth, overlapDepth(rect, box, gap));
         });
-        if (depth < bestDepth) {
-          bestDepth = depth;
+
+        // How the hand reads from in front of the wallpaper: sit on the flank that is
+        // carrying less glyph weight, keep the counts level, and take a ray of its own
+        // (`crowded` is 0 for a ray opposite a neighbour, 1 for straight down a taken one).
+        const angle = Math.atan2(satelliteY - centreY, satelliteX - centreX);
+        let nearest = Math.PI;
+        angles.forEach(function (taken) {
+          let apart = Math.abs(taken - angle);
+          if (apart > Math.PI) apart = Math.PI * 2 - apart;
+          nearest = Math.min(nearest, apart);
+        });
+        const crowded = angles.length > 0 ? 1 - nearest / Math.PI : 0;
+        const leftward = side === 'left' ? 1 : 0;
+        const weightGap = Math.abs(
+          leftWeight + leftward * footprint - (rightWeight + (1 - leftward) * footprint)
+        );
+        const countGap = Math.abs(leftCount + leftward - (rightCount + (1 - leftward)));
+        const score = weightGap + countGap * footprint + crowded * footprint;
+
+        // A candidate that touches nothing always beats one that does; between two that
+        // do, the shallower overlap wins. The balance score breaks the ties.
+        const overlap = depth > 0 ? depth : 0;
+        if (
+          best === null ||
+          overlap < bestOverlap ||
+          (overlap === bestOverlap && score < bestScore)
+        ) {
           best = rect;
-          bestQuadrant = quadrant;
+          bestOverlap = overlap;
+          bestScore = score;
+          bestSide = side;
+          bestAngle = angle;
         }
-        if (depth <= 0) break;
+        // Level on both flanks, clear of everything, on a ray of its own: nothing that
+        // can be thrown next could beat it.
+        if (overlap === 0 && score === 0) break;
       }
 
-      counts[bestQuadrant] += 1;
       placed.push(best);
-      points.push({ x: best.left, y: best.top });
+      angles.push(bestAngle);
+      points[item] = { x: best.left, y: best.top };
+      if (bestSide === 'left') {
+        leftCount += 1;
+        leftWeight += footprint;
+      } else {
+        rightCount += 1;
+        rightWeight += footprint;
+      }
     }
 
     return points;
@@ -3209,6 +3471,9 @@
       // draft and the message belong to the manager card, so a half-typed address and a
       // validation line survive the card re-rendering under them.
       services: readCustomServices(storage),
+      // How often each satellite has been opened: read once, then kept in step with every
+      // click. It is the ranking the S/M/L footprints are drawn from.
+      usage: readWidgetUsage(storage),
       serviceError: '',
       serviceDraft: { title: '', url: '' },
       // One arrangement per page load: the wallpaper is dealt a fresh constellation
@@ -3324,6 +3589,75 @@
       });
     }
 
+    /* --- footprint tiers --------------------------------------------------- */
+
+    /**
+     * The id a satellite's opens are counted under.
+     *
+     * A built-in is its widget id and a shortcut is its `data-service` handle; the `+`
+     * has neither, because it is a control rather than an app and nothing is ranked by
+     * how often the manager was opened.
+     */
+    function usageIdOf(button) {
+      const widgetId = button.getAttribute('data-widget') || '';
+      if (widgetId) return widgetId;
+      return button.getAttribute('data-service') || '';
+    }
+
+    /**
+     * The S/M/L tier of each element in `elements`, in the same order.
+     *
+     * The `+` is left out of the ranking altogether and wears the baseline: letting it in
+     * would drag the least-opened app's count to zero and make a single open look like a
+     * hierarchy over everything.
+     */
+    function sizeTiers(elements) {
+      const ids = elements.map(usageIdOf);
+      const ranked = ids.filter(function (id) {
+        return Boolean(id);
+      });
+      const tiers = computeWidgetSizes(ranked, state.usage);
+      let cursor = 0;
+      return ids.map(function (id) {
+        if (!id) return 'm';
+        const tier = tiers[cursor];
+        cursor += 1;
+        return tier || 'm';
+      });
+    }
+
+    /** Wear one tier: a class for style.css and an attribute for anyone watching. */
+    function wearSizeTier(button, tier) {
+      const name = WIDGET_SIZE_TIERS.indexOf(tier) === -1 ? 'm' : tier;
+      WIDGET_SIZE_TIERS.forEach(function (other) {
+        button.classList.remove('is-size-' + other);
+      });
+      button.classList.add('is-size-' + name);
+      button.setAttribute('data-size', name);
+    }
+
+    /**
+     * Count one open and deal again if it changed the hierarchy.
+     *
+     * The footprints are what the user earns by using the wallpaper: open the same
+     * satellite a few times and it grows, leave one alone and it shrinks. Only a change
+     * of tier re-deals — an open that leaves every glyph where it was must not reshuffle
+     * the desktop out from under the card the user is reading.
+     */
+    function noteUsage(id) {
+      if (!id) return;
+      const before = sizeTiers(placedButtons()).join('');
+      const tally = recordWidgetUsage(storage, id);
+      // The store is the record whenever it works — so a host script that clears the
+      // tally is honoured on the next open — and the page's own copy is the fallback for
+      // a blocked `localStorage`, which still ranks what this session opened.
+      const stored = readWidgetUsage(storage);
+      state.usage = stored[normalizeWidgetUsageId(id)]
+        ? stored
+        : Object.assign({}, state.usage, tally);
+      if (sizeTiers(placedButtons()).join('') !== before) scatter();
+    }
+
     /** A shortcut's satellite: a bare glyph in the ring, exactly like a built-in one. */
     function createServiceButton(service) {
       const button = el('button', 'widget-btn widget-btn-service');
@@ -3350,6 +3684,10 @@
         // A shortcut is not a card: it leaves for the default browser through the same
         // native bridge the cards' link rows use, so the wallpaper never loads the site.
         openExternal(win, service.url);
+        // …and it counts as a use like any other glyph, so the footprint follows how
+        // often it is actually reached for. Its handle is positional, like every
+        // shortcut's, so the tally follows the slot in the list.
+        noteUsage(service.id);
       });
       return button;
     }
@@ -3489,6 +3827,10 @@
      * set actually on screen, so hiding YouTube — or adding a shortcut — closes or opens
      * a gap instead of leaving one. The `+` is dealt with them, because it is a satellite
      * in everything but its click.
+     *
+     * Each one is dealt at its own footprint: the S, M and L tiers the click tally earned
+     * are applied before anything is measured, so the engine knows how much room every
+     * glyph really needs and can balance the two flanks by the weight on them.
      */
     function scatter() {
       if (!state.enabled) return;
@@ -3500,6 +3842,14 @@
         scheduleHitRegions();
         return;
       }
+
+      // The footprints first: a satellite's size is what the ring, the collision padding
+      // and the greeting's clearance are all measured against, so the classes have to be
+      // on before anything is read back out of the layout.
+      const tiers = sizeTiers(active);
+      active.forEach(function (button, index) {
+        wearSizeTier(button, tiers[index]);
+      });
 
       if (isNarrow()) {
         orbitElements().forEach(function (button) {
@@ -3515,6 +3865,14 @@
       const size = satelliteSize();
       if (width <= 0 || height <= 0 || size <= 0) return;
 
+      // One footprint per glyph, in the order they are dealt. A satellite the browser has
+      // not laid out yet falls back to the first measured one, so a single missing box
+      // cannot take the whole ring with it.
+      const sizes = active.map(function (button) {
+        const measured = button.offsetWidth;
+        return measured > 0 ? measured : size;
+      });
+
       const unit = rem();
       const rects = textRects();
       // The ring widens with the greeting, not just with the rem.
@@ -3525,6 +3883,7 @@
         width: width,
         height: height,
         size: size,
+        sizes: sizes,
         count: active.length,
         margin: Math.round(unit * 2.5),
         // The bottom edge has further to give: the wallpaper runs behind the Dock on
@@ -3794,6 +4153,10 @@
           /* A host that refuses focus; the card still works with the mouse. */
         }
       }
+
+      // An open is a use. It is written after the card is up, because the tally can
+      // re-deal the ring — and a card must never wait for the satellites behind it.
+      if (button) noteUsage(usageIdOf(button));
       return true;
     }
 
@@ -4688,6 +5051,20 @@
     WIDGET_LINK_HOSTS: WIDGET_LINK_HOSTS,
     WIDGET_REMOTE_HOSTS: WIDGET_REMOTE_HOSTS,
     WIDGET_NARROW_QUERY: WIDGET_NARROW_QUERY,
+    /** The three footprints a satellite can wear, smallest first (`s`, `m`, `l`). */
+    WIDGET_SIZE_TIERS: WIDGET_SIZE_TIERS,
+    /**
+     * Where the satellites' click tally is cached — outside `STORAGE_KEYS`, because it
+     * is earned on the wallpaper rather than pushed by a host control.
+     */
+    WIDGET_USAGE_KEY: WIDGET_USAGE_KEY,
+    MAX_WIDGET_USAGE: MAX_WIDGET_USAGE,
+    normalizeWidgetUsage: normalizeWidgetUsage,
+    readWidgetUsage: readWidgetUsage,
+    writeWidgetUsage: writeWidgetUsage,
+    recordWidgetUsage: recordWidgetUsage,
+    clearWidgetUsage: clearWidgetUsage,
+    computeWidgetSizes: computeWidgetSizes,
     scatterWidgets: scatterWidgets,
     createRandom: createRandom,
 

@@ -665,6 +665,14 @@ html.is-widgets-off .widget-orbit {
   vector-effect: non-scaling-stroke;
 }
 
+/* `vector-effect` is not an inherited property, so the declaration above — which sits on
+   the `<svg>` itself — never reaches the shapes inside it: without this rule a glyph's
+   stroke is `2` in *user units* and thickens with the button, so the L footprint would
+   read as a bold mark rather than the same hairline as S. It has to be set per shape. */
+.widget-icon > * {
+  vector-effect: non-scaling-stroke;
+}
+
 /* A service with no curated glyph wears its own initials instead: two capitals set in
    the wallpaper's face at the weight the line art is stroked at. It sits in the same
    white ink as every other satellite, so the fallback reads as a deliberate mark rather

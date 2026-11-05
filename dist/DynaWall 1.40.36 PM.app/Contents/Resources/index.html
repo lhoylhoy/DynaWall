@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#0d1117" />
+    <meta
+      name="description"
+      content="DynaWall — a minimalist, time-aware live wallpaper for macOS, Lively Wallpaper and Wallpaper Engine."
+    />
+    <title>DynaWall</title>
+
+    <!--
+      Strict Content Security Policy, delivered as a meta tag because every host
+      loads this page straight from disk or from a folder mapping (there is no
+      server that could send a header).
+
+        default-src 'none'          nothing loads unless a directive below says so
+        script-src 'self' file:     only the bundled script.js — the native hosts
+                                    evaluate their own JS out of band, which CSP
+                                    does not (and must not) police
+        style-src 'self' file:      style.css, plus 'unsafe-inline' for the CSS the
+          'unsafe-inline'           hosts inject while live-editing settings
+        font-src 'self' file: data: the four vendored faces and an imported font,
+                                    which travels as a data: URL
+        img-src ... dynawall-photo: the bundled pictures, the user's folder behind
+                                    the macOS scheme handler, and the two WebView2
+                                    virtual hosts (dynawall.local = the page itself,
+                                    dynawall-photos.local = a chosen folder)
+        connect-src ...             exactly the two keyless Open-Meteo endpoints the
+                                    weather card declares; YouTube and Google News
+                                    are only ever handed to the OS browser
+        base-uri / form-action      neither can be retargeted by injected markup
+
+      `file:` is what keeps the macOS bundle working: its WKWebView loads this file
+      over file://, where `'self'` resolves to an opaque origin in some WebKit
+      versions. frame-ancestors is deliberately absent — browsers ignore it in a
+      meta tag, and nothing ever frames the wallpaper (default-src 'none' blocks it).
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; font-src 'self' file: data:; img-src 'self' file: data: blob: dynawall-photo: https://dynawall.local https://dynawall-photos.local; connect-src 'self' https://api.open-meteo.com https://geocoding-api.open-meteo.com; base-uri 'none'; form-action 'none'; object-src 'none'"
+    />
+    <!-- The wallpaper never needs to tell a remote server where it came from. -->
+    <meta name="referrer" content="no-referrer" />
+
+    <link rel="stylesheet" href="style.css" />
+    <script src="script.js" defer></script>
+  </head>
+  <body>
+    <main class="wallpaper-container" aria-label="DynaWall live wallpaper">
+      <!-- Background photos: two layers cross-fade so slides never flash -->
+      <div class="photo-stack" id="photos" aria-hidden="true">
+        <img class="photo" id="photo-a" alt="" decoding="async" />
+        <img class="photo" id="photo-b" alt="" decoding="async" />
+      </div>
+
+      <!-- Darkens the photo just enough for the greeting to stay readable -->
+      <div class="scrim" aria-hidden="true"></div>
+
+      <div class="wallpaper-content" id="content">
+        <!-- Fallback copy is swapped for the time-aware greeting on load -->
+        <h1 class="greeting" id="greeting">Good day, Developer.</h1>
+
+        <p class="subtitle" id="subtitle">What are we building today?</p>
+      </div>
+
+      <!-- White satellites, thrown into a loose ring around the greeting by script.js.
+           They are bare glyphs: no circle, no plate, no shadow of their own — the icon
+           is the whole button. They are a sibling of the text block rather than a child
+           of it: an absolutely positioned child would be measured against the greeting —
+           including its entrance transform — instead of against the screen.
+
+           The four below are the built-in services. script.js adds one more satellite
+           per custom shortcut the user keeps (ChatGPT, GitHub, …), all dealt the same
+           hand, plus the trailing `+` that opens the manager card. The orbit itself is
+           pointer-transparent, so only the buttons are hit targets — script.js measures
+           them and tells the native host where the cursor may click, which is what keeps
+           the rest of the desktop on the Finder (drag-select, right-click, Mission
+           Control). -->
+      <nav class="widget-orbit" id="widget-bar" aria-label="Desktop widgets">
+        <button
+          type="button"
+          class="widget-btn"
+          id="widget-btn-music"
+          data-widget="music"
+          title="YouTube Music"
+          aria-label="YouTube Music"
+          aria-haspopup="dialog"
+          aria-controls="widget-modal"
+          aria-expanded="false"
+        >
+          <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+            <path d="M9 17.5V5.2l11-1.9v12.2" />
+            <circle cx="6.2" cy="17.6" r="2.8" />
+            <circle cx="17.2" cy="15.5" r="2.8" />
+          </svg>
+        </button>
+
+        <button
+          type="button"
+          class="widget-btn"
+          id="widget-btn-news"
+          data-widget="news"
+          title="Google News"
+          aria-label="Google News"
+          aria-haspopup="dialog"
+          aria-controls="widget-modal"
+          aria-expanded="false"
+        >
+          <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+            <path d="M4 21.5h15.2a2.3 2.3 0 0 0 2.3-2.3V4.3A1.8 1.8 0 0 0 19.7 2.5H8.3A1.8 1.8 0 0 0 6.5 4.3v15a2.2 2.2 0 0 1-2.2 2.2Zm0 0a2.3 2.3 0 0 1-2.3-2.3v-8.4a1.5 1.5 0 0 1 1.5-1.5h3.3" />
+            <path d="M17.6 13.6V6.4h-7.4v7.2Z" />
+          </svg>
+        </button>
+
+        <button
+          type="button"
+          class="widget-btn"
+          id="widget-btn-youtube"
+          data-widget="youtube"
+          title="YouTube"
+          aria-label="YouTube"
+          aria-haspopup="dialog"
+          aria-controls="widget-modal"
+          aria-expanded="false"
+        >
+          <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+            <path d="M2.6 16.9a23.6 23.6 0 0 1 0-9.8 2.4 2.4 0 0 1 1.7-1.7 51.6 51.6 0 0 1 15.4 0 2.4 2.4 0 0 1 1.7 1.7 23.6 23.6 0 0 1 0 9.8 2.4 2.4 0 0 1-1.7 1.7 51.6 51.6 0 0 1-15.4 0 2.4 2.4 0 0 1-1.7-1.7Z" />
+            <path d="M10.2 15.1V8.9l5.3 3.1Z" fill="currentColor" stroke-linejoin="round" />
+          </svg>
+        </button>
+
+        <button
+          type="button"
+          class="widget-btn"
+          id="widget-btn-weather"
+          data-widget="weather"
+          title="Weather"
+          aria-label="Weather"
+          aria-haspopup="dialog"
+          aria-controls="widget-modal"
+          aria-expanded="false"
+        >
+          <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+            <path d="M17.4 18.6H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z" />
+          </svg>
+        </button>
+
+        <!-- The orbit's one control: a glyph in exactly the same ink as the satellites,
+             quieter so the services stay the composition. It is deliberately *not* a
+             `data-widget` button — it opens the manager card rather than a card of its
+             own — which is also what keeps the satellite list in index.html and the
+             catalogue in script.js an exact match. -->
+        <button
+          type="button"
+          class="widget-btn widget-btn-add"
+          id="widget-btn-add"
+          data-action="manage-services"
+          title="Add a service"
+          aria-label="Add a favourite service"
+          aria-haspopup="dialog"
+          aria-controls="widget-modal"
+          aria-expanded="false"
+        >
+          <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
+      </nav>
+
+      <!-- Frosted-glass widget viewport. Always in the DOM, only visible once a
+           satellite is pressed: `aria-hidden` and `visibility: hidden` keep the
+           closed card out of the accessibility tree and out of the tab order. -->
+      <div class="widget-backdrop" id="widget-backdrop" aria-hidden="true">
+        <div
+          class="widget-modal"
+          id="widget-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="widget-modal-title"
+          aria-describedby="widget-modal-caption"
+          tabindex="-1"
+        >
+          <header class="widget-modal-header">
+            <span class="widget-modal-badge" id="widget-modal-badge" aria-hidden="true"></span>
+            <div class="widget-modal-heading">
+              <h2 class="widget-modal-title" id="widget-modal-title">Widget</h2>
+              <p class="widget-modal-caption" id="widget-modal-caption"></p>
+            </div>
+            <button type="button" class="widget-modal-close" id="widget-modal-close" aria-label="Close widget">
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          </header>
+
+          <div class="widget-modal-body" id="widget-modal-body"></div>
+        </div>
+      </div>
+    </main>
+  </body>
+</html>

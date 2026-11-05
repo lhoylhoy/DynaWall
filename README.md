@@ -200,6 +200,11 @@ git push origin v1.0.0
   [Google Sans Flex](https://fonts.google.com/specimen/Google+Sans+Flex),
   [Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk) and
   [Geist](https://fonts.google.com/specimen/Geist) — all SIL OFL 1.1, licences in `assets/fonts/`.
+- Brand marks: the YouTube Music, YouTube and Google News glyphs on the satellites are trademarks of
+  Google LLC, traced to the official geometry as line art purely to identify the app each one opens.
+  They ship as path data in `index.html` (no image files, no requests); DynaWall is not affiliated with
+  or endorsed by Google. The weather glyph is a plain cloud — Open-Meteo is a data source, not a brand
+  the wallpaper dresses as.
 - Photos: six Golden Gate 5K time-of-day wallpapers plus six generated abstracts, free to replace via
   `GOLDEN_GATE_PHOTOS` / `ABSTRACT_PHOTOS` in `script.js`.
 - Weather: keyless [Open-Meteo](https://open-meteo.com/) forecast, requested only when the card opens.

@@ -66,16 +66,19 @@
         <p class="subtitle" id="subtitle">What are we building today?</p>
       </div>
 
-      <!-- Four white satellites, thrown into a loose ring around the greeting by
-           script.js. They are bare glyphs: no circle, no plate, no shadow of their own —
-           the icon is the whole button. They are a sibling of the text block rather than
-           a child of it: an absolutely positioned child would be measured against the
-           greeting — including its entrance transform — instead of against the screen.
+      <!-- White satellites, thrown into a loose ring around the greeting by script.js.
+           They are bare glyphs: no circle, no plate, no shadow of their own — the icon
+           is the whole button. They are a sibling of the text block rather than a child
+           of it: an absolutely positioned child would be measured against the greeting —
+           including its entrance transform — instead of against the screen.
 
-           The orbit itself is pointer-transparent, so only the buttons are hit
-           targets — script.js measures them and tells the native host where the
-           cursor may click, which is what keeps the rest of the desktop on the
-           Finder (drag-select, right-click, Mission Control). -->
+           The four below are the built-in services. script.js adds one more satellite
+           per custom shortcut the user keeps (ChatGPT, GitHub, …), all dealt the same
+           hand, plus the trailing `+` that opens the manager card. The orbit itself is
+           pointer-transparent, so only the buttons are hit targets — script.js measures
+           them and tells the native host where the cursor may click, which is what keeps
+           the rest of the desktop on the Finder (drag-select, right-click, Mission
+           Control). -->
       <nav class="widget-orbit" id="widget-bar" aria-label="Desktop widgets">
         <button
           type="button"
@@ -142,6 +145,27 @@
         >
           <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
             <path d="M17.4 18.6H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z" />
+          </svg>
+        </button>
+
+        <!-- The orbit's one control: a glyph in exactly the same ink as the satellites,
+             quieter so the services stay the composition. It is deliberately *not* a
+             `data-widget` button — it opens the manager card rather than a card of its
+             own — which is also what keeps the satellite list in index.html and the
+             catalogue in script.js an exact match. -->
+        <button
+          type="button"
+          class="widget-btn widget-btn-add"
+          id="widget-btn-add"
+          data-action="manage-services"
+          title="Add a service"
+          aria-label="Add a favourite service"
+          aria-haspopup="dialog"
+          aria-controls="widget-modal"
+          aria-expanded="false"
+        >
+          <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
+            <path d="M12 5v14M5 12h14" />
           </svg>
         </button>
       </nav>

@@ -539,12 +539,16 @@ body.has-photo .subtitle {
 
 /* ---------------------------------------------------------------------------
    Widget satellites
-   Four white glyphs floating in a loose ring around the greeting. Where exactly is
+   White glyphs floating in a loose ring around the greeting. Where exactly is
    script.js's business: on every load it throws each one out from the text block at a
    random angle and a random distance — always clear of the type, never far from it,
    never on top of another — and writes that position into `--widget-x`/`--widget-y`.
    The percentages below are only the fallback a page without the script gets: one
    satellite near each corner.
+
+   The ring holds the four built-in services, one glyph per custom shortcut the user
+   keeps and the trailing `+` that opens the manager, all in the same ink at the same
+   size, so a shortcut is indistinguishable from a built-in until it is clicked.
 
    They are positioned against the wallpaper, not against the text block, so the
    scatter has the whole screen to work with and never depends on how wide the
@@ -634,6 +638,32 @@ html.is-widgets-off .widget-orbit {
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
+}
+
+/* A service with no curated glyph wears its own initials instead: two capitals set in
+   the wallpaper's face at the weight the line art is stroked at. It sits in the same
+   white ink as every other satellite, so the fallback reads as a deliberate mark rather
+   than a missing icon — and it costs no request, no sprite and no favicon. */
+.widget-monogram {
+  display: grid;
+  place-items: center;
+  font-family: var(--font-sans);
+  font-size: calc(var(--widget-size) * 0.32);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+/* The orbit's `+`. It is a satellite in every layout sense — same size, same ink, same
+   drift — and quieter until the pointer finds it, so the services stay the composition
+   and the way in stays discoverable. Its own phase keeps it out of step with the four
+   glyphs beside it. */
+.widget-btn-add {
+  opacity: 0.62;
+  --widget-drift-x: 0.12rem;
+  --widget-drift-y: -0.26rem;
+  --widget-drift-delay: -5.2s;
 }
 
 /* Fallback corners, used only until script.js has scattered the satellites (or when
@@ -1073,6 +1103,111 @@ html.is-suspended .widget-btn {
   }
 }
 
+/* --- the service manager ------------------------------------------------- */
+
+/* The add form: a name and an address, one per line, because a URL is long and this
+   card is narrow. The fields are the card's own — same glass, same focus ring — so the
+   manager never looks like a second, imported dialog. */
+.widget-service-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+/* One service per row: the glyph it wears in orbit, its name and address, and the one
+   destructive control. The glyph is not decoration — the row and the satellite are the
+   same mark, so it is obvious which clickable thing this row edits. */
+.widget-service {
+  display: flex;
+  align-items: center;
+  gap: 0.1rem;
+  border-radius: 0.75rem;
+  transition: background-color 160ms var(--ease-out);
+}
+
+.widget-service:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.widget-service-glyph {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.55rem;
+  height: 1.55rem;
+  color: var(--widget-ink);
+}
+
+.widget-service-glyph .widget-monogram {
+  font-size: 0.6rem;
+}
+
+/* Going there and removing it are two targets, never one confusing target for both:
+   the name opens the shortcut, the trailing × forgets it. */
+.widget-service-open {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.45rem 0.45rem;
+  border: 0;
+  border-radius: 0.75rem;
+  background: none;
+  color: inherit;
+  font-family: var(--font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.widget-service-open:hover .widget-row-arrow {
+  stroke: var(--widget-ink);
+  opacity: 1;
+}
+
+.widget-service-open:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.72);
+  outline-offset: 1px;
+}
+
+.widget-service-remove {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 50%;
+  background-color: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    color 160ms var(--ease-out),
+    border-color 160ms var(--ease-out),
+    background-color 160ms var(--ease-out);
+}
+
+.widget-service-remove svg {
+  width: 0.78rem;
+  height: 0.78rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+}
+
+.widget-service-remove:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+  background-color: rgba(255, 255, 255, 0.08);
+  color: var(--widget-ink);
+}
+
+.widget-service-remove:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.72);
+  outline-offset: 2px;
+}
+
 /* --- weather, tiles and the city search ---------------------------------- */
 
 .widget-weather {
@@ -1296,10 +1431,11 @@ html.is-suspended .widget-btn {
   color: var(--text-secondary);
 }
 
-/* Below this width there is no room to scatter four satellites: every quadrant is
-   smaller than the greeting itself. They collapse into one centred row near the
-   bottom of the screen, which is also the layout a phone gets — the bar stops being
-   an orbit and becomes a dock. */
+/* Below this width there is no room to scatter the satellites: every quadrant is
+   smaller than the greeting itself. They collapse into one centred row near the bottom
+   of the screen, which is also the layout a phone gets — the bar stops being an orbit
+   and becomes a dock. The row wraps instead of overflowing, because the dock holds a
+   glyph per custom shortcut as well as the four built-ins. */
 @media (max-width: 720px) {
   .widget-orbit {
     position: absolute;
@@ -1307,8 +1443,10 @@ html.is-suspended .widget-btn {
     top: auto;
     bottom: clamp(1rem, 6vh, 2.5rem);
     display: flex;
+    flex-wrap: wrap;
     justify-content: center;
     gap: 1.1rem;
+    padding: 0 1.1rem;
   }
 
   .widget-btn {

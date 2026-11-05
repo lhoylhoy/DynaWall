@@ -60,6 +60,12 @@
  * never placed, never measured, never reported as a click region and its card cannot be
  * opened, which hands that part of the desktop back to the Finder.
  *
+ * Beside them sits the user's own half of the orbit: a `+` that opens the service
+ * manager and any number of custom shortcuts (ChatGPT, GitHub, …), each a bare glyph
+ * dealt into the same ring. A shortcut is not a card — it is handed to the default
+ * browser through `openExternal` — and the list is cached in `localStorage`
+ * (`dynawall.customServices`) because it is the user's, not the host's.
+ *
  * Suspension: `setSuspended(true)` — from `livelyPropertyListener('suspend', …)`,
  * `DynaWall.setSuspended(...)` or `document.visibilitychange` — parks the clock and
  * slideshow timers and puts `html.is-suspended` on the document, which pauses the
@@ -1407,6 +1413,435 @@
     return match ? match[1].toUpperCase() : 'US';
   }
 
+  /* ----------------------------------------------------------------------- *
+   * Custom services — the user's own satellites
+   *
+   * A shortcut is a title, a plain `https` address and the mark it wears in the
+   * orbit. It is not a host setting — there is no popover switch for "ChatGPT" — so
+   * the list lives in `localStorage` under one key and is edited on the wallpaper
+   * itself, through the orbit's `+`. Everything below is pure: the page, the card
+   * and the headless tests all use the same validation, so the address the manager
+   * accepts and the address `openExternal` is handed can never disagree.
+   * ------------------------------------------------------------------------ */
+
+  /**
+   * Where the shortcuts are cached.
+   *
+   * Deliberately outside `STORAGE_KEYS`: that map is the one-to-one mirror of the
+   * configuration fields (`dynawall.firstName` …) that a host control can push, and a
+   * JSON array is not one of those. The value is a JSON array of `{ title, url, icon }`.
+   */
+  const CUSTOM_SERVICES_KEY = 'dynawall.customServices';
+
+  /** How many shortcuts the ring holds before it stops reading as a constellation. */
+  const MAX_CUSTOM_SERVICES = 16;
+
+  /** Longest service name the card prints and the satellite's tooltip carries. */
+  const MAX_SERVICE_TITLE = 40;
+
+  /**
+   * The reserved card id of the manager, beside `music`, `news`, `youtube` and
+   * `weather`. It is never a `data-widget` value in index.html: the manager is not a
+   * satellite, it is the way to add one.
+   */
+  const SERVICE_MANAGER_ID = 'services';
+
+  /**
+   * The curated marks, in the same bare line-art language as the four built-in
+   * satellites: a 24×24 box, stroked, no fill, no plate.
+   *
+   * `hints` are the words a title or an address may contain — never a host name, so
+   * this catalogue can never become a second, drifting list of the remote hosts the
+   * policy allows. A service that matches nothing wears a two-letter monogram instead
+   * (`serviceMonogram`), which is why there is no catch-all entry at the end.
+   */
+  const SERVICE_ICONS = Object.freeze([
+    Object.freeze({
+      id: 'git',
+      label: 'Git',
+      hints: Object.freeze(['github', 'gitlab', 'bitbucket', 'git']),
+      paths:
+        '<circle cx="7" cy="6.5" r="2.5"/><circle cx="7" cy="17.5" r="2.5"/>' +
+        '<circle cx="17" cy="9.5" r="2.5"/><path d="M7 9v6M9.5 6.5h3a2 2 0 0 1 2 2v.5"/>'
+    }),
+    Object.freeze({
+      id: 'sparkle',
+      label: 'Assistant',
+      hints: Object.freeze([
+        'chatgpt',
+        'openai',
+        'claude',
+        'anthropic',
+        'gemini',
+        'copilot',
+        'perplexity',
+        'midjourney'
+      ]),
+      paths:
+        '<path d="M11 3.5l1.8 5 5 1.8-5 1.8L11 17.1l-1.8-5-5-1.8 5-1.8Z"/>' +
+        '<path d="M18 15.2l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7Z"/>'
+    }),
+    Object.freeze({
+      id: 'wave',
+      label: 'Music',
+      hints: Object.freeze(['spotify', 'soundcloud', 'tidal', 'deezer', 'music', 'audio']),
+      paths: '<path d="M4 10.5v3M8 7.5v9M12 9.5v5M16 6.5v11M20 10.5v3"/>'
+    }),
+    Object.freeze({
+      id: 'talk',
+      label: 'Chat',
+      hints: Object.freeze([
+        'reddit',
+        'discord',
+        'slack',
+        'whatsapp',
+        'telegram',
+        'signal',
+        'messenger',
+        'chat',
+        'threads',
+        'mastodon'
+      ]),
+      paths:
+        '<path d="M4 5.5h16v10H9.5L4 20Z"/>' +
+        '<path d="M8.7 10.5h.01M12 10.5h.01M15.3 10.5h.01"/>'
+    }),
+    Object.freeze({
+      id: 'play',
+      label: 'Video',
+      hints: Object.freeze([
+        'twitch',
+        'youtube',
+        'netflix',
+        'vimeo',
+        'plex',
+        'video',
+        'stream',
+        'hulu',
+        'disney'
+      ]),
+      paths: '<circle cx="12" cy="12" r="8.5"/><path d="M10.2 8.6 16.2 12l-6 3.4Z"/>'
+    }),
+    Object.freeze({
+      id: 'page',
+      label: 'Document',
+      hints: Object.freeze([
+        'notion',
+        'docs',
+        'drive',
+        'dropbox',
+        'notes',
+        'wiki',
+        'confluence',
+        'obsidian',
+        'evernote'
+      ]),
+      paths:
+        '<path d="M6.5 3.5h7l4 4v13h-11Z"/><path d="M13.5 3.5v4h4"/>' +
+        '<path d="M9.5 12h6M9.5 15.5h4"/>'
+    }),
+    Object.freeze({
+      id: 'mail',
+      label: 'Mail',
+      hints: Object.freeze(['gmail', 'mail', 'inbox', 'outlook', 'proton', 'fastmail']),
+      paths:
+        '<rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/>' +
+        '<path d="M4.5 7.5 12 13l7.5-5.5"/>'
+    }),
+    Object.freeze({
+      id: 'calendar',
+      label: 'Calendar',
+      hints: Object.freeze(['calendar', 'calendly', 'agenda', 'scheduler', 'cron']),
+      paths:
+        '<rect x="3.5" y="5.5" width="17" height="15" rx="2.5"/>' +
+        '<path d="M8 3.5v4M16 3.5v4M3.5 10.5h17"/>'
+    }),
+    Object.freeze({
+      id: 'code',
+      label: 'Code',
+      hints: Object.freeze([
+        'code',
+        'stackoverflow',
+        'gitpod',
+        'vercel',
+        'netlify',
+        'railway',
+        'supabase',
+        'postman'
+      ]),
+      paths: '<path d="M9 8.5 4.5 12 9 15.5M15 8.5 19.5 12 15 15.5M13.5 6l-3 12"/>'
+    }),
+    Object.freeze({
+      id: 'pen',
+      label: 'Design',
+      hints: Object.freeze([
+        'figma',
+        'canva',
+        'dribbble',
+        'behance',
+        'design',
+        'sketch',
+        'framer',
+        'miro'
+      ]),
+      paths: '<path d="M4.5 19.5 6 14l8.5-8.5a2.1 2.1 0 0 1 3 3L9 17Z"/><path d="M13 6.5l4 4"/>'
+    }),
+    Object.freeze({
+      id: 'camera',
+      label: 'Photos',
+      hints: Object.freeze(['instagram', 'photos', 'flickr', 'pics', 'unsplash', 'pinterest']),
+      paths:
+        '<rect x="3.5" y="6.5" width="17" height="13" rx="3"/><circle cx="12" cy="13" r="3.6"/>' +
+        '<path d="M8.5 6.5 10 4h4l1.5 2.5"/>'
+    }),
+    Object.freeze({
+      id: 'globe',
+      label: 'Web',
+      hints: Object.freeze([
+        'maps',
+        'earth',
+        'globe',
+        'weather',
+        'travel',
+        'airbnb',
+        'booking',
+        'wikipedia'
+      ]),
+      paths:
+        '<circle cx="12" cy="12" r="8.5"/>' +
+        '<path d="M3.5 12h17M12 3.5c2.6 2.4 2.6 14.6 0 17M12 3.5c-2.6 2.4-2.6 14.6 0 17"/>'
+    })
+  ]);
+
+  /** The little × on a service row: the one destructive control in the card. */
+  const REMOVE_MARKUP =
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg>';
+
+  /** Text → markup, so a service's name never carries a tag into the card. */
+  function escapeMarkup(value) {
+    return String(value === undefined || value === null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  /**
+   * A service address, or `''`.
+   *
+   * Only a plain `https` address with a host survives: the shortcut is handed straight
+   * to the operating system's browser, so `javascript:`, `file:` and an app scheme must
+   * not get through a paste — and neither must a `user:password@` pair, because a
+   * wallpaper has no business storing credentials. `URL` does the boring half, so what
+   * is cached is exactly what the browser will be asked to open.
+   */
+  function normalizeServiceUrl(rawValue) {
+    if (typeof rawValue !== 'string') return '';
+    const text = rawValue.trim();
+    if (!text || text.length > 2048) return '';
+    let parsed;
+    try {
+      parsed = new URL(text);
+    } catch (error) {
+      return '';
+    }
+    if (parsed.protocol !== 'https:') return '';
+    if (!parsed.hostname) return '';
+    if (parsed.username || parsed.password) return '';
+    return parsed.href;
+  }
+
+  /** The host an address names, lowercased and without its `www.`. */
+  function serviceHostName(url) {
+    let parsed;
+    try {
+      parsed = new URL(String(url || ''));
+    } catch (error) {
+      return '';
+    }
+    return String(parsed.hostname || '')
+      .replace(/^www\./i, '')
+      .toLowerCase();
+  }
+
+  /** `github.com` → `Github.com`: the name an address suggests for itself. */
+  function serviceHostLabel(url) {
+    const host = serviceHostName(url);
+    if (!host) return '';
+    return host.charAt(0).toUpperCase() + host.slice(1);
+  }
+
+  /** The curated entry for an id, or `null` when the catalogue has no such mark. */
+  function serviceIconById(id) {
+    const key = String(id || '').trim().toLowerCase();
+    if (!key) return null;
+    for (let index = 0; index < SERVICE_ICONS.length; index += 1) {
+      if (SERVICE_ICONS[index].id === key) return SERVICE_ICONS[index];
+    }
+    return null;
+  }
+
+  /** The curated mark a title/address pair suggests, or `''` for a monogram. */
+  function serviceIconId(title, url) {
+    const haystack = (String(title || '') + ' ' + String(url || '')).toLowerCase();
+    if (!haystack.trim()) return '';
+    for (let index = 0; index < SERVICE_ICONS.length; index += 1) {
+      const icon = SERVICE_ICONS[index];
+      for (let hint = 0; hint < icon.hints.length; hint += 1) {
+        if (haystack.indexOf(icon.hints[hint]) !== -1) return icon.id;
+      }
+    }
+    return '';
+  }
+
+  /** A stored icon id, or `''` when it names nothing in the catalogue. */
+  function normalizeServiceIcon(value) {
+    const icon = serviceIconById(value);
+    return icon ? icon.id : '';
+  }
+
+  /** The SVG markup for a curated mark; `''` when there is none. */
+  function serviceIconMarkup(iconId) {
+    const icon = serviceIconById(iconId);
+    if (!icon) return '';
+    return (
+      '<svg class="widget-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+      icon.paths +
+      '</svg>'
+    );
+  }
+
+  /**
+   * A two-letter mark for a service with no curated glyph.
+   *
+   * "GitHub" → "GH" (the capitals it already carries), "My Notes" → "MN" (one letter per
+   * word), "Figma" → "FI", and an unnamed service falls back to its first host label.
+   */
+  function serviceMonogram(title, url) {
+    const words = String(title || '')
+      .replace(/[^A-Za-z0-9 ]+/g, ' ')
+      .split(/\s+/)
+      .filter(Boolean);
+    if (words.length >= 2) return (words[0].charAt(0) + words[1].charAt(0)).toUpperCase();
+    const word =
+      words.length === 1 ? words[0] : serviceHostName(url).split('.')[0].replace(/[^A-Za-z0-9]/g, '');
+    if (!word) return '';
+    const capitals = word.match(/[A-Z]/g) || [];
+    if (capitals.length >= 2) return capitals.slice(0, 2).join('');
+    return word.slice(0, 2).toUpperCase();
+  }
+
+  /** The mark a service wears: its curated glyph, or its initials in the same ink. */
+  function serviceGlyphMarkup(service) {
+    const icon = serviceIconMarkup(service && service.icon);
+    if (icon) return icon;
+    const monogram = serviceMonogram(service && service.title, service && service.url);
+    return '<span class="widget-monogram">' + escapeMarkup(monogram) + '</span>';
+  }
+
+  /**
+   * One shortcut from its parts, or `null` when the address is not one we will open.
+   *
+   * `id` comes from the list position rather than from storage: it is the handle the
+   * card's buttons carry, and the whole list is rebuilt whenever it changes, so a
+   * shortcut can never collide with another one's id.
+   */
+  function createCustomService(title, url, options) {
+    const opts = options || {};
+    const href = normalizeServiceUrl(url);
+    if (!href) return null;
+    const name = clipText(title, MAX_SERVICE_TITLE) || serviceHostLabel(href);
+    if (!name) return null;
+    const index = Math.floor(Number(opts.index));
+    return {
+      id: 'service-' + (index > 0 ? index : 1),
+      title: name,
+      url: href,
+      icon: normalizeServiceIcon(opts.icon) || serviceIconId(name, href)
+    };
+  }
+
+  /**
+   * A stored list, made safe: a JSON string or an array in, clean records out.
+   *
+   * An entry that is not an `https` address is dropped rather than repaired,
+   * duplicates collapse to the first mention (the same site twice would deal two
+   * identical glyphs), and the list is capped at `MAX_CUSTOM_SERVICES` because the ring
+   * only has room for so many before it stops being a constellation. Hand-edited or
+   * half-written JSON is simply no shortcuts — never a broken wallpaper.
+   */
+  function normalizeCustomServices(rawValue) {
+    let list = rawValue;
+    if (typeof list === 'string') {
+      if (!list.trim()) return [];
+      try {
+        list = JSON.parse(list);
+      } catch (error) {
+        return [];
+      }
+    }
+    if (!Array.isArray(list)) return [];
+
+    const services = [];
+    const seen = Object.create(null);
+    for (let index = 0; index < list.length; index += 1) {
+      if (services.length >= MAX_CUSTOM_SERVICES) break;
+      const entry = list[index];
+      if (!entry || typeof entry !== 'object') continue;
+      const service = createCustomService(entry.title, entry.url, {
+        icon: entry.icon,
+        index: services.length + 1
+      });
+      if (!service || seen[service.url]) continue;
+      seen[service.url] = true;
+      services.push(service);
+    }
+    return services;
+  }
+
+  /** The cached shape: title, address and the chosen mark (`''` means "match it"). */
+  function serializeCustomServices(services) {
+    const list = Array.isArray(services) ? services.slice(0, MAX_CUSTOM_SERVICES) : [];
+    return JSON.stringify(
+      list
+        .map(function (service) {
+          return {
+            title: clipText(service && service.title, MAX_SERVICE_TITLE),
+            url: normalizeServiceUrl(service && service.url),
+            icon: normalizeServiceIcon(service && service.icon)
+          };
+        })
+        .filter(function (entry) {
+          return entry.url !== '' && entry.title !== '';
+        })
+    );
+  }
+
+  /** The shortcuts cached on this machine, or `[]` when there are none (or no storage). */
+  function readCustomServices(storage) {
+    if (!storage || typeof storage.getItem !== 'function') return [];
+    let raw = null;
+    try {
+      raw = storage.getItem(CUSTOM_SERVICES_KEY);
+    } catch (error) {
+      return []; // storage can be blocked (private mode, disabled cookies)
+    }
+    if (raw === null) return [];
+    return normalizeCustomServices(raw);
+  }
+
+  /** Cache the list. Best-effort: a blocked `localStorage` is not a broken wallpaper. */
+  function writeCustomServices(storage, services) {
+    if (!storage || typeof storage.setItem !== 'function') return false;
+    try {
+      storage.setItem(CUSTOM_SERVICES_KEY, serializeCustomServices(services));
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
   /**
    * The Open-Meteo forecast request for one place.
    *
@@ -2748,8 +3183,13 @@
     const closeNode = doc.getElementById('widget-modal-close');
     if (!bar || !backdrop || !modal || !body || !titleNode || !closeNode) return null;
 
-    const buttons = Array.prototype.slice.call(bar.querySelectorAll('.widget-btn'));
+    // The four built-in satellites are the ones the markup declares; the shortcuts are
+    // created from `localStorage` below, and the `+` is the one orbit button that has no
+    // `data-widget` (it opens the manager instead of a card of its own).
+    const buttons = Array.prototype.slice.call(bar.querySelectorAll('.widget-btn[data-widget]'));
     if (buttons.length === 0) return null;
+    const addButton = doc.getElementById('widget-btn-add');
+    const serviceButtons = [];
 
     const storage = getStorage(win);
     const config = (options && options.config) || {};
@@ -2765,6 +3205,12 @@
       hitFrame: 0,
       revealed: false,
       textObserver: null,
+      // The user's own shortcuts: read once from `localStorage`, then owned here. The
+      // draft and the message belong to the manager card, so a half-typed address and a
+      // validation line survive the card re-rendering under them.
+      services: readCustomServices(storage),
+      serviceError: '',
+      serviceDraft: { title: '', url: '' },
       // One arrangement per page load: the wallpaper is dealt a fresh constellation
       // every time it starts, and keeps it until the desktop changes shape.
       seed: Math.floor(Math.random() * 0xfffffffe) + 1,
@@ -2796,8 +3242,13 @@
       return null;
     }
 
-    /** The satellites on the desktop right now; `hidden` is the settings' doing. */
-    function visibleButtons() {
+    /**
+     * The built-in satellites on the desktop right now; `hidden` is the settings' doing.
+     *
+     * Shortcuts and the `+` are not in here: they have no `data-widget`, because a widget
+     * id is what the per-satellite switches and the host report are keyed on.
+     */
+    function visibleBuiltins() {
       return buttons.filter(function (button) {
         return !button.hidden;
       });
@@ -2857,6 +3308,120 @@
       return list;
     }
 
+    /* --- custom services --------------------------------------------------- */
+
+    /** Every element in the orbit: the built-ins, the shortcuts and the `+`. */
+    function orbitElements() {
+      const elements = buttons.concat(serviceButtons);
+      if (addButton) elements.push(addButton);
+      return elements;
+    }
+
+    /** The orbit elements on the desktop right now; `hidden` is the settings' doing. */
+    function placedButtons() {
+      return orbitElements().filter(function (button) {
+        return !button.hidden;
+      });
+    }
+
+    /** A shortcut's satellite: a bare glyph in the ring, exactly like a built-in one. */
+    function createServiceButton(service) {
+      const button = el('button', 'widget-btn widget-btn-service');
+      button.type = 'button';
+      button.id = 'widget-btn-' + service.id;
+      button.setAttribute('data-service', service.id);
+      button.title = service.title;
+      button.setAttribute('aria-label', 'Open ' + service.title + ' in your browser');
+
+      // The drift is per-satellite: every shortcut breathes out of step with its
+      // neighbours, from values derived from its place in the list, so the orbit looks
+      // the same on every load instead of reshuffling.
+      const position = serviceButtons.length;
+      const phase = (position * 3.7) % 13;
+      const driftX = (position % 2 === 0 ? 1 : -1) * (0.12 + (position % 3) * 0.02);
+      const driftY = (position % 3 === 0 ? 1 : -1) * (0.24 + (position % 4) * 0.03);
+      button.style.setProperty('--widget-drift-delay', '-' + phase.toFixed(1) + 's');
+      button.style.setProperty('--widget-drift-x', driftX.toFixed(2) + 'rem');
+      button.style.setProperty('--widget-drift-y', driftY.toFixed(2) + 'rem');
+
+      button.innerHTML = serviceGlyphMarkup(service);
+      button.addEventListener('click', function (event) {
+        event.preventDefault();
+        // A shortcut is not a card: it leaves for the default browser through the same
+        // native bridge the cards' link rows use, so the wallpaper never loads the site.
+        openExternal(win, service.url);
+      });
+      return button;
+    }
+
+    /** Rebuild the shortcut satellites from `state.services`, in list order. */
+    function rebuildServiceButtons() {
+      while (serviceButtons.length > 0) {
+        const stale = serviceButtons.pop();
+        if (stale.parentNode) stale.parentNode.removeChild(stale);
+      }
+      state.services.forEach(function (service) {
+        const button = createServiceButton(service);
+        bar.insertBefore(button, addButton || null);
+        serviceButtons.push(button);
+      });
+    }
+
+    /**
+     * Adopt a new list: cache it, rebuild the ring and deal the satellites again.
+     *
+     * The manager card is rebuilt in place when it is the card that asked, so a
+     * delete disappears from the list the moment it is pressed and the ring closes the
+     * gap behind it.
+     */
+    function commitServices(next) {
+      state.services = next.slice(0, MAX_CUSTOM_SERVICES);
+      writeCustomServices(storage, state.services);
+      rebuildServiceButtons();
+      if (state.activeId === SERVICE_MANAGER_ID) renderWidget(SERVICE_MANAGER_ID);
+      scatter();
+      if (state.activeId === SERVICE_MANAGER_ID) refocusManagerField();
+      return state.services;
+    }
+
+    /** Add a shortcut from the card or a host script; `null` when it cannot be added. */
+    function addService(title, url) {
+      if (state.services.length >= MAX_CUSTOM_SERVICES) return null;
+      const service = createCustomService(title, url, { index: state.services.length + 1 });
+      if (!service) return null;
+      const duplicate = state.services.some(function (existing) {
+        return existing.url === service.url;
+      });
+      if (duplicate) return null;
+      commitServices(state.services.concat([service]));
+      return service;
+    }
+
+    /** Forget one shortcut. Returns whether the list changed. */
+    function removeService(id) {
+      const next = state.services.filter(function (service) {
+        return service.id !== id;
+      });
+      if (next.length === state.services.length) return false;
+      commitServices(next);
+      return true;
+    }
+
+    /** Put the caret back in the first field after the card rebuilt itself. */
+    function refocusManagerField() {
+      const field = body.querySelector('.widget-input');
+      if (!field || typeof field.focus !== 'function') return;
+      try {
+        field.focus({ preventScroll: true });
+      } catch (error) {
+        try {
+          field.focus();
+        } catch (ignored) {
+          /* A host that refuses focus; the card still works with the mouse. */
+        }
+      }
+    }
+
     /* --- placement --------------------------------------------------------- */
 
     /** The root font size, so the scatter's air scales with the wallpaper's type. */
@@ -2881,8 +3446,9 @@
 
     /** The satellites' footprint in CSS pixels; `0` until the browser has laid them out. */
     function satelliteSize() {
-      for (let index = 0; index < buttons.length; index += 1) {
-        const size = buttons[index].offsetWidth;
+      const elements = orbitElements();
+      for (let index = 0; index < elements.length; index += 1) {
+        const size = elements[index].offsetWidth;
         if (size > 0) return size;
       }
       return 0;
@@ -2920,21 +3486,23 @@
      * waits until the master switch comes back on and `applyConfig()` calls it again.
      *
      * Only the satellites that are on the desktop are dealt: the ring is sized for the
-     * set actually on screen, so hiding YouTube closes a gap instead of leaving one.
+     * set actually on screen, so hiding YouTube — or adding a shortcut — closes or opens
+     * a gap instead of leaving one. The `+` is dealt with them, because it is a satellite
+     * in everything but its click.
      */
     function scatter() {
       if (!state.enabled) return;
 
       reveal();
 
-      const active = visibleButtons();
+      const active = placedButtons();
       if (active.length === 0) {
         scheduleHitRegions();
         return;
       }
 
       if (isNarrow()) {
-        buttons.forEach(function (button) {
+        orbitElements().forEach(function (button) {
           button.style.removeProperty('--widget-x');
           button.style.removeProperty('--widget-y');
         });
@@ -2990,8 +3558,9 @@
       // positions are rounded to whole CSS pixels.
       const clearance = Math.max(0, Math.round(rem() * WIDGET_CLEARANCE_REM) - 1);
       const rects = textRects();
-      for (let index = 0; index < buttons.length; index += 1) {
-        const box = buttons[index].getBoundingClientRect();
+      const elements = placedButtons();
+      for (let index = 0; index < elements.length; index += 1) {
+        const box = elements[index].getBoundingClientRect();
         if (!box || box.width <= 0) continue;
         const satellite = { left: box.left, top: box.top, right: box.right, bottom: box.bottom };
         for (let other = 0; other < rects.length; other += 1) {
@@ -3046,7 +3615,9 @@
       if (open) {
         regions.push([0, 0, width, height]);
       } else if (state.enabled) {
-        buttons.forEach(function (button) {
+        // Every glyph on the orbit is a target — the four built-ins, each shortcut and
+        // the `+` — and nothing else is: the rest of the wallpaper stays click-through.
+        placedButtons().forEach(function (button) {
           const rect = button.getBoundingClientRect();
           if (!rect || rect.width <= 0 || rect.height <= 0) return;
           regions.push([
@@ -3162,6 +3733,12 @@
 
     /** The satellite's own glyph, cloned into the card header. */
     function badgeMarkupFor(id) {
+      // The manager wears the `+` that opened it: the card and the control that summoned
+      // it are the same mark, exactly like a provider's card and its satellite.
+      if (id === SERVICE_MANAGER_ID) {
+        const plus = addButton && addButton.querySelector('svg');
+        return plus ? plus.outerHTML : '';
+      }
       for (let index = 0; index < buttons.length; index += 1) {
         const button = buttons[index];
         if (button.getAttribute('data-widget') !== id) continue;
@@ -3172,8 +3749,9 @@
     }
 
     function openWidget(id) {
-      const widget = widgetById(id);
-      if (!widget) return false;
+      const manager = id === SERVICE_MANAGER_ID;
+      const widget = manager ? null : widgetById(id);
+      if (!manager && !widget) return false;
       // A satellite that was switched off is not on the desktop, so there is nothing to
       // open — a host script asking for it gets `false` instead of a card with no anchor.
       const button = buttonById(id);
@@ -3182,9 +3760,13 @@
 
       state.activeId = id;
       state.lastFocus = doc.activeElement;
+      // A card always opens clean: no message left over from the last time it was up,
+      // and an empty form rather than the half-typed address the user abandoned.
+      state.serviceError = '';
+      state.serviceDraft = { title: '', url: '' };
 
-      titleNode.textContent = widget.title;
-      if (captionNode) captionNode.textContent = widget.caption;
+      titleNode.textContent = widget ? widget.title : 'Services';
+      if (captionNode) captionNode.textContent = widget ? widget.caption : 'Shortcuts in your orbit';
       if (badgeNode) badgeNode.innerHTML = badgeMarkupFor(id);
       buttons.forEach(function (button) {
         button.setAttribute(
@@ -3192,6 +3774,9 @@
           button.getAttribute('data-widget') === id ? 'true' : 'false'
         );
       });
+      // The `+` has no `data-widget`, so it is announced by hand: the same glow, without
+      // the satellite list having to grow a fifth entry it does not have.
+      if (addButton) addButton.setAttribute('aria-expanded', manager ? 'true' : 'false');
 
       backdrop.classList.add('is-open');
       backdrop.setAttribute('aria-hidden', 'false');
@@ -3220,8 +3805,11 @@
       buttons.forEach(function (button) {
         button.setAttribute('aria-expanded', 'false');
       });
+      if (addButton) addButton.setAttribute('aria-expanded', 'false');
       // A closed card must not keep a fetched forecast, a half-typed city or a
       // focused field in the heap: the body is rebuilt on the next open.
+      state.serviceError = '';
+      state.serviceDraft = { title: '', url: '' };
       clearBody();
       scheduleHitRegions();
 
@@ -3287,9 +3875,158 @@
 
     /* --- providers --------------------------------------------------------- */
 
+    /**
+     * The add form: a name, an address and nothing else.
+     *
+     * The address is validated before it is stored (`normalizeServiceUrl`), and the
+     * message below says why when it is refused: a wallpaper opens nothing but a plain
+     * `https` page, so a paste of `javascript:` or a bare `github.com` is turned away
+     * instead of quietly repaired.
+     */
+    function serviceForm() {
+      const form = el('form', 'widget-service-form');
+
+      const nameInput = el('input', 'widget-input');
+      nameInput.type = 'text';
+      nameInput.placeholder = 'Name (optional)';
+      nameInput.setAttribute('aria-label', 'Service name');
+      nameInput.setAttribute('autocomplete', 'off');
+      nameInput.spellcheck = false;
+      nameInput.value = state.serviceDraft.title;
+
+      const field = el('div', 'widget-field');
+      const urlInput = el('input', 'widget-input');
+      urlInput.type = 'url';
+      urlInput.placeholder = 'Paste an https address';
+      urlInput.setAttribute('aria-label', 'Service address');
+      urlInput.setAttribute('autocomplete', 'off');
+      urlInput.spellcheck = false;
+      urlInput.value = state.serviceDraft.url;
+
+      const submit = el('button', 'widget-submit', 'Add');
+      submit.type = 'submit';
+
+      function submitService() {
+        state.serviceDraft = { title: nameInput.value, url: urlInput.value };
+        addServiceFromForm();
+      }
+
+      field.appendChild(urlInput);
+      field.appendChild(submit);
+      form.appendChild(nameInput);
+      form.appendChild(field);
+      form.addEventListener('submit', function (event) {
+        event.preventDefault();
+        submitService();
+      });
+      // A replayed click is synthetic, so the button answers it itself instead of
+      // relying on an implicit form submission that never comes (the same reason the
+      // YouTube and weather cards wire theirs by hand).
+      submit.addEventListener('click', function (event) {
+        event.preventDefault();
+        submitService();
+      });
+      return form;
+    }
+
+    /** Store the draft, or say why it cannot be stored. */
+    function addServiceFromForm() {
+      if (state.services.length >= MAX_CUSTOM_SERVICES) {
+        failService('The orbit holds ' + MAX_CUSTOM_SERVICES + ' services. Remove one to add another.');
+        return false;
+      }
+      const url = normalizeServiceUrl(state.serviceDraft.url);
+      if (!url) {
+        failService('Paste the whole address, beginning with https. Nothing else is ever opened.');
+        return false;
+      }
+      const name = clipText(state.serviceDraft.title, MAX_SERVICE_TITLE) || serviceHostLabel(url);
+      const service = createCustomService(name, url, { index: state.services.length + 1 });
+      if (!service) {
+        failService('That address cannot be turned into a shortcut.');
+        return false;
+      }
+      const duplicate = state.services.some(function (existing) {
+        return existing.url === service.url;
+      });
+      if (duplicate) {
+        failService('That address is already in your orbit.');
+        return false;
+      }
+      state.serviceError = '';
+      state.serviceDraft = { title: '', url: '' };
+      commitServices(state.services.concat([service]));
+      return true;
+    }
+
+    /** Show why the draft was refused, keeping what the user typed in the fields. */
+    function failService(message) {
+      state.serviceError = message;
+      renderWidget(SERVICE_MANAGER_ID);
+      refocusManagerField();
+    }
+
+    /**
+     * The manager card: the form, the list, and one honest note about what a shortcut is.
+     *
+     * The list is the orbit, one row per glyph, so adding a service and watching the ring
+     * grow is the same gesture seen twice.
+     */
+    function renderServices() {
+      body.appendChild(section('Add a service', serviceForm()));
+      if (state.serviceError) body.appendChild(stateRow(state.serviceError, { error: true }));
+      body.appendChild(
+        section(
+          state.services.length > 0 ? 'In orbit' : 'Shortcuts',
+          state.services.length > 0
+            ? rowList(state.services.map(serviceRow))
+            : stateRow('No shortcuts yet — add one above.')
+        )
+      );
+      body.appendChild(
+        note(
+          'A shortcut opens in your default browser. The wallpaper never loads the site, so nothing about it is fetched until you click.'
+        )
+      );
+    }
+
+    /** One row: the shortcut's mark, its name and address, and the way to forget it. */
+    function serviceRow(service) {
+      const row = el('div', 'widget-service');
+
+      const open = el('button', 'widget-service-open');
+      open.type = 'button';
+      open.title = 'Open ' + service.title;
+      const glyph = el('span', 'widget-service-glyph');
+      glyph.innerHTML = serviceGlyphMarkup(service);
+      open.appendChild(glyph);
+      const text = el('span', 'widget-row-text');
+      text.appendChild(el('span', 'widget-row-title', service.title));
+      text.appendChild(el('span', 'widget-row-meta', serviceHostLabel(service.url)));
+      open.appendChild(text);
+      open.insertAdjacentHTML('beforeend', ARROW_MARKUP);
+      open.addEventListener('click', function () {
+        openExternal(win, service.url);
+      });
+
+      const remove = el('button', 'widget-service-remove');
+      remove.type = 'button';
+      remove.title = 'Remove ' + service.title;
+      remove.setAttribute('aria-label', 'Remove ' + service.title + ' from the orbit');
+      remove.insertAdjacentHTML('beforeend', REMOVE_MARKUP);
+      remove.addEventListener('click', function () {
+        removeService(service.id);
+      });
+
+      row.appendChild(open);
+      row.appendChild(remove);
+      return row;
+    }
+
     function renderWidget(id) {
       clearBody();
-      if (id === 'music') renderMusic();
+      if (id === SERVICE_MANAGER_ID) renderServices();
+      else if (id === 'music') renderMusic();
       else if (id === 'news') renderNews();
       else if (id === 'youtube') renderYouTube();
       else if (id === 'weather') renderWeather();
@@ -3703,6 +4440,19 @@
       });
     });
 
+    // The `+` is a toggle like any other satellite: press it again and the card it
+    // opened goes away, so the manager is never a panel with no way back.
+    if (addButton) {
+      addButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        if (state.activeId === SERVICE_MANAGER_ID) {
+          closeWidget();
+          return;
+        }
+        openWidget(SERVICE_MANAGER_ID);
+      });
+    }
+
     if (closeNode) {
       closeNode.addEventListener('click', function () {
         closeWidget();
@@ -3719,6 +4469,10 @@
     });
 
     doc.addEventListener('keydown', onKeyDown);
+
+    // The shortcuts become satellites before the first deal, so the orbit opens with the
+    // set the user keeps instead of appearing to grow a moment later.
+    rebuildServiceButtons();
 
     // Adopt the settings before the first deal, so the page opens with exactly the
     // desktop the user picked — no flash of four satellites on their way out.
@@ -3801,6 +4555,18 @@
         if (!visible && state.activeId === id) closeWidget();
       });
 
+      // The `+` has no switch of its own: it follows the master one, so an orbit that is
+      // switched off also loses the way in (and its manager card, if that was up).
+      if (addButton && addButton.hidden !== !master) {
+        addButton.hidden = !master;
+        changed = true;
+      }
+
+      // Custom shortcuts are never hidden one by one — they are added and removed
+      // deliberately — so the master switch is all they answer to, which the orbit's
+      // own `display: none` already covers.
+      if (!master && state.activeId === SERVICE_MANAGER_ID) closeWidget();
+
       // Before the first deal there is nothing to re-deal: creation scatters once at the
       // end, with the visibility above already in place.
       if (!changed || !state.started) return state.enabled;
@@ -3829,12 +4595,22 @@
       enabled: function () {
         return state.enabled;
       },
-      /** The satellites on the desktop right now, by id. */
+      /** The built-in satellites on the desktop right now, by widget id. */
       visibleIds: function () {
-        return visibleButtons().map(function (button) {
+        return visibleBuiltins().map(function (button) {
           return button.getAttribute('data-widget') || '';
         });
       },
+      /** The custom shortcuts in the orbit, as `{ id, title, url, icon }`. */
+      services: function () {
+        return state.services.map(function (service) {
+          return { id: service.id, title: service.title, url: service.url, icon: service.icon };
+        });
+      },
+      /** Add a shortcut and deal it into the ring; `null` when it cannot be added. */
+      addService: addService,
+      /** Forget a shortcut; whether the list changed. */
+      removeService: removeService,
       applyConfig: applyConfig,
       open: openWidget,
       close: closeWidget,
@@ -3914,6 +4690,28 @@
     WIDGET_NARROW_QUERY: WIDGET_NARROW_QUERY,
     scatterWidgets: scatterWidgets,
     createRandom: createRandom,
+
+    /* Custom services. The same pure half the manager card uses, so a host script and
+       a paste into the card can never disagree about what a legal shortcut is. */
+    CUSTOM_SERVICES_KEY: CUSTOM_SERVICES_KEY,
+    MAX_CUSTOM_SERVICES: MAX_CUSTOM_SERVICES,
+    MAX_SERVICE_TITLE: MAX_SERVICE_TITLE,
+    /** The reserved card id of the manager (`DynaWall.openWidget('services')`). */
+    SERVICE_MANAGER_ID: SERVICE_MANAGER_ID,
+    SERVICE_ICONS: SERVICE_ICONS,
+    normalizeServiceUrl: normalizeServiceUrl,
+    normalizeServiceIcon: normalizeServiceIcon,
+    serviceIconId: serviceIconId,
+    serviceIconMarkup: serviceIconMarkup,
+    serviceMonogram: serviceMonogram,
+    serviceGlyphMarkup: serviceGlyphMarkup,
+    serviceHostName: serviceHostName,
+    serviceHostLabel: serviceHostLabel,
+    createCustomService: createCustomService,
+    normalizeCustomServices: normalizeCustomServices,
+    serializeCustomServices: serializeCustomServices,
+    readCustomServices: readCustomServices,
+    writeCustomServices: writeCustomServices,
     WEATHER_FRESH_MS: WEATHER_FRESH_MS,
     WMO_CONDITIONS: WMO_CONDITIONS,
     MUSIC_STATIONS: MUSIC_STATIONS,
@@ -3994,6 +4792,29 @@
     /** The satellites on the desktop right now, by id. */
     enabledWidgets: function () {
       return widgetsRef ? widgetsRef.visibleIds() : [];
+    },
+    /**
+     * The custom shortcuts in the orbit, as `{ id, title, url, icon }`.
+     *
+     * They are the user's own list, cached in `localStorage` rather than pushed by a
+     * host: a shortcut is added on the wallpaper (the orbit's `+`) or through the two
+     * calls below, never from a popover.
+     */
+    customServices: function () {
+      return widgetsRef ? widgetsRef.services() : [];
+    },
+    /**
+     * Add a shortcut: `DynaWall.addCustomService('GitHub', address)`.
+     *
+     * The address goes through the same validation the manager card uses, so anything
+     * that is not a plain `https` URL is refused (`null`) rather than cached.
+     */
+    addCustomService: function (title, url) {
+      return widgetsRef ? widgetsRef.addService(title, url) : null;
+    },
+    /** Remove a shortcut by its id; whether the orbit changed. */
+    removeCustomService: function (id) {
+      return widgetsRef ? widgetsRef.removeService(id) : false;
     },
     /**
      * The host's way in: replay a click at viewport CSS pixels (`x`, `y`).

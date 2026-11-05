@@ -2913,7 +2913,17 @@ test('every satellite in index.html has a widget, and every widget a satellite',
 test('the popup is inert until a satellite opens it', () => {
   const markup = readText('index.html');
   assert.match(markup, /id="widget-backdrop"[^>]*aria-hidden="true"/);
-  assert.equal((markup.match(/aria-expanded="false"/g) || []).length, DynaWall.WIDGETS.length);
+  const collapsed = (markup.match(/aria-expanded="false"/g) || []).length;
+  assert.equal(
+    collapsed,
+    DynaWall.WIDGETS.length + 1,
+    'one per satellite, plus the `+` that opens the manager'
+  );
+  assert.equal(
+    (markup.match(/aria-expanded=/g) || []).length,
+    collapsed,
+    'nothing declares its card open before the script runs'
+  );
 
   const css = readText('style.css');
   assert.match(
@@ -3324,7 +3334,9 @@ test('a hidden satellite is hidden for real: unplaced, unclickable, and its card
   assert.match(script, /button\.hidden = !visible/, 'a hidden satellite leaves the layout');
   assert.match(script, /if \(!visible && state\.activeId === id\) closeWidget\(\)/, 'and its card');
   assert.match(script, /function scatter\(\) \{\n\s+if \(!state\.enabled\) return;/, 'nothing is placed while off');
-  assert.match(script, /const active = visibleButtons\(\);/, 'only the visible ones are dealt');
+  // Only the glyphs actually on screen are dealt — built-in, custom and the `+` alike.
+  assert.match(script, /function placedButtons\(\)[\s\S]{0,120}return !button\.hidden;/);
+  assert.match(script, /const active = placedButtons\(\);/, 'only the visible ones are dealt');
   assert.match(script, /count: active\.length/, 'and the ring is sized for them');
   // No rectangles at all: the desktop belongs to the Finder when the widgets are off, and
   // a hidden satellite reports nothing either way.
@@ -3713,17 +3725,18 @@ test('a card takes the keyboard while it is open and gives it straight back', ()
   assert.match(swift, /dismissOpenWidgets\(reason: "wallpaper paused"\)/);
 });
 
-test('both search fields answer a replayed click, not only a form submit', () => {
+test('every card form answers a replayed click, not only a form submit', () => {
   const script = readText('script.js');
 
   // A replayed click is synthetic, and a synthetic click on a submit button does not
-  // reliably submit its form: each card runs its search from the button itself.
+  // reliably submit its form: each card runs its action from the button itself.
   assert.match(script, /const submit = el\('button', 'widget-submit', 'Search'\);/);
   assert.match(script, /const submit = el\('button', 'widget-submit', 'Find'\);/);
+  assert.match(script, /const submit = el\('button', 'widget-submit', 'Add'\);/);
   assert.equal(
     (script.match(/submit\.addEventListener\('click'/g) || []).length,
-    2,
-    'both cards answer a click on their own button'
+    3,
+    'each card answers a click on its own button'
   );
 
   // The host's replay asks the owning button for a real click, which is what runs the
@@ -3805,6 +3818,299 @@ test('display type is tracked, lead and balanced deliberately', () => {
   assert.match(css, /font-synthesis:\s*none/, 'no faux weights or italics');
   assert.match(css, /font-kerning:\s*normal/);
   assert.match(css, /text-wrap:\s*balance/, 'the greeting balances when it wraps');
+});
+
+/* -------------------------------------------------------------------------- *
+ * Custom services — the user's own satellites
+ * -------------------------------------------------------------------------- */
+
+group('Custom services');
+
+test('a shortcut address is a plain https page, or nothing at all', () => {
+  assert.equal(DynaWall.CUSTOM_SERVICES_KEY, 'dynawall.customServices');
+  assert.equal(
+    DynaWall.STORAGE_KEYS.customServices,
+    undefined,
+    'a list is not a configuration field a host control could push'
+  );
+
+  // The one shape that is stored: an https address, as the browser would print it.
+  assert.equal(DynaWall.normalizeServiceUrl('https://github.com'), 'https://github.com/');
+  assert.equal(DynaWall.normalizeServiceUrl('  HTTPS://Example.com  '), 'https://example.com/');
+  assert.equal(
+    DynaWall.normalizeServiceUrl('https://chat.openai.com/c/1'),
+    'https://chat.openai.com/c/1'
+  );
+  assert.equal(
+    DynaWall.normalizeServiceUrl('https://example.com/?q=a b'),
+    'https://example.com/?q=a%20b',
+    'URL does the encoding a browser would do anyway'
+  );
+
+  // Everything else is refused rather than repaired: the address goes straight to the
+  // operating system's browser, so a scheme that is not https never gets through.
+  [
+    'http://example.com',
+    'javascript:alert(1)',
+    'file:///etc/passwd',
+    'mailto:ada@example.com',
+    'data:text/html,<script>alert(1)</script>',
+    'github.com',
+    '',
+    '   ',
+    null,
+    undefined,
+    42
+  ].forEach((value) => {
+    assert.equal(DynaWall.normalizeServiceUrl(value), '', `${String(value)} must be refused`);
+  });
+  assert.equal(
+    DynaWall.normalizeServiceUrl('https://user:secret@example.com/'),
+    '',
+    'a wallpaper has no business storing credentials'
+  );
+  assert.equal(
+    DynaWall.normalizeServiceUrl('https://' + 'a'.repeat(2100) + '.com/'),
+    '',
+    'an absurdly long address is refused, not cached'
+  );
+});
+
+test('a shortcut wears a curated glyph, or its own initials', () => {
+  // The catalogue is line art in the built-in satellites' own language, and each mark
+  // names words — never hosts — so it cannot become a second allowlist.
+  const ids = DynaWall.SERVICE_ICONS.map((icon) => icon.id);
+  assert.equal(new Set(ids).size, ids.length, 'every mark has its own id');
+  DynaWall.SERVICE_ICONS.forEach((icon) => {
+    assert.ok(icon.id && icon.label && icon.hints.length > 0, `${icon.id} needs a label and hints`);
+    assert.match(icon.paths, /^<(path|circle|rect)/, `${icon.id} is drawn from plain shapes`);
+    assert.ok(
+      !/https?:/.test(icon.paths + ' ' + icon.hints.join(' ')),
+      `${icon.id} must not name a host: the CSP owns that list`
+    );
+  });
+
+  assert.equal(DynaWall.serviceIconId('ChatGPT', 'https://chat.openai.com'), 'sparkle');
+  assert.equal(DynaWall.serviceIconId('GitHub', 'https://github.com'), 'git');
+  assert.equal(DynaWall.serviceIconId('Spotify', 'https://open.spotify.com'), 'wave');
+  assert.equal(DynaWall.serviceIconId('Twitch', 'https://www.twitch.tv'), 'play');
+  assert.equal(DynaWall.serviceIconId('Notes', 'https://notion.so'), 'page');
+  assert.equal(DynaWall.serviceIconId('Somewhere', 'https://example.com'), '', 'no match, no mark');
+
+  assert.match(
+    DynaWall.serviceIconMarkup('git'),
+    /^<svg class="widget-icon" viewBox="0 0 24 24"/,
+    'a curated glyph is the satellite glyph class, so it is stroked white'
+  );
+  assert.equal(DynaWall.serviceIconMarkup('nope'), '');
+  assert.equal(DynaWall.normalizeServiceIcon('GIT'), 'git', 'a stored id is read case-insensitively');
+  assert.equal(DynaWall.normalizeServiceIcon('nope'), '');
+
+  // The fallback is two capitals in the same ink, never a broken icon.
+  assert.equal(DynaWall.serviceMonogram('GitHub', 'https://github.com'), 'GH');
+  assert.equal(DynaWall.serviceMonogram('My Notes', 'https://example.com'), 'MN');
+  assert.equal(DynaWall.serviceMonogram('Figma', 'https://figma.com'), 'FI');
+  assert.equal(DynaWall.serviceMonogram('X', 'https://x.example'), 'X');
+  assert.equal(DynaWall.serviceMonogram('', 'https://example.com'), 'EX', 'unnamed: the host names it');
+  assert.match(DynaWall.serviceGlyphMarkup({ title: 'Figma' }), /class="widget-monogram"/);
+  assert.match(
+    DynaWall.serviceGlyphMarkup({ title: 'GitHub', icon: 'git' }),
+    /^<svg class="widget-icon"/,
+    'a curated mark beats the monogram'
+  );
+  assert.equal(
+    DynaWall.serviceMonogram('<img src=x onerror=alert(1)>', 'https://example.com'),
+    'IS',
+    'markup in a title cannot reach the page: the monogram is letters only'
+  );
+});
+
+
+test('a shortcut is a record, and the stored list is made safe', () => {
+  assert.deepEqual(DynaWall.createCustomService('GitHub', 'https://github.com/froilan', { index: 2 }), {
+    id: 'service-2',
+    title: 'GitHub',
+    url: 'https://github.com/froilan',
+    icon: 'git'
+  });
+  assert.equal(
+    DynaWall.createCustomService('', 'https://example.com').title,
+    'Example.com',
+    'an unnamed service borrows the host name'
+  );
+  assert.equal(DynaWall.createCustomService('FTP', 'ftp://example.com'), null);
+  assert.equal(
+    DynaWall.createCustomService('Talk', 'https://example.com', { icon: 'talk' }).icon,
+    'talk',
+    'a chosen mark wins over the guess'
+  );
+  assert.equal(
+    DynaWall.createCustomService('Odd', 'https://example.com', { icon: 'nope' }).icon,
+    '',
+    'an unknown mark falls back to the initials'
+  );
+
+  // A stored list is JSON, and anything in it may be hand-edited: it is read defensively.
+  const stored = JSON.stringify([
+    { title: 'GitHub', url: 'https://github.com' },
+    { title: 'GitHub again', url: 'https://github.com/' },
+    { title: 'Bad', url: 'javascript:alert(1)' },
+    null,
+    { title: 'ChatGPT', url: 'https://chat.openai.com', icon: 'sparkle' }
+  ]);
+  const services = DynaWall.normalizeCustomServices(stored);
+  assert.deepEqual(
+    services.map((service) => service.title),
+    ['GitHub', 'ChatGPT'],
+    'a duplicate collapses to its first mention, rubbish is dropped'
+  );
+  assert.deepEqual(
+    services.map((service) => service.id),
+    ['service-1', 'service-2'],
+    'ids follow the list position, so they can never collide'
+  );
+  assert.deepEqual(DynaWall.normalizeCustomServices('not json'), []);
+  assert.deepEqual(DynaWall.normalizeCustomServices('{}'), []);
+  assert.deepEqual(DynaWall.normalizeCustomServices(null), []);
+
+  const many = Array.from({ length: DynaWall.MAX_CUSTOM_SERVICES + 5 }, (unused, index) => ({
+    title: 'Service ' + index,
+    url: 'https://example.com/' + index
+  }));
+  assert.equal(
+    DynaWall.normalizeCustomServices(many).length,
+    DynaWall.MAX_CUSTOM_SERVICES,
+    'the ring is capped before it stops being a constellation'
+  );
+});
+
+test('shortcuts survive a reload in localStorage, and nowhere else', () => {
+  const storage = fakeStorage();
+  assert.deepEqual(DynaWall.readCustomServices(storage), [], 'nothing stored, nothing dealt');
+
+  const services = [
+    DynaWall.createCustomService('GitHub', 'https://github.com', { index: 1 }),
+    DynaWall.createCustomService('ChatGPT', 'https://chat.openai.com', { index: 2 })
+  ];
+  assert.equal(DynaWall.writeCustomServices(storage, services), true);
+  assert.deepEqual(
+    DynaWall.readCustomServices(storage).map((service) => service.url),
+    ['https://github.com/', 'https://chat.openai.com/'],
+    'the list round-trips through the cache'
+  );
+
+  // The stored shape is the minimum: no ids, no derived marks — the id is a handle the
+  // page mints, and the mark is recomputed from the title and the address on load.
+  assert.deepEqual(JSON.parse(storage.getItem(DynaWall.CUSTOM_SERVICES_KEY)), [
+    { title: 'GitHub', url: 'https://github.com/', icon: 'git' },
+    { title: 'ChatGPT', url: 'https://chat.openai.com/', icon: 'sparkle' }
+  ]);
+
+  // A cache that is blocked or absent is not a broken wallpaper.
+  assert.deepEqual(DynaWall.readCustomServices(null), []);
+  assert.equal(DynaWall.writeCustomServices(null, services), false);
+  const blocked = {
+    getItem() {
+      throw new Error('denied');
+    },
+    setItem() {
+      throw new Error('denied');
+    }
+  };
+  assert.deepEqual(DynaWall.readCustomServices(blocked), []);
+  assert.equal(DynaWall.writeCustomServices(blocked, services), false);
+});
+
+test('the scatter deals any number of glyphs, custom ones included', () => {
+  const options = {
+    width: 1920,
+    height: 1080,
+    size: 44,
+    count: 9,
+    margin: 40,
+    gap: 24,
+    clearance: 48,
+    reach: 128,
+    avoid: [{ x: 510, y: 470, width: 900, height: 96 }],
+    seed: 20260115
+  };
+  const points = DynaWall.scatterWidgets(options);
+  assert.equal(points.length, 9, 'one position per glyph, however many there are');
+  points.forEach((point) => {
+    assert.ok(Number.isFinite(point.x) && Number.isFinite(point.y), 'a real position');
+    assert.ok(
+      point.x >= options.margin &&
+        point.y >= options.margin &&
+        point.x + options.size <= options.width - options.margin &&
+        point.y + options.size <= options.height - options.margin,
+      'every glyph stays on the wallpaper'
+    );
+  });
+  assert.deepEqual(DynaWall.scatterWidgets(options), points, 'the same seed deals the same hand');
+});
+
+test('the orbit grows a matching `+` without becoming a fifth widget', () => {
+  const markup = readText('index.html');
+  assert.match(markup, /id="widget-btn-add"/);
+  assert.match(markup, /class="widget-btn widget-btn-add"/);
+  assert.match(markup, /id="widget-btn-add"[\s\S]{0,400}aria-label="Add a favourite service"/);
+  assert.match(
+    markup,
+    /id="widget-btn-add"[\s\S]{0,400}aria-expanded="false"/,
+    'the `+` announces itself like its neighbours, before the script ever runs'
+  );
+  assert.match(markup, /data-action="manage-services"/, 'the manager is a control, not a satellite');
+  assert.ok(
+    !/data-widget="add"/.test(markup),
+    'the markup list and the catalogue stay an exact match: the manager is not a widget'
+  );
+  assert.equal(
+    DynaWall.WIDGETS.some((widget) => widget.id === DynaWall.SERVICE_MANAGER_ID),
+    false,
+    'and the catalogue never grows a manager entry'
+  );
+
+  // The `+` is the same bare glyph at the same size — just quieter — and the monogram is
+  // typeset in the wallpaper's own face so a shortcut never looks like a broken icon.
+  const css = readText('style.css');
+  assert.match(css, /\.widget-btn-add\s*\{[^}]*opacity:\s*0?\.\d+/, 'the way in is quieter');
+  assert.match(css, /\.widget-monogram\s*\{[^}]*font-family:\s*var\(--font-sans\)/);
+  assert.match(css, /\.widget-monogram\s*\{[^}]*font-size:\s*calc\(var\(--widget-size\)/);
+  assert.match(css, /\.widget-service-glyph\s*\{[^}]*color:\s*var\(--widget-ink\)/);
+  assert.match(css, /\.widget-service-remove\s*\{[^}]*border-radius/, 'the card may draw a disc');
+  assert.match(css, /\.widget-service-form\s*\{[^}]*flex-direction:\s*column/);
+});
+
+test('a shortcut opens the browser, a built-in opens its card', () => {
+  const script = readText('script.js');
+  // Two clicks, two destinations: a shortcut leaves for the default browser through the
+  // native bridge, and the built-ins still open their own cards in the wallpaper.
+  assert.match(script, /openExternal\(win, service\.url\)/, 'a shortcut leaves for the browser');
+  assert.match(script, /openWidget\(SERVICE_MANAGER_ID\)/, 'the `+` opens the manager');
+  assert.match(script, /if \(id === SERVICE_MANAGER_ID\) renderServices\(\)/, 'and the card paints it');
+  assert.match(
+    script,
+    /bar\.insertBefore\(button, addButton \|\| null\)/,
+    'a shortcut joins the same orbit, before the `+`'
+  );
+  assert.match(script, /readCustomServices\(storage\)/, 'the list is restored before the first deal');
+  assert.match(
+    script,
+    /writeCustomServices\(storage, state\.services\)/,
+    'and cached on every change'
+  );
+  assert.match(script, /rebuildServiceButtons\(\);/, 'the satellites are rebuilt, not re-dealt by hand');
+  assert.match(script, /addButton\.setAttribute\('aria-expanded'/, 'the `+` reports its card');
+  assert.match(
+    script,
+    /button\.setAttribute\('data-service', service\.id\)/,
+    'a shortcut is keyed by `data-service`: it never borrows a widget id'
+  );
+  assert.match(
+    script,
+    /return visibleBuiltins\(\)\.map/,
+    'the host report and the per-satellite switches stay about the built-ins'
+  );
 });
 
 /* -------------------------------------------------------------------------- *

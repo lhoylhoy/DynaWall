@@ -18,11 +18,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private SettingsForm? settingsForm;
     private bool cleanedUp;
 
-    internal TrayApplicationContext()
+    internal TrayApplicationContext(bool openSettingsOnStart = false)
     {
         uiContext = SynchronizationContext.Current;
 
+        var isFirstRun = !File.Exists(AppPaths.PreferencesFile);
         var preferences = Preferences.Load();
+        if (isFirstRun)
+        {
+            preferences.Save();
+        }
+
         wallpaper = new WallpaperController(preferences);
 
         var menu = new ContextMenuStrip();
@@ -52,6 +58,23 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         wallpaper.Start();
         RefreshMenu();
+
+        if (isFirstRun || openSettingsOnStart)
+        {
+            OpenSettings();
+            try
+            {
+                tray.ShowBalloonTip(
+                    4000,
+                    "DynaWall",
+                    "DynaWall is running! You can configure settings here anytime.",
+                    ToolTipIcon.Info);
+            }
+            catch
+            {
+                // Balloon notifications are best-effort.
+            }
+        }
     }
 
     /// <summary>Safe from any thread; also used when a second launch asks for settings.</summary>

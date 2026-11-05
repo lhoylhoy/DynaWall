@@ -48,6 +48,18 @@ internal sealed class WallpaperController : IDisposable
     {
         try
         {
+            if (!Directory.Exists(AppPaths.WebRoot) || !File.Exists(Path.Combine(AppPaths.WebRoot, "index.html")))
+            {
+                Log.Write($"the web wallpaper folder was not found at: {AppPaths.WebRoot}");
+                MessageBox.Show(
+                    $"DynaWall could not find its wallpaper assets at:\n{AppPaths.WebRoot}\n\n" +
+                    "If you downloaded the portable zip, please extract all files before running DynaWall.exe.",
+                    "DynaWall",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+                return;
+            }
+
             Photos.Reload(Preferences.PhotoFolder);
             AppPaths.EnsureDataDirectory();
             WebViewEnvironment = await CoreWebView2Environment.CreateAsync(null, AppPaths.WebViewDataDirectory);

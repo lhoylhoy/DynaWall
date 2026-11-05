@@ -9,7 +9,7 @@ internal static class Program
     private const string ShowSettingsEventName = @"Local\DynaWall.ShowSettings";
 
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         using var mutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var isFirstInstance);
         if (!isFirstInstance)
@@ -29,7 +29,11 @@ internal static class Program
         // forms from a worker thread.
         SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
 
-        using var context = new TrayApplicationContext();
+        var openSettings = args is { Length: > 0 } && Array.Exists(args, a =>
+            string.Equals(a, "--settings", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(a, "-s", StringComparison.OrdinalIgnoreCase));
+
+        using var context = new TrayApplicationContext(openSettings);
         using var showSettings = new EventWaitHandle(
             initialState: false, EventResetMode.AutoReset, ShowSettingsEventName);
         var registration = ThreadPool.RegisterWaitForSingleObject(

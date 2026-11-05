@@ -146,6 +146,13 @@ node --check script.js
 node tests/verify.cjs
 ```
 
+`node tests/perf-audit.cjs` is the performance audit: it simulates a day of timer wakeups,
+benchmarks the hot routines (10,000 timed iterations each), checks the compositor style
+invariants, sizes the shipped assets and inspects both native hosts, then writes
+`performance_audit_report.md`. It exits non-zero only if an invariant regressed; the advisory
+findings never fail the run. `--no-report` keeps it on the console, `--report path.md` moves
+the artifact.
+
 ## Files
 
 | Path | Purpose |
@@ -160,6 +167,7 @@ node tests/verify.cjs
 | `macos/` | Swift menu bar host (`DynaWallApp.swift`) |
 | `windows/` | .NET 8 WinForms tray host (WebView2) |
 | `tests/verify.cjs` | Test suite run by CI and the release scripts |
+| `tests/perf-audit.cjs` | Performance audit: wakeups, micro-benchmarks, compositor invariants, asset and host footprint |
 | `build-macos.sh`, `build-dmg.sh`, `windows/build-release.ps1` | Build and packaging scripts |
 
 ## Where things are stored

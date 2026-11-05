@@ -25,6 +25,9 @@ dist/dmg_root/
 # Per-slice scratch binaries while build-macos.sh links the Universal 2 app
 dist/bin/
 
+# Performance audit artifact (regenerate with `node tests/perf-audit.cjs`)
+performance_audit_report.md
+
 # .NET build output
 windows/bin/
 windows/obj/

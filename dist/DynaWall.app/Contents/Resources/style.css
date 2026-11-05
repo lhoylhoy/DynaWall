@@ -543,13 +543,12 @@ body.has-photo .subtitle {
    script.js's business: on every load it throws each one out from the text block at a
    random angle and a random distance — always clear of the type, never far from it,
    never on top of another — and writes that position into `--widget-x`/`--widget-y`.
-   The percentages below are only the fallback a page without the script gets: one
-   satellite near each corner.
+   The percentage below is only the fallback a page without the script gets.
 
-   The ring holds the four built-in services and one glyph per custom shortcut the user
-   keeps, all in the same ink at the same size, so a shortcut is indistinguishable from
-   a built-in until it is clicked. Nothing else floats out there: adding a shortcut is
-   the `+` in the widget card's header, which keeps the composition to services alone.
+   The ring holds the `+` and one glyph per app the user keeps, all in the same ink at
+   the same size, so the way to add an app looks like the apps themselves. An app leaves
+   for the default browser when it is clicked; the card the `+` opens is the one place
+   apps are added and forgotten.
 
    They are positioned against the wallpaper, not against the text block, so the
    scatter has the whole screen to work with and never depends on how wide the
@@ -585,10 +584,9 @@ html.is-widgets-off .widget-orbit {
   display: none;
 }
 
-/* One satellite switched off on its own (`widgetMusic`, `widgetNews`, `widgetYouTube`,
-   `widgetWeather`): same treatment, one glyph at a time. `.widget-btn` sets
+/* The `+` leaves with the orbit (`hidden` is set from `widgets`), and `.widget-btn` sets
    `display: grid`, which would beat the browser's own `[hidden]` rule, so the state is
-   spelled out here; the rest of the ring is re-dealt around the gap. */
+   spelled out here. */
 .widget-btn[hidden] {
   display: none;
 }
@@ -652,12 +650,13 @@ html.is-widgets-off .widget-orbit {
 }
 
 .widget-icon {
-  /* The glyph fills the button now that there is no circle behind it. Stroked, not
-     filled: one weight reads as an icon at any size, and `non-scaling-stroke` keeps that
-     weight from thickening as the glyph grows — crisp on a Retina display without a
-     second asset. `2.5` is that weight: at the S, M and L footprints a 2px stroke is
-     only 3%–4% of the mark, so it thins out to a grey thread. A quarter of a unit more
-     holds the line on a high-DPI screen without turning the outline into a filled blob. */
+  /* The glyph fills the button now that there is no circle behind it. Stroked, not filled:
+     one weight reads as an icon at any size, and `non-scaling-stroke` keeps that weight
+     from thickening as the glyph grows — crisp on a Retina display without a second asset.
+     `2.5` is that weight: at the S, M and L footprints a 2px stroke is only 3%–4% of the
+     mark, so it thins out to a grey thread. A quarter of a unit more holds the line on a
+     high-DPI screen without turning the outline into a filled blob. This is the ink for
+     everything drawn as line art; an official brand silhouette opts out just below. */
   width: 100%;
   height: 100%;
   fill: none;
@@ -676,10 +675,40 @@ html.is-widgets-off .widget-orbit {
   vector-effect: non-scaling-stroke;
 }
 
-/* A service with no curated glyph wears its own initials instead: two capitals set in
-   the wallpaper's face at the weight the line art is stroked at. It sits in the same
-   white ink as every other satellite, so the fallback reads as a deliberate mark rather
-   than a missing icon — and it costs no request, no sprite and no favicon. */
+/* Two inks, one catalogue. An official brand silhouette is drawn filled, because that is
+   the geometry the logo is designed as — stroking a filled logo traces its interior
+   contours as well, or leaves nothing but a thin outline at a satellite's size, which is
+   what an empty-looking YouTube pill was. Everything drawn as line art (the kind marks and
+   the generic window) keeps the 2.5 weight above. `fill`/`stroke` are set on the
+   `<svg>` here and reach the shapes by inheritance, which is also why this rule is a class
+   on the element `serviceIconMarkup` builds. */
+.widget-icon.is-solid {
+  fill: currentColor;
+  stroke: none;
+}
+
+/* Favicon styling for satellites */
+.widget-favicon {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: 22%;
+  display: block;
+  pointer-events: none;
+  user-select: none;
+}
+
+.widget-fallback {
+  display: contents;
+}
+
+/* A service's initials, on request: the wallpaper itself no longer falls back to them —
+   a shortcut nothing in the catalogue names wears the generic window (`.widget-icon`)
+   instead — but the rule stays for a host that would rather print "GH" than draw one,
+   and for a service saved before the window existed. Two capitals in the wallpaper's
+   face at the weight the line art is stroked at, in the same white ink as every other
+   satellite, so they read as a deliberate mark rather than a missing icon — and they
+   cost no request, no sprite and no favicon. */
 .widget-monogram {
   display: grid;
   place-items: center;
@@ -691,38 +720,25 @@ html.is-widgets-off .widget-orbit {
   text-transform: uppercase;
 }
 
-/* Fallback corners, used only until script.js has scattered the satellites (or when
-   it never runs at all). Each satellite also keeps its own drift phase here, so the
-   four of them breathe out of step with each other. */
-.widget-btn[data-widget="music"] {
+/* The fallback spot, used only until script.js has scattered the orbit (or when it never
+   runs at all): the `+` sits in the top-left corner, and every app is dealt around the
+   greeting by the same hand the rest of the desktop wears. */
+.widget-btn-add {
   --widget-x: 5%;
   --widget-y: 8%;
   --widget-drift-x: 0.16rem;
   --widget-drift-y: -0.3rem;
 }
 
-.widget-btn[data-widget="news"] {
-  --widget-x: 89%;
-  --widget-y: 8%;
-  --widget-drift-x: -0.14rem;
-  --widget-drift-y: -0.34rem;
-  --widget-drift-delay: -3.6s;
+/* The `+` is the whole way into the card, and the way back out of it: it turns a quarter
+   turn while its card is up, so the glyph that opened the card is also the × that
+   dismisses it. */
+.widget-btn-add .widget-icon {
+  transition: transform 220ms var(--ease-settle);
 }
 
-.widget-btn[data-widget="youtube"] {
-  --widget-x: 5%;
-  --widget-y: 84%;
-  --widget-drift-x: 0.15rem;
-  --widget-drift-y: 0.28rem;
-  --widget-drift-delay: -7.1s;
-}
-
-.widget-btn[data-widget="weather"] {
-  --widget-x: 89%;
-  --widget-y: 84%;
-  --widget-drift-x: -0.16rem;
-  --widget-drift-y: 0.32rem;
-  --widget-drift-delay: -10.4s;
+.widget-btn-add[aria-expanded="true"] .widget-icon {
+  transform: rotate(45deg);
 }
 
 /* A quarter of a rem each way over thirteen seconds: alive when you look at it,
@@ -773,9 +789,9 @@ html.is-suspended .widget-btn {
 
 /* ---------------------------------------------------------------------------
    Frosted popup card
-   One viewport for every widget: the backdrop dims the wallpaper a little and
+   One viewport for one card: the backdrop dims the wallpaper a little and
    swallows the click that closes the card, and the modal is the smoked-glass sheet
-   the provider renders into. It is `visibility: hidden` rather than `display: none`
+   the Apps card is rendered into. It is `visibility: hidden` rather than `display: none`
    so the open and close transitions can actually run, and `aria-hidden` on the
    backdrop keeps the closed card out of the accessibility tree.
    --------------------------------------------------------------------------- */
@@ -846,7 +862,8 @@ html.is-suspended .widget-btn {
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-/* The provider's own glyph, cloned from the satellite that opened the card. */
+/* The apps manager's own mark: the same bare `+` the satellite wears, in a disc because
+   the header is a title bar rather than the wallpaper. */
 .widget-modal-badge {
   display: grid;
   place-items: center;
@@ -896,70 +913,6 @@ html.is-suspended .widget-btn {
 
 .widget-modal-caption:empty {
   display: none;
-}
-
-/* The card's second action, immediately before the close button: the way into the
-   shortcuts manager on a widget, and the way back out of it on the manager itself. It
-   wears the close button's disc, hover and focus ring, so the header reads as one pair of
-   controls rather than a card with a stray mark in it. */
-.widget-modal-action {
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  width: 1.85rem;
-  height: 1.85rem;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 50%;
-  background-color: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition:
-    color 180ms var(--ease-out),
-    background-color 180ms var(--ease-out),
-    border-color 180ms var(--ease-out);
-}
-
-/* Both glyphs are always in the button, stacked in the same grid cell: the `+` and the
-   arrow are one mark that turns over, so the way back appears exactly where the pointer
-   already is instead of in a control of its own. */
-.widget-modal-action-glyph {
-  grid-area: 1 / 1;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  transition:
-    opacity 160ms var(--ease-out),
-    transform 220ms var(--ease-settle);
-}
-
-.widget-modal-action-glyph--back {
-  opacity: 0;
-  transform: rotate(-45deg) scale(0.6);
-}
-
-/* `data-mode` is the one handle script.js flips when the manager is on screen. */
-.widget-modal-action[data-mode="back"] .widget-modal-action-glyph--add {
-  opacity: 0;
-  transform: rotate(45deg) scale(0.6);
-}
-
-.widget-modal-action[data-mode="back"] .widget-modal-action-glyph--back {
-  opacity: 1;
-  transform: none;
-}
-
-.widget-modal-action:hover {
-  border-color: rgba(255, 255, 255, 0.12);
-  background-color: rgba(255, 255, 255, 0.08);
-  color: var(--widget-ink);
-}
-
-.widget-modal-action:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.72);
-  outline-offset: 2px;
 }
 
 .widget-modal-close {
@@ -1070,6 +1023,18 @@ html.is-suspended .widget-btn {
   background-color: rgba(255, 255, 255, 0.16);
 }
 
+/* A preset the desktop already holds: the chip keeps its place in the row so the others
+   never shuffle under the pointer, and stops being pressable. */
+.widget-chip[disabled] {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.widget-chip[disabled]:hover {
+  border-color: rgba(255, 255, 255, 0.13);
+  background-color: rgba(255, 255, 255, 0.045);
+}
+
 .widget-chip:focus-visible {
   outline: 2px solid rgba(255, 255, 255, 0.72);
   outline-offset: 2px;
@@ -1159,8 +1124,8 @@ html.is-suspended .widget-btn {
   color: var(--text-secondary);
 }
 
-/* Loading, empty and error are the same shape on purpose: the card never changes
-   size class, only its message, so a failed fetch does not make the popup jump. */
+/* Empty and error are the same shape on purpose: the card never changes size class,
+   only its message, so a refusal does not make the popup jump. */
 .widget-state {
   display: flex;
   align-items: center;
@@ -1176,27 +1141,11 @@ html.is-suspended .widget-btn {
   color: #ffb4a8;
 }
 
-.widget-spinner {
-  flex: 0 0 auto;
-  width: 0.85rem;
-  height: 0.85rem;
-  border: 1.6px solid rgba(255, 255, 255, 0.18);
-  border-top-color: rgba(255, 255, 255, 0.75);
-  border-radius: 50%;
-  animation: widget-spin 900ms linear infinite;
-}
+/* --- the apps manager --------------------------------------------------- */
 
-@keyframes widget-spin {
-  to {
-    transform: rotate(1turn);
-  }
-}
-
-/* --- the service manager ------------------------------------------------- */
-
-/* The add form: a name and an address, one per line, because a URL is long and this
-   card is narrow. The fields are the card's own — same glass, same focus ring — so the
-   manager never looks like a second, imported dialog. */
+/* The add form: a name and an address, one per line, because a URL is long and this card
+   is narrow. The fields are the card's own — same glass, same focus ring — so the card
+   never looks like a second, imported dialog. */
 .widget-service-form {
   display: flex;
   flex-direction: column;
@@ -1229,6 +1178,12 @@ html.is-suspended .widget-btn {
 
 .widget-service-glyph .widget-monogram {
   font-size: 0.6rem;
+}
+
+.widget-service-glyph .widget-favicon {
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 0.35rem;
 }
 
 /* Going there and removing it are two targets, never one confusing target for both:
@@ -1297,128 +1252,6 @@ html.is-suspended .widget-btn {
   outline-offset: 2px;
 }
 
-/* --- weather, tiles and the city search ---------------------------------- */
-
-.widget-weather {
-  display: flex;
-  flex-direction: column;
-  gap: 0.9rem;
-}
-
-.widget-weather-now {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-}
-
-.widget-weather-glyph {
-  flex: 0 0 auto;
-  width: 3.1rem;
-  height: 3.1rem;
-  fill: none;
-  stroke: var(--widget-ink);
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  opacity: 0.92;
-}
-
-.widget-weather-reading {
-  display: flex;
-  flex-direction: column;
-  gap: 0.05rem;
-  min-width: 0;
-}
-
-.widget-weather-temp {
-  font-family: var(--font-sans);
-  font-size: 2.05rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.05;
-  color: var(--widget-ink);
-}
-
-.widget-weather-summary {
-  font-size: 0.82rem;
-  line-height: 1.35;
-  color: var(--text-secondary);
-}
-
-.widget-weather-place {
-  margin: 0;
-  font-size: 0.78rem;
-  line-height: 1.35;
-  color: var(--text-primary);
-}
-
-.widget-weather-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.45rem;
-}
-
-.widget-metric {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  padding: 0.5rem 0.6rem;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 0.7rem;
-  background-color: rgba(255, 255, 255, 0.04);
-}
-
-.widget-metric-value {
-  font-size: 0.86rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.widget-metric-label {
-  font-size: 0.64rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-secondary);
-}
-
-.widget-hours {
-  display: flex;
-  gap: 0.3rem;
-  overflow-x: auto;
-  padding-bottom: 0.15rem;
-  scrollbar-width: none;
-}
-
-.widget-hours::-webkit-scrollbar {
-  display: none;
-}
-
-.widget-hour {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.2rem;
-  flex: 1 0 auto;
-  min-width: 3.1rem;
-  padding: 0.45rem 0.3rem;
-  border: 1px solid transparent;
-  border-radius: 0.65rem;
-  background-color: rgba(255, 255, 255, 0.035);
-  font-size: 0.7rem;
-  color: var(--text-secondary);
-}
-
-.widget-hour.is-now {
-  border-color: rgba(255, 255, 255, 0.22);
-  color: var(--text-primary);
-}
-
-.widget-hour-temp {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
 .widget-field {
   display: flex;
   gap: 0.4rem;
@@ -1477,54 +1310,11 @@ html.is-suspended .widget-btn {
   outline-offset: 2px;
 }
 
-.widget-tiles {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.5rem;
-}
-
-.widget-tile {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.55rem;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 0.8rem;
-  background-color: rgba(255, 255, 255, 0.045);
-  color: inherit;
-  font-family: var(--font-sans);
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 160ms var(--ease-out), border-color 160ms var(--ease-out);
-}
-
-.widget-tile:hover {
-  border-color: rgba(255, 255, 255, 0.24);
-  background-color: rgba(255, 255, 255, 0.09);
-}
-
-.widget-tile:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.72);
-  outline-offset: 1px;
-}
-
-.widget-tile-title {
-  font-size: 0.8rem;
-  line-height: 1.35;
-  color: var(--text-primary);
-}
-
-.widget-tile-meta {
-  font-size: 0.7rem;
-  line-height: 1.3;
-  color: var(--text-secondary);
-}
-
 /* Below this width there is no room to scatter the satellites: every quadrant is
    smaller than the greeting itself. They collapse into one centred row near the bottom
    of the screen, which is also the layout a phone gets — the bar stops being an orbit
    and becomes a dock. The row wraps instead of overflowing, because the dock holds a
-   glyph per custom shortcut as well as the four built-ins. */
+   glyph per app the user keeps, beside the `+`. */
 @media (max-width: 720px) {
   .widget-orbit {
     position: absolute;
@@ -1572,7 +1362,7 @@ html.is-suspended .widget-btn {
   body,
   .wallpaper-content,
   .widget-orbit,
-  .widget-modal-action-glyph,
+  .widget-btn-add .widget-icon,
   .greeting,
   .subtitle,
   .photo,
@@ -1596,8 +1386,7 @@ html.is-suspended .widget-btn {
 
   /* The satellites hold still, and the card is placed instead of rising into
      place: the drift is ambient rather than information, and the popup's slide is
-     exactly the kind of movement this setting exists to remove. The loading ring
-     only slows down — a frozen spinner reads as a broken card. */
+     exactly the kind of movement this setting exists to remove. */
   .widget-btn {
     animation: none;
     transform: none;
@@ -1614,10 +1403,6 @@ html.is-suspended .widget-btn {
   .widget-modal,
   .widget-backdrop.is-open .widget-modal {
     transform: none;
-  }
-
-  .widget-spinner {
-    animation-duration: 2.4s;
   }
 
   /* The ambient aura is motion too: hold it at its brightest, still frame. */

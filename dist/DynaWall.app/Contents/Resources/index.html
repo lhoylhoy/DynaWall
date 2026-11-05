@@ -28,9 +28,9 @@
                                     the macOS scheme handler, and the two WebView2
                                     virtual hosts (dynawall.local = the page itself,
                                     dynawall-photos.local = a chosen folder)
-        connect-src ...             exactly the two keyless Open-Meteo endpoints the
-                                    weather card declares; YouTube and Google News
-                                    are only ever handed to the OS browser
+        connect-src 'self'           nothing: the wallpaper fetches no remote host at
+                                    all. Every app it launches is handed to the OS
+                                    browser, so no request ever leaves this page
         base-uri / form-action      neither can be retargeted by injected markup
 
       `file:` is what keeps the macOS bundle working: its WKWebView loads this file
@@ -40,7 +40,7 @@
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; font-src 'self' file: data:; img-src 'self' file: data: blob: dynawall-photo: https://dynawall.local https://dynawall-photos.local; connect-src 'self' https://api.open-meteo.com https://geocoding-api.open-meteo.com; base-uri 'none'; form-action 'none'; object-src 'none'"
+      content="default-src 'none'; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; font-src 'self' file: data:; img-src 'self' file: data: blob: dynawall-photo: https://dynawall.local https://dynawall-photos.local https://www.google.com https://t0.gstatic.com https://t1.gstatic.com https://t2.gstatic.com https://t3.gstatic.com https://icons.duckduckgo.com; connect-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'"
     />
     <!-- The wallpaper never needs to tell a remote server where it came from. -->
     <meta name="referrer" content="no-referrer" />
@@ -72,98 +72,30 @@
            of it: an absolutely positioned child would be measured against the greeting —
            including its entrance transform — instead of against the screen.
 
-           The four below are the built-in services. script.js adds one more satellite
-           per custom shortcut the user keeps (ChatGPT, GitHub, …), all dealt the same
-           hand — and nothing else: adding a shortcut is a control in the card header
-           (`#widget-modal-services`), so no stray glyph ever orbits the greeting. The
-           orbit itself is pointer-transparent, so only the buttons are hit targets —
-           script.js measures them and tells the native host where the cursor may click,
-           which is what keeps the rest of the desktop on the Finder (drag-select,
-           right-click, Mission Control). -->
-      <nav class="widget-orbit" id="widget-bar" aria-label="Desktop widgets">
+           One satellite ships here: the `+` that opens the Apps card, which is how the
+           user adds, launches and forgets their own apps. script.js adds one more
+           satellite per app the user keeps (GitHub, ChatGPT, …), all dealt the same
+           hand. The orbit itself is pointer-transparent, so only the buttons are hit
+           targets — script.js measures them and tells the native host where the cursor
+           may click, which is what keeps the rest of the desktop on the Finder
+           (drag-select, right-click, Mission Control). -->
+      <nav class="widget-orbit" id="widget-bar" aria-label="Desktop apps">
         <button
           type="button"
-          class="widget-btn"
-          id="widget-btn-music"
-          data-widget="music"
-          title="YouTube Music"
-          aria-label="YouTube Music"
+          class="widget-btn widget-btn-add"
+          id="widget-btn-add"
+          title="Add an app"
+          aria-label="Add an app"
           aria-haspopup="dialog"
           aria-controls="widget-modal"
           aria-expanded="false"
         >
-          <!-- YouTube Music's own mark: the disc, its ring and the play triangle, traced
-               as line art from the official geometry (24-unit disc, ring at 6.23–7.10,
-               triangle inside it) and inset by one stroke so nothing clips. -->
+          <!-- The one control that is not an app: a bare `+`, drawn in the same ink and
+               at the same weight as the brand marks it adds to the ring. -->
           <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
-            <circle cx="12" cy="12" r="10.9" />
-            <circle cx="12" cy="12" r="6.05" />
-            <path d="M9.9 15.2V8.8l5.6 3.2Z" fill="currentColor" stroke-linejoin="round" />
+            <path d="M12 5v14M5 12h14" />
           </svg>
         </button>
-
-        <button
-          type="button"
-          class="widget-btn"
-          id="widget-btn-news"
-          data-widget="news"
-          title="Google News"
-          aria-label="Google News"
-          aria-haspopup="dialog"
-          aria-controls="widget-modal"
-          aria-expanded="false"
-        >
-          <!-- The Google News page: the folded front sheet from the official mark, its
-               2 x 2 cell grid (the four squares the app icon is made of) and the fold
-               along the left edge. -->
-          <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
-            <path d="M4 21.5h15.2a2.3 2.3 0 0 0 2.3-2.3V4.3A1.8 1.8 0 0 0 19.7 2.5H8.3A1.8 1.8 0 0 0 6.5 4.3v15a2.2 2.2 0 0 1-2.2 2.2Zm0 0a2.3 2.3 0 0 1-2.3-2.3v-8.4a1.5 1.5 0 0 1 1.5-1.5h3.3" />
-            <path d="M17.9 6.3H10v7.9h7.9Z" />
-            <path d="M14 6.3v7.9M10 10.2h7.9" />
-          </svg>
-        </button>
-
-        <button
-          type="button"
-          class="widget-btn"
-          id="widget-btn-youtube"
-          data-widget="youtube"
-          title="YouTube"
-          aria-label="YouTube"
-          aria-haspopup="dialog"
-          aria-controls="widget-modal"
-          aria-expanded="false"
-        >
-          <!-- YouTube's own badge, redrawn to its official proportions — the mark is 24
-               wide for every 16.9 tall (the old glyph was closer to square, which is why
-               it read as generic) with the corner radius and optical play triangle of the
-               real logo. -->
-          <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
-            <path d="M3.8 4.32h16.4a2.72 2.72 0 0 1 2.72 2.72v8.24a2.72 2.72 0 0 1-2.72 2.72H3.8a2.72 2.72 0 0 1-2.72-2.72V7.04A2.72 2.72 0 0 1 3.8 4.32Z" />
-            <path d="M9.77 15.24V8.76L15.47 12Z" fill="currentColor" stroke-linejoin="round" />
-          </svg>
-        </button>
-
-        <button
-          type="button"
-          class="widget-btn"
-          id="widget-btn-weather"
-          data-widget="weather"
-          title="Weather"
-          aria-label="Weather"
-          aria-haspopup="dialog"
-          aria-controls="widget-modal"
-          aria-expanded="false"
-        >
-          <svg class="widget-icon" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" focusable="false">
-            <path d="M17.4 18.6H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z" />
-          </svg>
-        </button>
-
-        <!-- Nothing else orbits the greeting: the ring is the services themselves — the
-             four built-ins above and any shortcut script.js adds from localStorage. The
-             way to add one lives in the card header (see #widget-modal-services), so the
-             wallpaper composition stays exactly as minimal as the picture behind it. -->
       </nav>
 
       <!-- Frosted-glass widget viewport. Always in the DOM, only visible once a
@@ -180,47 +112,21 @@
           tabindex="-1"
         >
           <header class="widget-modal-header">
-            <span class="widget-modal-badge" id="widget-modal-badge" aria-hidden="true"></span>
-            <div class="widget-modal-heading">
-              <h2 class="widget-modal-title" id="widget-modal-title">Widget</h2>
-              <p class="widget-modal-caption" id="widget-modal-caption"></p>
-            </div>
-            <!-- One control with two jobs, painted by script.js: on a widget it is the
-                 way into the shortcuts manager (`+`), and on the manager it is the way
-                 back to the widget that led there (`←`). Both glyphs ship here so the
-                 swap is a stylesheet fade rather than a re-render; the label names the
-                 destination and is rewritten with the state. -->
-            <button
-              type="button"
-              class="widget-modal-action"
-              id="widget-modal-services"
-              data-mode="add"
-              title="Manage shortcuts"
-              aria-label="Manage shortcuts"
-              aria-controls="widget-modal-body"
-            >
-              <svg
-                class="widget-modal-action-glyph widget-modal-action-glyph--add"
-                viewBox="0 0 24 24"
-                width="16"
-                height="16"
-                aria-hidden="true"
-                focusable="false"
-              >
+            <!-- The card is the apps manager and nothing else, so its badge is the same
+                 `+` the satellite wears: the glyph the user pressed is the glyph the
+                 card is titled with. -->
+            <span class="widget-modal-badge" aria-hidden="true">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path d="M12 5v14M5 12h14" />
               </svg>
-              <svg
-                class="widget-modal-action-glyph widget-modal-action-glyph--back"
-                viewBox="0 0 24 24"
-                width="16"
-                height="16"
-                aria-hidden="true"
-                focusable="false"
-              >
-                <path d="M19 12H5M11 18l-6-6 6-6" />
-              </svg>
-            </button>
-            <button type="button" class="widget-modal-close" id="widget-modal-close" aria-label="Close widget">
+            </span>
+            <div class="widget-modal-heading">
+              <h2 class="widget-modal-title" id="widget-modal-title">Apps</h2>
+              <p class="widget-modal-caption" id="widget-modal-caption">
+                Desktop shortcuts and launchers
+              </p>
+            </div>
+            <button type="button" class="widget-modal-close" id="widget-modal-close" aria-label="Close apps">
               <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
                 <path d="M6 6l12 12M18 6L6 18" />
               </svg>

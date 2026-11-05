@@ -52,20 +52,19 @@
  * `theme` pins a single palette instead of following the clock, and a background
  * colour set by hand pins `custom` — unless the same source names a theme.
  *
- * Desktop widgets: the four satellites (music, news, YouTube, weather) are settings like
- * any other — `widgets` for all of them, on by default, plus one flag each
- * (`widgetMusic`, `widgetNews`, `widgetYouTube`, `widgetWeather`) — so the macOS popover,
- * the Windows window, Lively, Wallpaper Engine and `?widgets=false` / `?music=false` can
- * take them, or any one of them, off the desktop. A satellite that is off is `hidden`:
- * never placed, never measured, never reported as a click region and its card cannot be
- * opened, which hands that part of the desktop back to the Finder.
+ * Desktop apps: the orbit holds the user's own launchers — one bare glyph per app,
+ * each handed to the default browser through `openExternal` — plus the single `+` that
+ * opens the Apps card. `widgets` is the master switch (on by default), so the macOS
+ * popover, the Windows window, Lively, Wallpaper Engine and `?widgets=false` can take
+ * the whole orbit off the desktop; a satellite that is off is never placed, never
+ * measured, never reported as a click region, which hands that part of the desktop
+ * back to the Finder.
  *
- * Beside them sits the user's own half of the orbit: any number of custom shortcuts
- * (ChatGPT, GitHub, …), each a bare glyph dealt into the same ring, added and removed
- * from the card header's `+` (the service manager) rather than a satellite of their
- * own. A shortcut is not a card — it is handed to the default browser through
- * `openExternal` — and the list is cached in `localStorage`
- * (`dynawall.customServices`) because it is the user's, not the host's.
+ * The apps themselves are the user's, not the host's: the list is added, launched and
+ * forgotten on the wallpaper (`+` → Apps) and cached in `localStorage`
+ * (`dynawall.customServices`), so no host control has to know what an app is. A page
+ * that fetches nothing can launch anything: the wallpaper never loads the site it
+ * opens, which is why the Content Security Policy allows no remote host at all.
  *
  * Suspension: `setSuspended(true)` — from `livelyPropertyListener('suspend', …)`,
  * `DynaWall.setSuspended(...)` or `document.visibilitychange` — parks the clock and
@@ -94,17 +93,11 @@
     kenBurns: true,
     // Only show photos whose filename matches the active time-of-day band.
     photoSync: true,
-    // The four desktop satellites (music, news, YouTube, weather). On by default, and
-    // off is a real setting rather than a broken page: with a satellite off nothing is
-    // placed for it, nothing drifts and no click region is reported to the host, so the
-    // desktop underneath belongs to the Finder again. `widgets` is the master switch;
-    // the four below take one satellite off on its own, and the master restores exactly
-    // the set the user had picked.
+    // The apps orbit: the `+` and every app the user added. On by default, and off is a
+    // real setting rather than a broken page: with the orbit off nothing is placed,
+    // nothing drifts and no click region is reported to the host, so the desktop
+    // underneath belongs to the Finder again.
     widgets: true,
-    widgetMusic: true,
-    widgetNews: true,
-    widgetYouTube: true,
-    widgetWeather: true,
     // Sources injected by the macOS host (absolute scheme URLs). Empty means the
     // host has no photos; hosts that do not own the list keep the bundled fallback.
     photos: [],
@@ -126,18 +119,9 @@
     slideshowShuffle: 'dynawall.slideshowShuffle',
     kenBurns: 'dynawall.kenBurns',
     photoSync: 'dynawall.photoSync',
-    // Whether the four desktop satellites are on the wallpaper at all.
+    // Whether the apps orbit (the `+` and every app the user added) is on the wallpaper.
     widgets: 'dynawall.widgets',
-    // …and which of them are: one flag per satellite.
-    widgetMusic: 'dynawall.widgetMusic',
-    widgetNews: 'dynawall.widgetNews',
-    widgetYouTube: 'dynawall.widgetYouTube',
-    widgetWeather: 'dynawall.widgetWeather',
-    fontFamily: 'dynawall.fontFamily',
-    // Widget state, cached locally because it is the user's choice and not a host
-    // setting: the city they looked up and whether they read the card in °C or °F.
-    weatherPlace: 'dynawall.weatherPlace',
-    weatherUnit: 'dynawall.weatherUnit'
+    fontFamily: 'dynawall.fontFamily'
     // `photos` and `customFont` are deliberately not cached: the host re-sends them
     // on every load (the font file as a data URL read from the imported copy).
   });
@@ -762,10 +746,6 @@
       case 'kenBurns':
       case 'photoSync':
       case 'widgets':
-      case 'widgetMusic':
-      case 'widgetNews':
-      case 'widgetYouTube':
-      case 'widgetWeather':
         return parseBoolean(rawValue);
       case 'bgColor':
         return normalizeColor(rawValue);
@@ -834,15 +814,7 @@
     dynamicphotos: 'photoSync',
     widgets: 'widgets',
     satellites: 'widgets',
-    // One satellite at a time: `?music=false`, or the field name itself.
-    music: 'widgetMusic',
-    widgetmusic: 'widgetMusic',
-    news: 'widgetNews',
-    widgetnews: 'widgetNews',
-    youtube: 'widgetYouTube',
-    widgetyoutube: 'widgetYouTube',
-    weather: 'widgetWeather',
-    widgetweather: 'widgetWeather',
+    apps: 'widgets',
     font: 'fontFamily',
     fontfamily: 'fontFamily',
     fonturl: 'customFont',
@@ -860,13 +832,8 @@
     kenBurns: 'kenBurns',
     // Time-of-day photo bands; the macOS host's "Match time of day" toggle.
     photoSync: 'photoSync',
-    // The four desktop satellites: every host's "Desktop widgets" switch, and one
-    // checkbox per satellite beside it.
+    // The apps orbit: every host's "Desktop apps" switch.
     widgets: 'widgets',
-    widgetMusic: 'widgetMusic',
-    widgetNews: 'widgetNews',
-    widgetYouTube: 'widgetYouTube',
-    widgetWeather: 'widgetWeather',
     // Typography: an installed family name and, when the user imported a font
     // file, the `data:` URL of those bytes (sent by the native hosts).
     fontFamily: 'fontFamily',
@@ -887,11 +854,7 @@
     photosync: 'photoSync',
     fontfamily: 'fontFamily',
     customfont: 'customFont',
-    widgets: 'widgets',
-    widgetmusic: 'widgetMusic',
-    widgetnews: 'widgetNews',
-    widgetyoutube: 'widgetYouTube',
-    widgetweather: 'widgetWeather'
+    widgets: 'widgets'
   });
 
   function ownLookup(map, key) {
@@ -1034,87 +997,39 @@
   }
 
   /* ----------------------------------------------------------------------- *
-   * Widgets — constellations, cards, and the one network call
+   * Apps — the orbit, the card, and the launchers it deals
    * ------------------------------------------------------------------------ */
 
   /**
-   * The four satellites on the wallpaper. `id` is the `data-widget` of the button in
-   * index.html and the key of a renderer below; `title`/`caption` are the card
-   * header. A test asserts the markup and this list agree.
+   * The card's reserved id, used by `DynaWall.openWidget('apps')`.
+   *
+   * There is exactly one card: the apps manager. It is never a `data-widget` value in
+   * index.html — it is not one of the apps, it is the way to add one.
    */
-  const WIDGETS = Object.freeze([
-    Object.freeze({ id: 'music', title: 'YouTube Music', caption: 'Stations and mixes' }),
-    Object.freeze({ id: 'news', title: 'Google News', caption: 'Today’s front page, by desk' }),
-    Object.freeze({ id: 'youtube', title: 'YouTube', caption: 'Trending, or a search' }),
-    Object.freeze({ id: 'weather', title: 'Weather', caption: 'Now, and the next hours' })
+  const APPS_CARD_ID = 'apps';
+
+  /**
+   * The one-tap presets the Apps card offers above the form.
+   *
+   * A preset is nothing but a name and an `https` address: pressing its chip runs the
+   * very same `addService()` a typed address does, so a preset can never create a record
+   * the form could not, and the list is plain data a host script can read. The marks are
+   * resolved from the address by the same catalogue every other app uses, so a preset
+   * chip and the satellite it adds wear the same glyph.
+   */
+  const APP_PRESETS = Object.freeze([
+    Object.freeze({ title: 'GitHub', url: 'https://github.com/' }),
+    Object.freeze({ title: 'ChatGPT', url: 'https://chatgpt.com/' }),
+    Object.freeze({ title: 'Claude', url: 'https://claude.ai/' }),
+    Object.freeze({ title: 'YouTube', url: 'https://www.youtube.com/' }),
+    Object.freeze({ title: 'Spotify', url: 'https://open.spotify.com/' }),
+    Object.freeze({ title: 'Reddit', url: 'https://www.reddit.com/' }),
+    Object.freeze({ title: 'Notion', url: 'https://www.notion.so/' }),
+    Object.freeze({ title: 'Figma', url: 'https://www.figma.com/' })
   ]);
 
-  /**
-   * Which configuration field shows or hides each satellite.
-   *
-   * A satellite is the user's to keep: the four switches in the macOS popover, the
-   * Windows window, Lively and Wallpaper Engine are four ordinary booleans, so hiding
-   * YouTube costs nothing in any host and survives a reload in `localStorage`. A test
-   * asserts every id in `WIDGETS` has a field, a storage key and both manifest entries.
-   */
-  const WIDGET_FIELDS = Object.freeze({
-    music: 'widgetMusic',
-    news: 'widgetNews',
-    youtube: 'widgetYouTube',
-    weather: 'widgetWeather'
-  });
-
-  /**
-   * The five configuration fields that decide what is on the desktop: the master switch
-   * and one flag per satellite. `applyUpdates()` watches exactly these.
-   */
-  const WIDGET_SETTING_FIELDS = Object.freeze(
-    ['widgets'].concat(
-      WIDGETS.map(function (widget) {
-        return WIDGET_FIELDS[widget.id];
-      })
-    )
-  );
-
-  /**
-   * Every remote host this page can name, and nothing else — split by what the
-   * page does with it, because that distinction is the whole network policy here.
-   *
-   *   `WIDGET_FETCH_HOSTS` — the page itself calls these, and only after the weather
-   *   card is opened. Open-Meteo is keyless, CORS-enabled and free for
-   *   non-commercial use, and Google has no keyless weather endpoint at all, which
-   *   is why the forecast is the one live card.
-   *
-   *   `WIDGET_LINK_HOSTS` — handed to the operating system's default browser through
-   *   the native bridge. The page never fetches them, never frames them and never
-   *   loads their images, so no YouTube or Google News code runs inside the
-   *   wallpaper and nothing is requested while a card is closed.
-   *
-   * tests/verify.cjs asserts this list is exactly the set of hosts script.js
-   * mentions, so a new address cannot appear without being declared here — and the
-   * wallpaper's own chrome (greeting, palette, fonts, photos) stays proof-positive
-   * network-free.
-   */
-  const WIDGET_FETCH_HOSTS = Object.freeze(['api.open-meteo.com', 'geocoding-api.open-meteo.com']);
-  const WIDGET_LINK_HOSTS = Object.freeze([
-    'music.youtube.com',
-    'www.youtube.com',
-    'news.google.com'
-  ]);
-  const WIDGET_REMOTE_HOSTS = Object.freeze(WIDGET_FETCH_HOSTS.concat(WIDGET_LINK_HOSTS));
-
-  const YOUTUBE_MUSIC_HOME = 'https://music.youtube.com/';
-  const YOUTUBE_HOME = 'https://www.youtube.com/';
-  const GOOGLE_NEWS_HOME = 'https://news.google.com/';
-  const OPEN_METEO_FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
-  const OPEN_METEO_GEOCODING_URL = 'https://geocoding-api.open-meteo.com/v1/search';
-
-  /** Longest string any widget will echo back into the page. */
+  /** Longest string any card will echo back into the page. */
   const MAX_WIDGET_TEXT = 120;
-  /** A forecast older than this is refreshed the next time the card is opened. */
-  const WEATHER_FRESH_MS = 10 * 60 * 1000;
-  /** How long a forecast request may take before the card offers a retry. */
-  const WEATHER_TIMEOUT_MS = 9000;
   /** Extra pixels around a satellite that still count as hovering it. */
   const HIT_PADDING = 6;
 
@@ -1150,6 +1065,17 @@
 
   /** A tally stops climbing here: the ranking only ever compares counts with each other. */
   const MAX_WIDGET_USAGE = 1000000;
+
+  /**
+   * Where the hand the satellites were dealt is cached: the seed that dealt it, and the
+   * whole-pixel spot each glyph wears.
+   *
+   * Deliberately outside `STORAGE_KEYS`, like the tally beside it: this is not a
+   * configuration field a host control pushes, it is the arrangement the desktop keeps.
+   * The seed is a positive integer, the hand a JSON object of `{ [id]: { x, y } }`.
+   */
+  const WIDGET_SEED_KEY = 'dynawall.widgetSeed';
+  const WIDGET_POSITIONS_KEY = 'dynawall.widgetPositions';
 
   /**
    * The three footprints a satellite can wear, smallest first.
@@ -1276,6 +1202,171 @@
   /** Forget every count: the orbit goes back to all-baseline. */
   function clearWidgetUsage(storage) {
     return writeWidgetUsage(storage, {});
+  }
+
+  /* ----------------------------------------------------------------------- *
+   * The hand — where the satellites stand, and the seed that dealt it
+   *
+   * An arrangement belongs to the desktop, not to the page load. The hand is dealt once
+   * and then worn again, pixel for pixel, by every reload, every app launch, every tier
+   * change and every removal. Only a new app changes the composition, and only then is a
+   * new seed rolled. Everything below is pure and storage-shaped, so the page, a host
+   * script and the headless tests all read the same hand.
+   * ------------------------------------------------------------------------ */
+
+  /** A stored seed, made safe: a positive whole number, or `null` when it is not one. */
+  function normalizeWidgetSeed(rawValue) {
+    if (rawValue === undefined || rawValue === null || typeof rawValue === 'boolean') return null;
+    if (typeof rawValue === 'string' && !rawValue.trim()) return null;
+    const seed = Math.floor(Number(rawValue));
+    if (!Number.isFinite(seed) || seed <= 0) return null;
+    return Math.min(seed, 0xfffffffe);
+  }
+
+  /** The seed this desktop was dealt on, or `null` (a fresh install, or no storage). */
+  function readWidgetSeed(storage) {
+    if (!storage || typeof storage.getItem !== 'function') return null;
+    let raw = null;
+    try {
+      raw = storage.getItem(WIDGET_SEED_KEY);
+    } catch (error) {
+      return null; // storage can be blocked (private mode, disabled cookies)
+    }
+    if (raw === null) return null;
+    return normalizeWidgetSeed(raw);
+  }
+
+  /** Cache the seed. Best-effort: a blocked `localStorage` is not a broken wallpaper. */
+  function writeWidgetSeed(storage, seed) {
+    const value = normalizeWidgetSeed(seed);
+    if (!value || !storage || typeof storage.setItem !== 'function') return false;
+    try {
+      storage.setItem(WIDGET_SEED_KEY, String(value));
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /** One cached viewport pixel: a whole number, or `null` when it is not one. */
+  function widgetPixel(value) {
+    if (value === undefined || value === null || value === '' || typeof value === 'boolean') {
+      return null;
+    }
+    const pixel = Math.round(Number(value));
+    return Number.isFinite(pixel) ? pixel : null;
+  }
+
+  /**
+   * A stored hand, made safe: `{ [id]: { x, y } }` with whole pixels only.
+   *
+   * Hand-edited, truncated or foreign JSON is simply no hand — the wallpaper deals one
+   * instead of throwing on load — and a spot that is not two numbers is dropped rather
+   * than trusted, so a broken cache can never park a glyph at `NaN`.
+   */
+  function normalizeWidgetPositions(rawValue) {
+    let list = rawValue;
+    if (typeof list === 'string') {
+      if (!list.trim()) return {};
+      try {
+        list = JSON.parse(list);
+      } catch (error) {
+        return {};
+      }
+    }
+    if (!list || typeof list !== 'object' || Array.isArray(list)) return {};
+
+    const positions = {};
+    Object.keys(list).forEach(function (key) {
+      const id = normalizeWidgetUsageId(key);
+      const entry = list[key];
+      if (!id || !entry || typeof entry !== 'object' || Array.isArray(entry)) return;
+      const x = widgetPixel(entry.x);
+      const y = widgetPixel(entry.y);
+      if (x === null || y === null) return;
+      positions[id] = { x: x, y: y };
+    });
+    return positions;
+  }
+
+  /** The hand cached on this machine, or `{}` when there is none (or no storage). */
+  function readWidgetPositions(storage) {
+    if (!storage || typeof storage.getItem !== 'function') return {};
+    let raw = null;
+    try {
+      raw = storage.getItem(WIDGET_POSITIONS_KEY);
+    } catch (error) {
+      return {};
+    }
+    if (raw === null) return {};
+    return normalizeWidgetPositions(raw);
+  }
+
+  /** Cache the hand. Best-effort, like every other write on this page. */
+  function writeWidgetPositions(storage, positions) {
+    if (!storage || typeof storage.setItem !== 'function') return false;
+    try {
+      storage.setItem(WIDGET_POSITIONS_KEY, JSON.stringify(normalizeWidgetPositions(positions)));
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /** Forget the hand: the next deal lays the satellites out from scratch. */
+  function clearWidgetPositions(storage) {
+    return writeWidgetPositions(storage, {});
+  }
+
+  /** The spot `id` wears in `positions`, or `null` when it has none. */
+  function widgetPositionOf(positions, id) {
+    const key = normalizeWidgetUsageId(id);
+    if (!key) return null;
+    const hand = positions && typeof positions === 'object' ? positions : {};
+    const entry = hand[key];
+    if (!entry || typeof entry !== 'object') return null;
+    const x = widgetPixel(entry.x);
+    const y = widgetPixel(entry.y);
+    if (x === null || y === null) return null;
+    return { x: x, y: y };
+  }
+
+  /**
+   * A copy of `positions` without `id`.
+   *
+   * A shortcut that was removed takes its spot with it; every glyph around it keeps
+   * exactly the pixels it was wearing.
+   */
+  function withoutWidgetPosition(positions, id) {
+    const hand = Object.assign({}, positions || {});
+    const key = normalizeWidgetUsageId(id);
+    if (key) delete hand[key];
+    return hand;
+  }
+
+  /**
+   * `true` when the stored hand can be worn as it is: every satellite on the desktop has
+   * a whole-pixel spot in it, and every one of those spots is still inside the viewport
+   * the wallpaper is on now.
+   *
+   * `viewport` is `{ width, height }` in CSS pixels; leave it out to check the spots
+   * alone. A hand dealt for a larger screen does not fit a smaller one — the pixels
+   * belong to the screen they were dealt on — so that screen is dealt a hand of its own,
+   * from the same seed, instead of an arbitrary reshuffle.
+   */
+  function coversWidgetPositions(positions, ids, viewport) {
+    const list = Array.isArray(ids) ? ids : [];
+    if (list.length === 0) return false;
+    const box = viewport || {};
+    const width = Number(box.width) || 0;
+    const height = Number(box.height) || 0;
+    for (let index = 0; index < list.length; index += 1) {
+      const spot = widgetPositionOf(positions, list[index]);
+      if (!spot) return false;
+      if (width > 0 && (spot.x < 0 || spot.x >= width)) return false;
+      if (height > 0 && (spot.y < 0 || spot.y >= height)) return false;
+    }
+    return true;
   }
 
   /**
@@ -1617,78 +1708,19 @@
     return text.length > limit ? text.slice(0, limit) : text;
   }
 
-  /** Append `params` to `base` as an encoded query string, skipping empty values. */
-  function withQuery(base, params) {
-    const parts = [];
-    Object.keys(params || {}).forEach(function (key) {
-      const value = params[key];
-      if (value === undefined || value === null || value === '') return;
-      // Commas separate the multi-value fields Open-Meteo takes (`current=a,b,c`);
-      // they read better unescaped in a log or a proxy trace and every parser
-      // treats `%2C` and `,` identically. Everything else is percent-encoded.
-      const encoded = encodeURIComponent(value).replace(/%2C/g, ',');
-      parts.push(encodeURIComponent(key) + '=' + encoded);
-    });
-    if (parts.length === 0) return base;
-    return base + (base.indexOf('?') === -1 ? '?' : '&') + parts.join('&');
-  }
-
-  /** A YouTube Music search, or the home page when the term is empty. */
-  function buildYouTubeMusicSearchUrl(query) {
-    const term = clipText(query, MAX_WIDGET_TEXT);
-    return term ? withQuery(YOUTUBE_MUSIC_HOME + 'search', { q: term }) : YOUTUBE_MUSIC_HOME;
-  }
-
-  /** A YouTube search, or the home page when the term is empty. */
-  function buildYouTubeSearchUrl(query) {
-    const term = clipText(query, MAX_WIDGET_TEXT);
-    return term ? withQuery(YOUTUBE_HOME + 'results', { search_query: term }) : YOUTUBE_HOME;
-  }
-
-  /** The trending feed, narrowed to a region when one is known. */
-  function buildYouTubeTrendingUrl(regionCode) {
-    const region = clipText(regionCode, 2).toUpperCase();
-    return region
-      ? withQuery(YOUTUBE_HOME + 'feed/trending', { gl: region })
-      : YOUTUBE_HOME + 'feed/trending';
-  }
-
-  /** A Google News desk (`''` = the front page) — there is no API to call. */
-  function buildGoogleNewsUrl(topic) {
-    const term = clipText(topic, MAX_WIDGET_TEXT);
-    if (!term) return GOOGLE_NEWS_HOME;
-    return withQuery(GOOGLE_NEWS_HOME + 'search', {
-      q: term,
-      hl: 'en-US',
-      gl: 'US',
-      ceid: 'US:en'
-    });
-  }
-
-  /** `celsius` unless the card has been switched to Fahrenheit. */
-  function normalizeTemperatureUnit(unit) {
-    return unit === 'fahrenheit' ? 'fahrenheit' : 'celsius';
-  }
-
-  /** "en-GB" → "GB": the region YouTube's trending feed is asked for. */
-  function regionCodeFromLocale(locale) {
-    const match = /[-_]([A-Za-z]{2})\b/.exec(String(locale || ''));
-    return match ? match[1].toUpperCase() : 'US';
-  }
-
   /* ----------------------------------------------------------------------- *
-   * Custom services — the user's own satellites
+   * Apps — the user's own launchers
    *
-   * A shortcut is a title, a plain `https` address and the mark it wears in the
-   * orbit. It is not a host setting — there is no popover switch for "ChatGPT" — so
-   * the list lives in `localStorage` under one key and is edited on the wallpaper
-   * itself, through the `+` in the widget card's header. Everything below is pure: the
-   * page, the card and the headless tests all use the same validation, so the address
-   * the manager accepts and the address `openExternal` is handed can never disagree.
+   * An app is a title, a plain `https` address and the mark it wears in the orbit.
+   * It is not a host setting — there is no popover switch for "ChatGPT" — so the list
+   * lives in `localStorage` under one key and is edited on the wallpaper itself,
+   * through the `+` satellite's Apps card. Everything below is pure: the page, the
+   * card and the headless tests all use the same validation, so the address the card
+   * accepts and the address `openExternal` is handed can never disagree.
    * ------------------------------------------------------------------------ */
 
   /**
-   * Where the shortcuts are cached.
+   * Where the apps are cached.
    *
    * Deliberately outside `STORAGE_KEYS`: that map is the one-to-one mirror of the
    * configuration fields (`dynawall.firstName` …) that a host control can push, and a
@@ -1703,527 +1735,69 @@
   const MAX_SERVICE_TITLE = 40;
 
   /**
-   * The reserved card id of the manager, beside `music`, `news`, `youtube` and
-   * `weather`. It is never a `data-widget` value in index.html: the manager is not a
-   * satellite, it is the way to add one.
-   */
-  const SERVICE_MANAGER_ID = 'services';
-
-  /**
-   * The curated marks, in the same bare line-art language as the four built-in
-   * satellites: a 24×24 box, stroked, no fill, no plate.
+   * The curated marks, in the same bare monochrome ink as the `+` beside them: a 24×24
+   * box, no plate, no colour.
    *
-   * Every brand mark is that brand's own geometry, traced as a contour rather than
-   * filled — the official silhouette, stroked. That is what lets a shortcut sit in
-   * the ring beside YouTube at exactly the same weight instead of reading as a
-   * heavier, painted tile. Each one is scaled to 90% and moved in by 1.2 units (the
-   * same inset index.html's YouTube badge already uses), because a stroke sits
-   * astride its path: a mark drawn to the very edge of the box would be sliced in
-   * half at the largest footprint, where two screen pixels are two user units.
+   * Two inks, chosen per mark. A brand whose logo *is* a filled silhouette is drawn filled
+   * (`solid: true`): that is the geometry it was designed as, and it is what stays legible
+   * at a satellite's 30-odd pixels — stroking that contour would trace every interior
+   * detail as well and the mark would read as noise, or as an empty box. The kind marks and
+   * the generic window are drawn as strokes at one weight instead, so a shortcut can sit in
+   * the ring beside them without reading as a heavier, painted tile. `solid` is therefore
+   * also what tells a brand from a kind.
+   *
+   * Each one is scaled to 90% and moved in by 1.2 units (the same inset index.html's
+   * YouTube badge already uses): a stroked mark sits astride its path, and a filled one
+   * wants a breath of air, so a mark drawn to the very edge of the box would be sliced at
+   * the largest footprint, where two screen pixels are two user units. The pack's
+   * coordinates are rounded to a tenth of a unit for the same reason — a tenth is a fifth
+   * of a pixel at the largest footprint — which is what keeps four hundred marks to a few
+   * hundred kilobytes instead of half a megabyte.
    *
    * Nothing here is fetched, bundled as a picture or cached. A mark is a few hundred
    * characters of path data in this file, which is what keeps the wallpaper's "no
    * network, no sprite sheet, no favicon" promise intact.
    *
-   * `hints` are the words a title or an address may contain; `domains` are the hosts
-   * the brand answers on. Neither is a policy — the Content Security Policy still
-   * owns what may load, and a shortcut is only ever handed to the operating system's
-   * browser — so a match here costs nothing and grants nothing.
+   * `hints` are the words a title or an address may contain; `domains` are the hosts the
+   * brand answers on, and a host belongs to exactly one mark (a host two of them share —
+   * `jetbrains.com`, `atlassian.com` — belongs to neither, and those apps are recognised
+   * by name instead). Neither is a policy — the Content Security Policy still owns what
+   * may load, and a shortcut is only ever handed to the operating system's browser — so a
+   * match here costs nothing and grants nothing.
    *
-   * Order is precedence: the brands come first (YouTube Music before YouTube, Spotify
-   * before a generic sound-bar), and the category fallbacks close the list, so a
-   * plain "Chat" or "Notes" still finds a mark. A service that matches nothing wears
-   * a two-letter monogram instead (`serviceMonogram`), which is why there is no
-   * catch-all entry at the end.
+   * The pack is every app the open-source Simple Icons set still carries, gathered at
+   * authoring time and inked into this same box. It is deliberately not the whole set: the
+   * suites whose owners asked the icon sets to drop them are absent (Microsoft's and Adobe's
+   * product marks, Amazon, Xbox, Kindle, Hulu and their like), so those apps fall through to
+   * the kind marks — a document, a sheet, a slide, a terminal, a store — which is what the
+   * kind marks are for. Adding a mark means pasting its geometry here, never pointing the
+   * page at a host: the wallpaper still asks the network for nothing.
+   *
+   * Order is precedence, and only for a tie: a host is matched first, then the longest whole
+   * word in the title ("Google Sheets" is Sheets, not Google), then the longest whole word in
+   * the address, which is what lets an unnamed shortcut pasted as a bare URL find its mark.
+   * The brands come first as a group, then the kind marks, so a plain "Chat" or "Notes" still
+   * finds one. The catch-all closes the list last: a shortcut nothing above claimed wears a
+   * bare application window instead of dropping out of the constellation into a monogram.
    */
-  const SERVICE_ICONS = Object.freeze([
-    Object.freeze({
-      id: 'github',
-      label: 'GitHub',
-      hints: Object.freeze(['github', 'octocat']),
-      domains: Object.freeze(['github.com', 'gist.github.com', 'github.io', 'github.blog']),
-      paths:
-        '<path d="M12 1.47c-5.97 0-10.8 4.84-10.8 10.8c0 4.77 3.09 8.82 7.38 10.25c0.54 0.1 0.74-0.23 ' +
-        '0.74-0.52c0-0.26-0.01-0.94-0.01-1.84c-3 0.65-3.64-1.45-3.64-1.45C5.18 17.46 4.47 17.13 4.47 ' +
-        '17.13c-0.98-0.67 0.08-0.66 0.08-0.66c1.08 0.08 1.65 1.11 1.65 1.11c0.96 1.65 2.53 1.17 3.15 ' +
-        '0.9c0.1-0.7 0.38-1.17 0.68-1.44c-2.4-0.27-4.92-1.2-4.92-5.34c0-1.18 0.42-2.14 ' +
-        '1.11-2.9c-0.12-0.27-0.49-1.37 0.09-2.86c0 0 0.9-0.29 2.97 1.11c0.86-0.24 1.78-0.36 2.7-0.36c0.92 ' +
-        '0.01 1.84 0.12 2.7 0.36c2.05-1.4 2.96-1.11 2.96-1.11c0.58 1.49 0.22 2.59 0.11 2.86c0.69 0.76 ' +
-        '1.11 1.72 1.11 2.9c0 4.15-2.52 5.06-4.93 5.33c0.38 0.32 0.73 0.99 0.73 2c0 1.45-0.01 2.61-0.01 ' +
-        '2.96c0 0.28 0.19 0.62 0.74 0.51C19.71 21.08 22.8 17.03 22.8 12.27c0-5.96-4.84-10.8-10.8-10.8"/>'
-    }),
-    Object.freeze({
-      id: 'chatgpt',
-      label: 'ChatGPT',
-      hints: Object.freeze(['chatgpt', 'openai']),
-      domains: Object.freeze(['chatgpt.com', 'chat.openai.com', 'openai.com', 'platform.openai.com']),
-      paths:
-        '<path d="M11.22 19.38a3.5 3.5 0 0 0 6.78-1.22v-5.17l-6-3.35' +
-        'M5.21 15.01a3.5 3.5 0 0 0 4.45 5.27l4.34-2.54v-6.95' +
-        'M6 7.63c-1.39-.24-2.79.4-3.53 1.69a3.47 3.47 0 0 0 1.27 4.75l4.26 2.51l6-3.35' +
-        'M12.78 4.62a3.5 3.5 0 0 0-6.78 1.21v5.07l6 3.45' +
-        'M18.79 8.99a3.5 3.5 0 0 0-4.45-5.27l-4.34 2.53v6.95' +
-        'M18 16.3c1.39.24 2.79-.4 3.53-1.69a3.47 3.47 0 0 0-1.27-4.75l-4.31-2.51l-5.96 3.42"/>'
-    }),
-    Object.freeze({
-      id: 'claude',
-      label: 'Claude',
-      hints: Object.freeze(['claude', 'anthropic']),
-      domains: Object.freeze(['claude.ai', 'claude.com', 'anthropic.com']),
-      paths:
-        '<path d="m4.24 ' +
-        '14.36l4.25-2.38l0.07-0.21l-0.07-0.11h-0.21l-0.71-0.04l-2.43-0.07l-2.1-0.09l-2.04-0.11l-0.51-0.11' +
-        'l-0.48-0.63l0.05-0.32l0.43-0.29l0.62 0.05l1.37 0.09l2.05 0.14l1.49 0.09l2.2 ' +
-        '0.23h0.35l0.05-0.14l-0.12-0.09l-0.09-0.09L7.48 ' +
-        '10.05l-2.29-1.52l-1.2-0.87l-0.65-0.44l-0.33-0.42l-0.14-0.91l0.59-0.65l0.79 0.05l0.2 0.05l0.8 ' +
-        '0.62l1.72 1.33l2.24 1.65l0.33 ' +
-        '0.27l0.13-0.09l0.02-0.07l-0.15-0.25l-1.22-2.2l-1.3-2.24l-0.58-0.93l-0.15-0.56c-0.05-0.23-0.09-0.' +
-        '42-0.09-0.66L6.86 1.32L7.23 1.2l0.9 0.12l0.38 0.33l0.56 1.27l0.9 2.01l1.4 2.73l0.41 0.81l0.22 ' +
-        '0.75l0.08 0.23h0.14v-0.13l0.11-1.54l0.21-1.89l0.21-2.43l0.07-0.68l0.34-0.82l0.67-0.44l0.52 ' +
-        '0.25l0.43 0.62l-0.06 0.4l-0.26 1.67l-0.5 2.61l-0.33 ' +
-        '1.75h0.19l0.22-0.22l0.89-1.17l1.49-1.86l0.66-0.74l0.77-0.81l0.49-0.39h0.93l0.68 1.02l-0.31 ' +
-        '1.05l-0.96 1.21l-0.79 1.03l-1.14 1.53l-0.71 1.22l0.07 ' +
-        '0.1l0.17-0.02l2.57-0.55l1.39-0.25l1.66-0.28l0.75 0.35l0.08 0.36l-0.3 0.73l-1.77 0.44l-2.08 ' +
-        '0.42l-3.09 0.73l-0.04 0.03l0.04 0.05l1.39 0.13l0.6 0.03h1.46l2.72 0.2l0.71 0.47l0.43 0.57l-0.07 ' +
-        '0.44l-1.09 0.56l-1.48-0.35l-3.44-0.82l-1.18-0.3h-0.16v0.1l0.98 0.96l1.8 1.63l2.26 2.1l0.11 ' +
-        '0.52l-0.29 0.41l-0.31-0.04l-1.98-1.49l-0.76-0.67l-1.73-1.46h-0.11v0.15l0.4 0.58l2.11 3.17l0.11 ' +
-        '0.97l-0.15 0.32l-0.55 0.19l-0.6-0.11l-1.23-1.73L14.14 17.36l-1.03-1.75l-0.13 0.07l-0.61 ' +
-        '6.53l-0.28 0.33l-0.66 ' +
-        '0.25l-0.55-0.42l-0.29-0.67l0.29-1.33l0.35-1.73l0.28-1.38l0.26-1.71l0.15-0.57l-0.01-0.04l-0.13 ' +
-        '0.02l-1.29 1.77l-1.96 2.65l-1.55 1.66l-0.37 ' +
-        '0.15l-0.64-0.33l0.06-0.6l0.36-0.53l2.15-2.73l1.3-1.69l0.84-0.98l-0.01-0.14h-0.05l-5.7 3.7l-1.02 ' +
-        '0.13l-0.44-0.41l0.05-0.67l0.21-0.22l1.72-1.18Z"/>'
-    }),
-    Object.freeze({
-      id: 'gemini',
-      label: 'Gemini',
-      hints: Object.freeze(['gemini', 'bard']),
-      domains: Object.freeze(['gemini.google.com', 'bard.google.com']),
-      paths:
-        '<path d="M11.14 18.59Q12 20.56 12 22.8q0-2.24 0.84-4.21q0.86-1.97 2.32-3.43t3.43-2.29Q20.56 12 ' +
-        '22.8 12q-2.24 0-4.21-0.84a11.07 11.07 0 0 1-3.43-2.32a11.07 11.07 0 0 1-2.32-3.43Q12 3.44 12 ' +
-        '1.2q0 2.24-0.86 4.21q-0.84 1.97-2.29 3.43a11.07 11.07 0 0 1-3.43 2.32Q3.44 12 1.2 12q2.24 0 4.21 ' +
-        '0.86q1.97 0.84 3.43 2.3t2.3 3.43"/>'
-    }),
-    Object.freeze({
-      id: 'spotify',
-      label: 'Spotify',
-      hints: Object.freeze(['spotify']),
-      domains: Object.freeze(['spotify.com', 'spotify.link']),
-      paths:
-        '<circle cx="12" cy="12" r="9.55"/><path d="M6.9 10.05q5.1-1.9 10.2 1.2"/><path d="M7.55 ' +
-        '13.35q4.4-1.5 8.9 1.05"/><path d="M8.15 16.5q3.65-1.15 7.3 1"/>'
-    }),
-    Object.freeze({
-      id: 'discord',
-      label: 'Discord',
-      hints: Object.freeze(['discord']),
-      domains: Object.freeze(['discord.com', 'discord.gg', 'discordapp.com']),
-      paths:
-        '<path d="M19.49 5.13a17.81 17.81 0 0 0-4.4-1.36a0.07 0.07 0 0 0-0.07 0.03c-0.19 0.34-0.4 ' +
-        '0.78-0.55 1.12c-1.66-0.25-3.31-0.25-4.94 0c-0.15-0.35-0.37-0.79-0.56-1.12a0.07 0.07 0 0 ' +
-        '0-0.07-0.03a17.76 17.76 0 0 0-4.4 1.36a0.06 0.06 0 0 0-0.03 0.02C1.68 9.34 0.91 13.42 1.29 ' +
-        '17.45a0.07 0.07 0 0 0 0.03 0.05c1.85 1.36 3.64 2.18 5.39 2.73a0.07 0.07 0 0 0 ' +
-        '0.08-0.02c0.42-0.57 0.79-1.17 1.1-1.79a0.07 0.07 0 0 ' +
-        '0-0.04-0.1c-0.59-0.22-1.15-0.49-1.68-0.8a0.07 0.07 0 0 1-0.01-0.11c0.11-0.08 0.23-0.17 ' +
-        '0.33-0.26a0.07 0.07 0 0 1 0.07-0.01c3.54 1.61 7.36 1.61 10.86 0a0.07 0.07 0 0 1 0.07 0.01c0.11 ' +
-        '0.09 0.22 0.18 0.34 0.26a0.07 0.07 0 0 1-0.01 0.11a11.07 11.07 0 0 1-1.69 0.8a0.07 0.07 0 0 ' +
-        '0-0.04 0.1c0.32 0.63 0.69 1.23 1.1 1.79a0.07 0.07 0 0 0 0.08 0.03c1.76-0.55 3.55-1.37 ' +
-        '5.4-2.73a0.07 0.07 0 0 0 0.03-0.05c0.45-4.66-0.75-8.71-3.19-12.29a0.05 0.05 0 0 ' +
-        '0-0.03-0.03zM8.42 15c-1.06 0-1.94-0.98-1.94-2.18c0-1.2 0.86-2.18 1.94-2.18c1.09 0 1.96 0.99 1.94 ' +
-        '2.18c0 1.2-0.86 2.18-1.94 2.18zm7.18 0c-1.06 0-1.94-0.98-1.94-2.18c0-1.2 0.86-2.18 ' +
-        '1.94-2.18c1.09 0 1.96 0.99 1.94 2.18c0 1.2-0.85 2.18-1.94 2.18Z"/>'
-    }),
-    Object.freeze({
-      id: 'reddit',
-      label: 'Reddit',
-      hints: Object.freeze(['reddit']),
-      domains: Object.freeze(['reddit.com', 'redd.it']),
-      paths:
-        '<path d="M12 1.2C6.04 1.2 1.2 6.04 1.2 12c0 2.98 1.21 5.68 3.16 7.64l-2.06 2.06C1.9 22.1 2.19 ' +
-        '22.8 2.76 22.8H12c5.96 0 10.8-4.84 10.8-10.8S17.96 1.2 12 1.2Zm3.95 2.88c0.99 0 1.8 0.81 1.8 ' +
-        '1.8c0 0.99-0.81 1.8-1.8 1.8c-0.85 0-1.57-0.59-1.75-1.39v0c-1.03 0.15-1.83 1.03-1.83 ' +
-        '2.11v0.01c1.6 0.06 3.06 0.51 4.22 1.23c0.43-0.33 0.96-0.52 1.54-0.52c1.39 0 2.52 1.13 2.52 ' +
-        '2.52c0 1.01-0.59 1.87-1.44 2.28c-0.08 2.93-3.27 5.29-7.2 5.29c-3.92 ' +
-        '0-7.11-2.36-7.2-5.28c-0.86-0.4-1.45-1.27-1.45-2.28c0-1.39 1.13-2.52 2.52-2.52c0.58 0 1.12 0.2 ' +
-        '1.54 0.53c1.15-0.71 2.59-1.16 4.18-1.23v-0.01c0-1.5 1.14-2.73 2.59-2.89c0.17-0.82 0.89-1.44 ' +
-        '1.76-1.44Zm-7.28 7.54c-0.71 0-1.31 0.7-1.36 1.62c-0.04 0.91 0.58 1.29 1.28 1.29c0.71 0 1.23-0.33 ' +
-        '1.28-1.25c0.04-0.92-0.5-1.66-1.2-1.66Zm6.67 0c-0.71 0-1.25 0.74-1.2 1.66c0.04 0.92 0.57 1.25 ' +
-        '1.28 1.25c0.71 0 1.33-0.37 1.28-1.29c-0.04-0.92-0.65-1.62-1.36-1.62Zm-3.33 3.61c-0.88 0-1.72 ' +
-        '0.04-2.49 0.12c-0.13 0.01-0.22 0.15-0.16 0.27c0.43 1.04 1.46 1.77 2.66 1.77c1.2 0 2.22-0.73 ' +
-        '2.66-1.77c0.05-0.12-0.03-0.26-0.17-0.27c-0.78-0.08-1.62-0.12-2.49-0.12Z"/>'
-    }),
-    Object.freeze({
-      id: 'slack',
-      label: 'Slack',
-      hints: Object.freeze(['slack']),
-      domains: Object.freeze(['slack.com']),
-      paths:
-        '<path d="M5.74 14.85a2.28 2.28 0 0 1-2.27 2.27A2.28 2.28 0 0 1 1.2 14.85a2.27 2.27 0 0 1 ' +
-        '2.27-2.27h2.27v2.27zM6.88 14.85a2.27 2.27 0 0 1 2.27-2.27a2.27 2.27 0 0 1 2.27 2.27v5.68A2.28 ' +
-        '2.28 0 0 1 9.15 22.8a2.28 2.28 0 0 1-2.27-2.27v-5.68zM9.15 5.74a2.28 2.28 0 0 1-2.27-2.27A2.28 ' +
-        '2.28 0 0 1 9.15 1.2a2.28 2.28 0 0 1 2.27 2.27v2.27H9.15zM9.15 6.88a2.28 2.28 0 0 1 2.27 ' +
-        '2.27a2.28 2.28 0 0 1-2.27 2.27H3.47A2.28 2.28 0 0 1 1.2 9.15a2.28 2.28 0 0 1 ' +
-        '2.27-2.27h5.68zM18.26 9.15a2.28 2.28 0 0 1 2.27-2.27A2.28 2.28 0 0 1 22.8 9.15a2.28 2.28 0 0 ' +
-        '1-2.27 2.27h-2.27V9.15zM17.12 9.15a2.28 2.28 0 0 1-2.27 2.27a2.27 2.27 0 0 1-2.27-2.27V3.47A2.27 ' +
-        '2.27 0 0 1 14.85 1.2a2.28 2.28 0 0 1 2.27 2.27v5.68zM14.85 18.26a2.28 2.28 0 0 1 2.27 2.27A2.28 ' +
-        '2.28 0 0 1 14.85 22.8a2.27 2.27 0 0 1-2.27-2.27v-2.27h2.27zM14.85 17.12a2.27 2.27 0 0 ' +
-        '1-2.27-2.27a2.27 2.27 0 0 1 2.27-2.27h5.68A2.27 2.27 0 0 1 22.8 14.85a2.28 2.28 0 0 1-2.27 ' +
-        '2.27h-5.68z"/>'
-    }),
-    Object.freeze({
-      id: 'x',
-      label: 'X',
-      hints: Object.freeze(['twitter', 'tweet']),
-      domains: Object.freeze(['x.com', 'twitter.com', 't.co']),
-      paths:
-        '<path d="M18.21 2.24h3.31l-7.24 8.27L22.8 21.76h-6.67l-5.22-6.83l-5.97 6.83H1.63l7.74-8.85L1.2 ' +
-        '2.24h6.83l4.72 6.24ZM17.05 19.78h1.84L7.04 4.12H5.07Z"/>'
-    }),
-    Object.freeze({
-      id: 'notion',
-      label: 'Notion',
-      hints: Object.freeze(['notion']),
-      domains: Object.freeze(['notion.so', 'notion.site', 'notion.com']),
-      paths:
-        '<rect x="3.4" y="3.4" width="17.2" height="17.2" rx="3.2"/><path d="M8.6 16.6V7.4l6.8 9.2V7.4"/>'
-    }),
-    Object.freeze({
-      id: 'figma',
-      label: 'Figma',
-      hints: Object.freeze(['figma']),
-      domains: Object.freeze(['figma.com']),
-      paths:
-        '<path d="M15.47 9.28h-4.13V1.2h4.13c2.23 0 4.04 1.81 4.04 4.04s-1.81 4.04-4.04 4.04zM12.66 ' +
-        '7.96h2.81c1.5 0 2.72-1.22 2.72-2.72s-1.22-2.72-2.72-2.72h-2.81V7.96zm0 1.32H8.53c-2.23 ' +
-        '0-4.04-1.81-4.04-4.04S6.3 1.2 8.53 1.2h4.13v8.08zm-4.13-6.76c-1.5 0-2.72 1.22-2.72 2.72s1.22 ' +
-        '2.72 2.72 2.72h2.81V2.52H8.53zm4.13 13.52H8.53c-2.23 0-4.04-1.81-4.04-4.04s1.81-4.04 ' +
-        '4.04-4.04h4.13v8.08zM8.53 9.28c-1.5 0-2.72 1.22-2.72 2.72s1.22 2.72 2.72 ' +
-        '2.72h2.81V9.28H8.53zM8.55 22.8c-2.24 0-4.06-1.81-4.06-4.04s1.81-4.04 4.04-4.04h4.13v4c0 ' +
-        '2.25-1.84 4.09-4.11 4.09zm-0.02-6.76a2.72 2.72 0 0 0-2.72 2.72c0 1.5 1.23 2.72 2.74 2.72c1.53 0 ' +
-        '2.78-1.24 2.78-2.76v-2.67H8.53zm6.93 0h-0.09c-2.23 0-4.04-1.81-4.04-4.04s1.81-4.04 ' +
-        '4.04-4.04h0.09c2.23 0 4.04 1.81 4.04 4.04s-1.81 4.04-4.04 4.04zm-0.09-6.76c-1.5 0-2.72 1.22-2.72 ' +
-        '2.72s1.22 2.72 2.72 2.72h0.09c1.5 0 2.72-1.22 2.72-2.72s-1.22-2.72-2.72-2.72h-0.09z"/>'
-    }),
-    Object.freeze({
-      id: 'instagram',
-      label: 'Instagram',
-      hints: Object.freeze(['instagram']),
-      domains: Object.freeze(['instagram.com', 'instagr.am']),
-      paths:
-        '<path d="M7.53 1.28c-1.15 0.05-1.93 0.24-2.62 0.51c-0.71 0.28-1.31 0.65-1.91 1.25c-0.6 0.6-0.97 ' +
-        '1.2-1.24 1.91c-0.27 0.69-0.45 1.47-0.5 2.62c-0.05 1.15-0.06 1.52-0.06 4.45c0.01 2.93 0.02 3.3 ' +
-        '0.07 4.45c0.05 1.15 0.24 1.93 0.51 2.62c0.28 0.71 0.65 1.31 1.25 1.91c0.6 0.6 1.2 0.97 1.92 ' +
-        '1.24c0.69 0.27 1.47 0.45 2.62 0.5c1.15 0.05 1.52 0.06 4.45 0.06c2.93-0.01 3.3-0.02 ' +
-        '4.45-0.07c1.15-0.05 1.93-0.24 2.62-0.51c0.71-0.28 1.31-0.65 1.91-1.25c0.6-0.6 0.97-1.2 ' +
-        '1.24-1.92c0.27-0.69 0.45-1.47 0.5-2.62c0.05-1.15 0.06-1.52 ' +
-        '0.06-4.45c-0.01-2.93-0.02-3.3-0.07-4.45c-0.05-1.15-0.24-1.93-0.51-2.62c-0.28-0.71-0.65-1.31-1.25' +
-        '-1.91C20.37 2.4 19.77 2.03 19.05 1.75C18.37 1.49 17.58 1.31 16.43 1.26C15.28 1.21 14.91 1.2 ' +
-        '11.98 1.2C9.05 1.21 8.68 1.22 7.53 1.28m0.13 ' +
-        '19.52c-1.05-0.05-1.62-0.22-2.01-0.37c-0.5-0.19-0.86-0.43-1.24-0.81c-0.38-0.38-0.61-0.74-0.81-1.2' +
-        '4c-0.15-0.38-0.33-0.95-0.38-2.01c-0.05-1.14-0.06-1.48-0.07-4.36c-0.01-2.88 0-3.22 ' +
-        '0.05-4.36c0.05-1.05 0.22-1.62 0.37-2.01c0.19-0.51 0.43-0.86 0.81-1.24c0.38-0.38 0.74-0.61 ' +
-        '1.24-0.81c0.38-0.15 0.95-0.33 2-0.38c1.14-0.05 1.48-0.06 4.36-0.07c2.88-0.01 3.23 0 4.36 ' +
-        '0.05c1.05 0.05 1.62 0.22 2.01 0.37c0.5 0.19 0.86 0.43 1.24 0.81c0.38 0.38 0.61 0.74 0.81 ' +
-        '1.24c0.15 0.38 0.33 0.95 0.38 2c0.05 1.14 0.07 1.48 0.07 4.36c0.01 2.88 0 3.23-0.05 4.36c-0.05 ' +
-        '1.05-0.22 1.62-0.37 2.01c-0.19 0.5-0.43 0.86-0.81 1.24c-0.38 0.38-0.74 0.61-1.24 0.81c-0.38 ' +
-        '0.15-0.95 0.33-2 0.38c-1.14 0.05-1.48 0.06-4.36 0.07c-2.88 0.01-3.22-0.01-4.36-0.05M16.46 ' +
-        '6.23A1.3 1.3 0 1 0 17.75 4.93a1.3 1.3 0 0 0-1.29 1.3M6.45 12.01c0.01 3.06 2.49 5.54 5.56 ' +
-        '5.53c3.06-0.01 5.54-2.49 5.54-5.56c-0.01-3.06-2.49-5.54-5.56-5.53c-3.06 0.01-5.54 2.49-5.53 ' +
-        '5.56M8.4 12.01a3.6 3.6 0 1 1 3.61 3.59A3.6 3.6 0 0 1 8.4 12.01"/>'
-    }),
-    Object.freeze({
-      id: 'twitch',
-      label: 'Twitch',
-      hints: Object.freeze(['twitch']),
-      domains: Object.freeze(['twitch.tv']),
-      paths:
-        '<path d="M11.61 5.44h1.54v4.63H11.61zm4.24 0H17.4v4.63h-1.54zM6.6 1.2L2.74 ' +
-        '5.06v13.89h4.63V22.8l3.86-3.86h3.09L21.26 12V1.2zm13.11 10.03l-3.09 3.09h-3.09l-2.7 ' +
-        '2.7v-2.7H7.37V2.74h12.34Z"/>'
-    }),
-    Object.freeze({
-      id: 'netflix',
-      label: 'Netflix',
-      hints: Object.freeze(['netflix']),
-      domains: Object.freeze(['netflix.com']),
-      paths:
-        '<path d="M6.06 1.2v0.01c2.73 7.7 4.83 13.66 7.51 21.24c2.11 0.05 4.37 0.36 4.37 ' +
-        '0.36c-2.52-7.13-5.33-15.07-7.64-21.6zm7.64 0v8.67L17.94 21.86c-0.04-7.07 0-14.32 0-20.65zM6.06 ' +
-        '2.15V22.8c1.69-0.2 2.53-0.28 4.24-0.36v-8.3z"/>'
-    }),
-    Object.freeze({
-      id: 'gmail',
-      label: 'Gmail',
-      hints: Object.freeze(['gmail']),
-      domains: Object.freeze(['gmail.com', 'mail.google.com', 'googlemail.com']),
-      paths:
-        '<path d="M22.8 6.11v12.52c0 0.81-0.66 1.47-1.47 1.47h-3.44V11.76L12 ' +
-        '16.18l-5.89-4.42v8.35H2.67A1.47 1.47 0 0 1 1.2 18.63V6.11c0-1.82 2.08-2.86 3.53-1.77L6.11 ' +
-        '5.38L12 9.79l5.89-4.42l1.38-1.03C20.72 3.25 22.8 4.29 22.8 6.11z"/>'
-    }),
-    Object.freeze({
-      id: 'drive',
-      label: 'Google Drive',
-      hints: Object.freeze(['google drive', 'gdrive']),
-      domains: Object.freeze(['drive.google.com']),
-      paths:
-        '<path d="M12.01 2.54c-1.87 0-3.38 0.02-3.37 0.04c0.01 0.02 1.54 2.7 3.4 5.96l3.38 5.92h3.38c1.87 ' +
-        '0 3.38-0.02 3.37-0.04c0-0.02-1.54-2.7-3.4-5.96l-3.38-5.92zm-4.28 1.56a710.85 710.87 0 0 0-3.27 ' +
-        '5.69L1.2 15.48l1.7 2.97l1.7 2.97l3.26-5.7l3.26-5.7l-1.69-2.96C8.49 5.43 7.73 4.1 7.73 4.09zm2.03 ' +
-        '11.39l-0.18 0.31c-0.1 0.18-0.86 1.5-1.69 2.96a381.54 381.55 0 0 1-1.53 2.67c-0.01 0.02 2.92 0.04 ' +
-        '6.5 0.04h6.52l1.62-2.84c0.89-1.56 1.67-2.91 1.72-2.99l0.09-0.15h-6.52z"/>'
-    }),
-    Object.freeze({
-      id: 'docs',
-      label: 'Google Docs',
-      hints: Object.freeze(['google docs', 'gdocs']),
-      domains: Object.freeze(['docs.google.com']),
-      paths:
-        '<path d="M14.45 7.25H13.8V1.2H5.62c-0.81 0-1.47 0.66-1.47 1.47v18.66c0 0.81 0.66 1.47 1.47 ' +
-        '1.47h12.76c0.81 0 1.47-0.66 1.47-1.47V7.25h-5.4zm-0.49 ' +
-        '9.41H7.58v-1.23h6.38v1.23zm2.45-2.95H7.58v-1.23h8.84v1.23zm0-2.95H7.58V9.55h8.84v1.23zM14.45 ' +
-        '6.6h5.4l-5.4-5.4v5.4z"/>'
-    }),
-    Object.freeze({
-      id: 'whatsapp',
-      label: 'WhatsApp',
-      hints: Object.freeze(['whatsapp']),
-      domains: Object.freeze(['whatsapp.com', 'wa.me']),
-      paths:
-        '<path d="M16.92 14.14c-0.27-0.13-1.58-0.78-1.83-0.87c-0.25-0.09-0.42-0.13-0.6 0.14c-0.18 ' +
-        '0.27-0.69 0.87-0.85 1.05c-0.16 0.18-0.31 0.2-0.58 ' +
-        '0.07c-0.27-0.13-1.13-0.42-2.15-1.33c-0.79-0.71-1.33-1.58-1.49-1.85c-0.16-0.27-0.02-0.41 ' +
-        '0.12-0.55c0.12-0.12 0.27-0.31 0.4-0.47c0.13-0.16 0.18-0.27 0.27-0.45c0.09-0.18 ' +
-        '0.05-0.33-0.02-0.47c-0.07-0.13-0.6-1.45-0.82-1.99c-0.22-0.52-0.44-0.45-0.6-0.46c-0.16-0.01-0.33-' +
-        '0.01-0.51-0.01c-0.18 0-0.47 0.07-0.71 0.33c-0.24 0.27-0.94 0.91-0.94 2.23c0 1.32 0.96 2.59 1.09 ' +
-        '2.77c0.13 0.18 1.89 2.88 4.57 4.04c0.64 0.28 1.14 0.44 1.52 0.56c0.64 0.2 1.22 0.18 1.68 ' +
-        '0.11c0.51-0.08 1.58-0.65 1.81-1.27c0.22-0.62 0.22-1.16 ' +
-        '0.16-1.27c-0.07-0.11-0.24-0.18-0.51-0.31m-4.88 6.66h0a8.88 8.88 0 0 1-4.53-1.24l-0.32-0.19l-3.37 ' +
-        '0.88l0.9-3.28l-0.21-0.34a8.87 8.87 0 0 1-1.36-4.73c0-4.9 3.99-8.9 8.9-8.9c2.38 0 4.61 0.93 6.29 ' +
-        '2.61a8.84 8.84 0 0 1 2.6 6.29c0 4.91-3.99 8.9-8.9 8.9m7.57-16.47A10.63 10.63 0 0 0 12.05 ' +
-        '1.2C6.15 1.2 1.34 6 1.34 11.9c0 1.89 0.49 3.73 1.43 5.35L1.25 22.8l5.67-1.49a10.69 10.69 0 0 0 ' +
-        '5.11 1.3h0c5.9 0 10.7-4.8 10.7-10.7a10.64 10.64 0 0 0-3.13-7.57Z"/>'
-    }),
-    Object.freeze({
-      id: 'telegram',
-      label: 'Telegram',
-      hints: Object.freeze(['telegram']),
-      domains: Object.freeze(['telegram.org', 't.me', 'telegram.me', 'web.telegram.org']),
-      paths:
-        '<path d="M11.95 1.2A10.8 10.8 0 0 0 1.2 12a10.8 10.8 0 0 0 10.8 10.8a10.8 10.8 0 0 0 ' +
-        '10.8-10.8A10.8 10.8 0 0 0 12 1.2a10.8 10.8 0 0 0-0.05 0zm4.47 6.5c0.09 0 0.29 0.02 0.42 ' +
-        '0.13a0.46 0.46 0 0 1 0.15 0.29c0.01 0.08 0.03 0.28 0.02 0.42c-0.16 1.71-0.87 5.85-1.22 ' +
-        '7.76c-0.15 0.81-0.45 1.08-0.74 1.11c-0.63 ' +
-        '0.06-1.1-0.41-1.71-0.81c-0.95-0.62-1.49-1.01-2.41-1.62c-1.07-0.7-0.38-1.09 0.23-1.72c0.16-0.17 ' +
-        '2.92-2.68 2.98-2.91c0.01-0.03 0.01-0.13-0.05-0.19s-0.16-0.04-0.22-0.02c-0.1 0.02-1.61 1.03-4.55 ' +
-        '3.01c-0.43 0.3-0.82 0.44-1.17 ' +
-        '0.43c-0.39-0.01-1.13-0.22-1.68-0.4c-0.68-0.22-1.21-0.34-1.17-0.71c0.02-0.19 0.29-0.39 ' +
-        '0.8-0.6c3.15-1.37 5.25-2.28 6.3-2.71c3-1.25 3.62-1.46 4.03-1.47z"/>'
-    }),
-    Object.freeze({
-      id: 'apple',
-      label: 'Apple',
-      hints: Object.freeze(['apple', 'icloud']),
-      domains: Object.freeze(['apple.com', 'icloud.com']),
-      paths:
-        '<path d="M12.14 7.41c-0.85 0-2.17-0.97-3.56-0.94c-1.84 0.02-3.52 1.06-4.46 2.71c-1.91 3.31-0.49 ' +
-        '8.19 1.37 10.88c0.91 1.31 1.99 2.78 3.41 2.74c1.37-0.06 1.88-0.89 3.54-0.89c1.65 0 2.12 0.89 ' +
-        '3.56 0.85c1.47-0.02 2.41-1.33 3.31-2.65c1.04-1.52 1.47-2.99 ' +
-        '1.5-3.07c-0.04-0.01-2.86-1.1-2.9-4.37c-0.02-2.74 2.23-4.04 ' +
-        '2.34-4.1c-1.29-1.88-3.26-2.09-3.95-2.14c-1.8-0.14-3.31 0.98-4.15 0.98zM15.18 4.65c0.76-0.91 ' +
-        '1.26-2.18 1.12-3.45c-1.09 0.05-2.4 0.72-3.18 1.64c-0.7 0.81-1.31 2.1-1.15 3.34c1.2 0.09 ' +
-        '2.44-0.62 3.2-1.53"/>'
-    }),
-    Object.freeze({
-      id: 'linkedin',
-      label: 'LinkedIn',
-      hints: Object.freeze(['linkedin']),
-      domains: Object.freeze(['linkedin.com', 'lnkd.in']),
-      paths:
-        '<path d="M19.6 19.61h-3.2v-5.01c0-1.2-0.02-2.73-1.67-2.73c-1.67 0-1.92 1.3-1.92 ' +
-        '2.65v5.1H9.62V9.3h3.07v1.4h0.04c0.43-0.81 1.47-1.66 3.03-1.66c3.24 0 3.84 2.13 3.84 4.91v5.66zM6 ' +
-        '7.89c-1.03 0-1.86-0.83-1.86-1.86c0-1.02 0.83-1.86 1.86-1.86c1.03 0 1.86 0.83 1.86 1.86c0 ' +
-        '1.03-0.83 1.86-1.86 1.86zm1.6 11.72H4.4V9.3h3.21v10.31zM21.2 1.2H2.79C1.91 1.2 1.2 1.9 1.2 ' +
-        '2.76v18.49C1.2 22.1 1.91 22.8 2.79 22.8h18.41C22.08 22.8 22.8 22.1 22.8 21.24V2.76C22.8 1.9 ' +
-        '22.08 1.2 21.2 1.2h0z"/>'
-    }),
-    Object.freeze({
-      id: 'linear',
-      label: 'Linear',
-      hints: Object.freeze(['linear']),
-      domains: Object.freeze(['linear.app']),
-      paths:
-        '<path d="M3.8 4.96A10.78 10.78 0 0 1 11.99 1.2C17.96 1.2 22.8 6.04 22.8 12.01c0 3.28-1.46 ' +
-        '6.21-3.76 8.19L3.8 4.96ZM2.84 6.26l14.9 14.9c-0.47 0.3-0.97 0.56-1.48 0.78L2.06 7.75c0.22-0.52 ' +
-        '0.48-1.01 0.78-1.48ZM1.49 9.45l13.06 13.06c-0.64 0.15-1.3 0.25-1.98 0.29L1.2 11.42a10.8 10.8 0 0 ' +
-        '1 0.29-1.98Zm-0.15 4.38l8.84 8.84a10.82 10.82 0 0 1-8.84-8.84Z"/>'
-    }),
-    Object.freeze({
-      id: 'youtubemusic',
-      label: 'YouTube Music',
-      hints: Object.freeze(['youtube music', 'ytmusic', 'yt music']),
-      domains: Object.freeze(['music.youtube.com']),
-      paths:
-        '<circle cx="12" cy="12" r="10.9"/><circle cx="12" cy="12" r="6.05"/><path d="M9.9 15.2V8.8l5.6 ' +
-        '3.2Z" fill="currentColor" stroke-linejoin="round"/>'
-    }),
-    Object.freeze({
-      id: 'youtube',
-      label: 'YouTube',
-      hints: Object.freeze(['youtube', 'youtu']),
-      domains: Object.freeze(['youtube.com', 'youtu.be', 'm.youtube.com']),
-      paths:
-        '<path d="M3.8 4.32h16.4a2.72 2.72 0 0 1 2.72 2.72v8.24a2.72 2.72 0 0 1-2.72 2.72H3.8a2.72 2.72 0 ' +
-        '0 1-2.72-2.72V7.04A2.72 2.72 0 0 1 3.8 4.32Z"/><path d="M9.77 15.24V8.76L15.47 12Z" ' +
-        'fill="currentColor" stroke-linejoin="round"/>'
-    }),
-    Object.freeze({
-      id: 'sparkle',
-      label: 'Assistant',
-      hints: Object.freeze([
-        'assistant',
-        'copilot',
-        'perplexity',
-        'midjourney',
-        'grok',
-        'deepseek',
-        'mistral',
-        'huggingface'
-      ]),
-      paths:
-        '<path d="M11 3.5l1.8 5 5 1.8-5 1.8L11 17.1l-1.8-5-5-1.8 5-1.8Z"/>' +
-        '<path d="M18 15.2l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7Z"/>'
-    }),
-    Object.freeze({
-      id: 'wave',
-      label: 'Music',
-      hints: Object.freeze(['music', 'audio', 'soundcloud', 'tidal', 'deezer', 'bandcamp']),
-      paths:
-        '<path d="M4 10.5v3M8 7.5v9M12 9.5v5M16 6.5v11M20 10.5v3"/>'
-    }),
-    Object.freeze({
-      id: 'talk',
-      label: 'Chat',
-      hints: Object.freeze([
-        'chat',
-        'signal',
-        'messenger',
-        'threads',
-        'mastodon',
-        'teams',
-        'zoom',
-        'meet'
-      ]),
-      paths:
-        '<path d="M4 5.5h16v10H9.5L4 20Z"/>' +
-        '<path d="M8.7 10.5h.01M12 10.5h.01M15.3 10.5h.01"/>'
-    }),
-    Object.freeze({
-      id: 'play',
-      label: 'Video',
-      hints: Object.freeze(['video', 'vimeo', 'plex', 'stream', 'hulu', 'disney', 'dailymotion']),
-      paths:
-        '<circle cx="12" cy="12" r="8.5"/><path d="M10.2 8.6 16.2 12l-6 3.4Z"/>'
-    }),
-    Object.freeze({
-      id: 'page',
-      label: 'Document',
-      hints: Object.freeze([
-        'docs',
-        'document',
-        'dropbox',
-        'notes',
-        'wiki',
-        'confluence',
-        'obsidian',
-        'evernote',
-        'sheets',
-        'slides'
-      ]),
-      paths:
-        '<path d="M6.5 3.5h7l4 4v13h-11Z"/><path d="M13.5 3.5v4h4"/>' +
-        '<path d="M9.5 12h6M9.5 15.5h4"/>'
-    }),
-    Object.freeze({
-      id: 'mail',
-      label: 'Mail',
-      hints: Object.freeze(['mail', 'inbox', 'outlook', 'proton', 'fastmail', 'email']),
-      paths:
-        '<rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/>' +
-        '<path d="M4.5 7.5 12 13l7.5-5.5"/>'
-    }),
-    Object.freeze({
-      id: 'calendar',
-      label: 'Calendar',
-      hints: Object.freeze(['calendar', 'calendly', 'agenda', 'scheduler', 'cron']),
-      paths:
-        '<rect x="3.5" y="5.5" width="17" height="15" rx="2.5"/>' +
-        '<path d="M8 3.5v4M16 3.5v4M3.5 10.5h17"/>'
-    }),
-    Object.freeze({
-      id: 'code',
-      label: 'Code',
-      hints: Object.freeze([
-        'code',
-        'git',
-        'gitlab',
-        'bitbucket',
-        'stackoverflow',
-        'gitpod',
-        'vercel',
-        'netlify',
-        'railway',
-        'supabase',
-        'postman'
-      ]),
-      paths:
-        '<path d="M9 8.5 4.5 12 9 15.5M15 8.5 19.5 12 15 15.5M13.5 6l-3 12"/>'
-    }),
-    Object.freeze({
-      id: 'pen',
-      label: 'Design',
-      hints: Object.freeze([
-        'design',
-        'canva',
-        'dribbble',
-        'behance',
-        'sketch',
-        'framer',
-        'miro',
-        'photoshop'
-      ]),
-      paths:
-        '<path d="M4.5 19.5 6 14l8.5-8.5a2.1 2.1 0 0 1 3 3L9 17Z"/>' +
-        '<path d="M13 6.5l4 4"/>'
-    }),
-    Object.freeze({
-      id: 'camera',
-      label: 'Photos',
-      hints: Object.freeze(['photos', 'flickr', 'pics', 'unsplash', 'pinterest', 'lightroom']),
-      paths:
-        '<rect x="3.5" y="6.5" width="17" height="13" rx="3"/><circle cx="12" cy="13" r="3.6"/>' +
-        '<path d="M8.5 6.5 10 4h4l1.5 2.5"/>'
-    }),
-    Object.freeze({
-      id: 'globe',
-      label: 'Web',
-      hints: Object.freeze([
-        'web',
-        'maps',
-        'earth',
-        'globe',
-        'weather',
-        'travel',
-        'airbnb',
-        'booking',
-        'wikipedia'
-      ]),
-      paths:
-        '<circle cx="12" cy="12" r="8.5"/>' +
-        '<path d="M3.5 12h17M12 3.5c2.6 2.4 2.6 14.6 0 17M12 3.5c-2.6 2.4-2.6 14.6 0 17"/>'
-    })
-  ]);
+  const GENERIC_ICON = Object.freeze({
+    id: 'generic',
+    label: 'App',
+    hints: Object.freeze(['app', 'shortcut']),
+    paths:
+      '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/>' +
+      '<path d="M3.5 9.5h17"/>' +
+      '<path d="M6.6 7h.01M9.1 7h.01"/>'
+  });
+
+  const SERVICE_ICONS = Object.freeze([GENERIC_ICON]);
+
+  /**
+   * The id of the catch-all at the end of the catalogue: the bare window every shortcut
+   * wears when nothing else claimed it. It names no host, so it is never guessed from an
+   * address — it is applied by `serviceGlyphMarkup` when the matcher answers nothing.
+   */
+  const GENERIC_ICON_ID = 'generic';
 
   /** The little × on a service row: the one destructive control in the card. */
   const REMOVE_MARKUP =
@@ -2285,94 +1859,73 @@
   }
 
   /**
-   * The ids a shortcut may have been saved with before the catalogue named brands.
-   *
-   * `git` was the code-branch diagram and is now the official octocat; every other
-   * category mark kept its id through the expansion, so a rename only needs an entry
-   * here. A stored id is resolved through this map on every read, which is why an old
-   * `localStorage` list upgrades itself instead of losing its marks.
+   * High-resolution transparent vector favicons for services whose public
+   * raster scrapers render an opaque white box or inverted colors.
    */
-  const SERVICE_ICON_ALIASES = Object.freeze({ git: 'github' });
+  const CHATGPT_FAVICON =
+    'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" fill="none"><path fill="%23ffffff" d="M101.228 164.247C96.2776 164.247 91.5751 163.307 87.1201 161.426C82.6651 159.545 78.7051 156.921 75.2401 153.555C71.4781 154.842 67.5676 155.486 63.5086 155.486C56.8756 155.486 50.7376 153.852 45.0946 150.585C39.4516 147.318 34.8976 142.863 31.4326 137.22C28.0666 131.577 26.3836 125.291 26.3836 118.361C26.3836 115.49 26.7796 112.371 27.5716 109.005C23.6116 105.342 20.5426 101.135 18.3646 96.3828C16.1866 91.5318 15.0976 86.4828 15.0976 81.2358C15.0976 75.8898 16.2361 70.7418 18.5131 65.7918C20.7901 60.8418 23.9581 56.5848 28.0171 53.0208C32.1751 49.3578 36.9766 46.8333 42.4216 45.4473C43.5106 39.8043 45.7876 34.7553 49.2526 30.3003C52.8166 25.7463 57.1726 22.1823 62.3206 19.6083C67.4686 17.0343 72.9631 15.7473 78.8041 15.7473C83.7541 15.7473 88.4566 16.6878 92.9116 18.5688C97.3666 20.4498 101.327 23.0733 104.792 26.4393C108.554 25.1523 112.464 24.5088 116.523 24.5088C123.156 24.5088 129.294 26.1423 134.937 29.4093C140.58 32.6763 145.085 37.1313 148.451 42.7743C151.916 48.4173 153.648 54.7038 153.648 61.6338C153.648 64.5048 153.252 67.6233 152.46 70.9893C156.42 74.6523 159.489 78.9093 161.667 83.7603C163.845 88.5123 164.934 93.5118 164.934 98.7588C164.934 104.105 163.796 109.253 161.519 114.203C159.242 119.153 156.024 123.459 151.866 127.122C147.807 130.686 143.055 133.161 137.61 134.547C136.521 140.19 134.195 145.239 130.631 149.694C127.166 154.248 122.859 157.812 117.711 160.386C112.563 162.96 107.069 164.247 101.228 164.247ZM64.5481 145.685C69.4981 145.685 73.8046 144.645 77.4676 142.566L105.386 126.528C106.376 125.835 106.871 124.895 106.871 123.707V110.936L70.9336 131.577C68.7556 132.864 66.5776 132.864 64.3996 131.577L36.3331 115.391C36.3331 115.688 36.2836 116.034 36.1846 116.43C36.1846 116.826 36.1846 117.42 36.1846 118.212C36.1846 123.261 37.3726 127.914 39.7486 132.171C42.2236 136.329 45.6391 139.596 49.9951 141.972C54.3511 144.447 59.2021 145.685 64.5481 145.685ZM66.0331 121.479C66.6271 121.776 67.1716 121.925 67.6666 121.925C68.1616 121.925 68.6566 121.776 69.1516 121.479L80.2891 115.094L44.5006 94.3038C42.3226 93.0168 41.2336 91.0863 41.2336 88.5123V56.2878C36.2836 58.4658 32.3236 61.8318 29.3536 66.3858C26.3836 70.8408 24.8986 75.7908 24.8986 81.2358C24.8986 86.0868 26.1361 90.7398 28.6111 95.1948C31.0861 99.6498 34.3036 103.016 38.2636 105.293L66.0331 121.479ZM101.228 154.446C106.475 154.446 111.227 153.258 115.484 150.882C119.741 148.506 123.107 145.239 125.582 141.081C128.057 136.923 129.294 132.27 129.294 127.122V95.0463C129.294 93.8583 128.799 92.9673 127.809 92.3733L116.523 85.8393V127.271C116.523 129.845 115.434 131.775 113.256 133.062L85.1896 149.249C90.0406 152.714 95.3866 154.446 101.228 154.446ZM106.871 100.095V79.8993L90.09 70.3953L73.1611 79.8993V100.095L90.09 109.599L106.871 100.095ZM63.5086 52.7238C63.5086 50.1498 64.5976 48.2193 66.7756 46.9323L94.8421 30.7458C89.9911 27.2808 84.6451 25.5483 78.8041 25.5483C73.5571 25.5483 68.8051 26.7363 64.5481 29.1123C60.2911 31.4883 56.9251 34.7553 54.4501 38.9133C52.0741 43.0713 50.8861 47.7243 50.8861 52.8723V84.7998C50.8861 85.9878 51.3811 86.9283 52.3711 87.6213L63.5086 94.1553V52.7238ZM138.947 123.707C143.897 121.529 147.807 118.163 150.678 113.609C153.648 109.055 155.133 104.105 155.133 98.7588C155.133 93.9078 153.896 89.2548 151.421 84.7998C148.946 80.3448 145.728 76.9788 141.768 74.7018L113.999 58.6638C113.405 58.2678 112.86 58.1193 112.365 58.2183C111.87 58.2183 111.375 58.3668 110.88 58.6638L99.7426 64.9008L135.68 85.8393C136.769 86.4333 137.561 87.2253 138.056 88.2153C138.65 89.1063 138.947 90.1953 138.947 91.4823V123.707ZM109.098 48.2688C111.276 46.8828 113.454 46.8828 115.632 48.2688L143.847 64.7523C143.847 64.0593 143.847 63.1683 143.847 62.0793C143.847 57.3273 142.659 52.8228 140.283 48.5658C138.006 44.2098 134.69 40.7448 130.334 38.1708C126.077 35.5968 121.127 34.3098 115.484 34.3098C110.534 34.3098 106.227 35.3493 102.564 37.4283L74.6461 53.4663C73.6561 54.1593 73.1611 55.0998 73.1611 56.2878V69.0588L109.098 48.2688Z"/>' +
+    '</svg>';
 
-  /** Whether a host is `domain` itself or one of its subdomains. */
-  function serviceHostMatches(host, domain) {
-    return host === domain || host.slice(-(domain.length + 1)) === '.' + domain;
+  const FAVICON_OVERRIDES = Object.freeze({
+    'chatgpt.com': CHATGPT_FAVICON,
+    'chat.openai.com': CHATGPT_FAVICON,
+    'openai.com': CHATGPT_FAVICON
+  });
+
+  /**
+   * The high-resolution favicon endpoint for an address, or ''.
+   *
+   * 100% favicon: every shortcut gets the site's own high-resolution favicon.
+   */
+  function serviceFaviconUrl(url, size) {
+    const host = serviceHostName(url);
+    if (!host) return '';
+    if (FAVICON_OVERRIDES[host]) {
+      return FAVICON_OVERRIDES[host];
+    }
+    const sz = Number(size) || 128;
+    return 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(host) + '&sz=' + sz;
   }
 
   /**
-   * The curated entry for an id, or `null` when the catalogue has no such mark.
-   *
-   * Legacy ids are read through `SERVICE_ICON_ALIASES` first, so a shortcut saved
-   * when the catalogue was all placeholders still wears a mark — and wears the
-   * official one, because the id it was given meant that brand all along.
+   * The curated entry for an id, or null when the catalogue has no such mark.
    */
   function serviceIconById(id) {
     const key = String(id || '').trim().toLowerCase();
     if (!key) return null;
-    const resolved = ownLookup(SERVICE_ICON_ALIASES, key) || key;
-    for (let index = 0; index < SERVICE_ICONS.length; index += 1) {
-      if (SERVICE_ICONS[index].id === resolved) return SERVICE_ICONS[index];
-    }
-    return null;
+    return key === GENERIC_ICON_ID ? GENERIC_ICON : null;
   }
 
   /**
-   * The curated mark a title/address pair suggests, or `''` for a monogram.
-   *
-   * The address is asked first. A host is the one clue a user cannot mistype into
-   * another brand — `x.com` is a brand, `x` is a letter, and `chat.openai.com` is
-   * ChatGPT rather than a chat — so the precise match runs over every domain before
-   * a single word is compared. The words come second, against the title and the
-   * address alike, which is what lets an unnamed shortcut pasted as a bare URL still
-   * find its mark.
+   * A service's fallback mark id.
    */
   function serviceIconId(title, url) {
-    const text = String(title || '').toLowerCase();
-    const address = String(url || '').toLowerCase();
-    if (!text.trim() && !address.trim()) return '';
-
-    const host = serviceHostName(url);
-    let index;
-    for (index = 0; host && index < SERVICE_ICONS.length; index += 1) {
-      const domains = SERVICE_ICONS[index].domains;
-      if (!domains) continue;
-      for (let domain = 0; domain < domains.length; domain += 1) {
-        if (serviceHostMatches(host, domains[domain])) return SERVICE_ICONS[index].id;
-      }
-    }
-
-    const haystack = text + ' ' + address;
-    for (index = 0; index < SERVICE_ICONS.length; index += 1) {
-      const icon = SERVICE_ICONS[index];
-      for (let hint = 0; hint < icon.hints.length; hint += 1) {
-        if (haystack.indexOf(icon.hints[hint]) !== -1) return icon.id;
-      }
-    }
-    return '';
+    return GENERIC_ICON_ID;
   }
 
-  /** A stored icon id, or `''` when it names nothing in the catalogue. */
+  /** A stored icon id, or '' when it names nothing in the catalogue. */
   function normalizeServiceIcon(value) {
     const icon = serviceIconById(value);
     return icon ? icon.id : '';
   }
 
-  /** The SVG markup for a curated mark; `''` when there is none. */
+  /**
+   * The SVG markup for a curated mark; '' when there is none.
+   */
   function serviceIconMarkup(iconId) {
     const icon = serviceIconById(iconId);
     if (!icon) return '';
     return (
-      '<svg class="widget-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
+      '<svg class="widget-icon' +
+      (icon.solid ? ' is-solid' : '') +
+      '" viewBox="0 0 24 24" aria-hidden="true" focusable="false">' +
       icon.paths +
       '</svg>'
     );
   }
 
   /**
-   * A two-letter mark for a service with no curated glyph.
-   *
-   * "GitHub" → "GH" (the capitals it already carries), "My Notes" → "MN" (one letter per
-   * word), "Figma" → "FI", and an unnamed service falls back to its first host label.
+   * A two-letter mark for a service's initials.
    */
   function serviceMonogram(title, url) {
     const words = String(title || '')
@@ -2388,29 +1941,35 @@
     return word.slice(0, 2).toUpperCase();
   }
 
-  /** The mark a service wears: its curated glyph, or its initials in the same ink. */
+  /**
+   * The mark a service wears: 100% favicon from the site itself,
+   * falling back to the generic app window icon when the image fails to load.
+   */
   function serviceGlyphMarkup(service) {
-    const icon = serviceIconMarkup(service && service.icon);
-    if (icon) return icon;
-    const monogram = serviceMonogram(service && service.title, service && service.url);
-    return '<span class="widget-monogram">' + escapeMarkup(monogram) + '</span>';
+    const url = service && service.url;
+    const title = service && service.title;
+    const faviconUrl = serviceFaviconUrl(url, 128);
+    if (!faviconUrl) {
+      return serviceIconMarkup(GENERIC_ICON_ID);
+    }
+    const escapedTitle = escapeMarkup(title || serviceHostLabel(url) || 'App');
+    return (
+      '<img class="widget-favicon" src="' +
+      faviconUrl +
+      '" alt="' +
+      escapedTitle +
+      '" loading="lazy" decoding="async" onerror="this.style.display=\'none\';if(this.nextElementSibling)this.nextElementSibling.style.display=\'\';" />' +
+      '<span class="widget-fallback" style="display:none;">' +
+      serviceIconMarkup(GENERIC_ICON_ID) +
+      '</span>'
+    );
   }
 
   /**
-   * The mark a record wears: the one it was saved with, upgraded to a brand if it can be.
-   *
-   * A stored mark usually wins — it is what the shortcut was given. The exception is a
-   * record that wears a *category* mark while its title and address now name a brand:
-   * those were saved before the official marks existed (a ChatGPT shortcut wearing the
-   * generic assistant), and they should wear the brand the next time the wallpaper is
-   * opened. A brand is recognised by carrying `domains`, which is what "official" means
-   * in this catalogue.
+   * The mark a record wears: the generic fallback mark.
    */
   function resolveServiceIcon(storedId, title, url) {
-    const stored = normalizeServiceIcon(storedId);
-    const icon = serviceIconById(stored);
-    if (icon && icon.domains) return stored;
-    return serviceIconId(title, url) || stored;
+    return normalizeServiceIcon(storedId);
   }
 
   /**
@@ -2515,325 +2074,6 @@
     }
   }
 
-  /**
-   * The Open-Meteo forecast request for one place.
-   *
-   * Everything the card draws is asked for in one call — current conditions, six
-   * hourly steps and today's high/low — because the API costs nothing but the user
-   * still pays for it in latency. `timezone=auto` is what makes the hourly labels
-   * the *place's* hours instead of the machine's.
-   */
-  function buildWeatherForecastUrl(options) {
-    const opts = options || {};
-    const unit = normalizeTemperatureUnit(opts.unit);
-    return withQuery(OPEN_METEO_FORECAST_URL, {
-      latitude: Number(opts.latitude),
-      longitude: Number(opts.longitude),
-      current:
-        'temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,wind_speed_10m',
-      hourly: 'temperature_2m,weather_code,precipitation_probability',
-      daily: 'temperature_2m_max,temperature_2m_min',
-      timezone: 'auto',
-      forecast_days: 2,
-      temperature_unit: unit,
-      wind_speed_unit: unit === 'fahrenheit' ? 'mph' : 'kmh'
-    });
-  }
-
-  /** The Open-Meteo place search behind the card's city field. */
-  function buildGeocodingUrl(name) {
-    return withQuery(OPEN_METEO_GEOCODING_URL, {
-      name: clipText(name, 80),
-      count: 6,
-      language: 'en',
-      format: 'json'
-    });
-  }
-
-  /**
-   * WMO 4677 present-weather codes → the label and the glyph the card draws.
-   *
-   * Grouped the way the code table is: 0–3 clear through overcast, 45/48 fog,
-   * 51–57 drizzle, 61–67 rain, 71–77 snow, 80–82 showers, 85/86 snow showers,
-   * 95–99 thunderstorm. An unknown code from a newer API version falls through to
-   * `WMO_FALLBACK`, because inventing "sunny" out of a number we do not know is
-   * exactly the kind of guess a weather card must not make.
-   */
-  const WMO_CONDITIONS = Object.freeze({
-    0: Object.freeze({ label: 'Clear sky', glyph: 'clear' }),
-    1: Object.freeze({ label: 'Mainly clear', glyph: 'clear' }),
-    2: Object.freeze({ label: 'Partly cloudy', glyph: 'partly' }),
-    3: Object.freeze({ label: 'Overcast', glyph: 'cloud' }),
-    45: Object.freeze({ label: 'Fog', glyph: 'fog' }),
-    48: Object.freeze({ label: 'Freezing fog', glyph: 'fog' }),
-    51: Object.freeze({ label: 'Light drizzle', glyph: 'rain' }),
-    53: Object.freeze({ label: 'Drizzle', glyph: 'rain' }),
-    55: Object.freeze({ label: 'Heavy drizzle', glyph: 'rain' }),
-    56: Object.freeze({ label: 'Freezing drizzle', glyph: 'rain' }),
-    57: Object.freeze({ label: 'Freezing drizzle', glyph: 'rain' }),
-    61: Object.freeze({ label: 'Light rain', glyph: 'rain' }),
-    63: Object.freeze({ label: 'Rain', glyph: 'rain' }),
-    65: Object.freeze({ label: 'Heavy rain', glyph: 'rain' }),
-    66: Object.freeze({ label: 'Freezing rain', glyph: 'rain' }),
-    67: Object.freeze({ label: 'Freezing rain', glyph: 'rain' }),
-    71: Object.freeze({ label: 'Light snow', glyph: 'snow' }),
-    73: Object.freeze({ label: 'Snow', glyph: 'snow' }),
-    75: Object.freeze({ label: 'Heavy snow', glyph: 'snow' }),
-    77: Object.freeze({ label: 'Snow grains', glyph: 'snow' }),
-    80: Object.freeze({ label: 'Light showers', glyph: 'rain' }),
-    81: Object.freeze({ label: 'Showers', glyph: 'rain' }),
-    82: Object.freeze({ label: 'Violent showers', glyph: 'rain' }),
-    85: Object.freeze({ label: 'Snow showers', glyph: 'snow' }),
-    86: Object.freeze({ label: 'Heavy snow showers', glyph: 'snow' }),
-    95: Object.freeze({ label: 'Thunderstorm', glyph: 'storm' }),
-    96: Object.freeze({ label: 'Thunderstorm with hail', glyph: 'storm' }),
-    99: Object.freeze({ label: 'Thunderstorm with hail', glyph: 'storm' })
-  });
-
-  const WMO_FALLBACK = Object.freeze({ label: 'Unsettled', glyph: 'cloud' });
-
-  /** `2` → `{ label: 'Partly cloudy', glyph: 'partly' }`. */
-  function describeWmoCode(code) {
-    const value = Number(code);
-    const entry = Number.isFinite(value) ? WMO_CONDITIONS[Math.round(value)] : null;
-    return entry
-      ? { label: entry.label, glyph: entry.glyph }
-      : { label: WMO_FALLBACK.label, glyph: WMO_FALLBACK.glyph };
-  }
-
-  /** 21.4 → `"21°"`; the unit lives in the metric row so the big number stays big. */
-  function formatTemperature(value) {
-    const number = Number(value);
-    return Number.isFinite(number) ? Math.round(number) + '°' : '—';
-  }
-
-  /** `"2026-01-15T14:00"` → `"14:00"`, read from the string so no timezone drifts in. */
-  function hourLabel(value) {
-    const match = /T(\d{2}):(\d{2})/.exec(String(value || ''));
-    if (!match) return '';
-    return match[1] + ':00';
-  }
-
-  /** `"just now"`, `"4 min ago"`, `"2 h ago"` — a card is opened far more often than refreshed. */
-  function relativeTime(timestamp, now) {
-    const then = Number(timestamp);
-    if (!Number.isFinite(then) || then <= 0) return 'never';
-    const reference = Number.isFinite(Number(now)) ? Number(now) : Date.now();
-    const elapsed = Math.max(0, reference - then);
-    const minutes = Math.floor(elapsed / 60000);
-    if (minutes < 1) return 'just now';
-    if (minutes < 60) return minutes + ' min ago';
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return hours + ' h ago';
-    return Math.floor(hours / 24) + ' d ago';
-  }
-
-  /** Index of the first hourly entry at or after the current hour (ISO sorts lexically). */
-  function indexOfHour(times, currentTime) {
-    const needle = String(currentTime || '').slice(0, 13); // YYYY-MM-DDTHH
-    for (let index = 0; index < times.length; index += 1) {
-      if (String(times[index]).slice(0, 13) >= needle) return index;
-    }
-    return 0;
-  }
-
-  /**
-   * Normalise an Open-Meteo forecast into the shape the card draws, or `null` when
-   * the payload is not a forecast at all — the caller then shows the error state
-   * instead of a card full of dashes.
-   *
-   * Six hourly steps, not twenty-four: the strip has to stay on one line without a
-   * scrollbar on a 360 px window. Today's high/low comes from `daily`, which is
-   * why `forecast_days=2` is requested — the second day covers the six hours after
-   * midnight.
-   */
-  function parseWeatherPayload(payload, options) {
-    if (!payload || typeof payload !== 'object') return null;
-    const current = payload.current || payload.current_weather;
-    if (!current || !Number.isFinite(Number(current.temperature_2m))) return null;
-
-    const unit = normalizeTemperatureUnit(options && options.unit);
-    const condition = describeWmoCode(current.weather_code);
-    const hourly = payload.hourly || {};
-    const times = Array.isArray(hourly.time) ? hourly.time : [];
-    const temperatures = Array.isArray(hourly.temperature_2m) ? hourly.temperature_2m : [];
-    const codes = Array.isArray(hourly.weather_code) ? hourly.weather_code : [];
-    const precipitation = Array.isArray(hourly.precipitation_probability)
-      ? hourly.precipitation_probability
-      : [];
-
-    const start = indexOfHour(times, current.time);
-    const hours = [];
-    for (let index = start; index < times.length && hours.length < 6; index += 1) {
-      const chance = Number(precipitation[index]);
-      hours.push({
-        time: String(times[index]),
-        hour: hourLabel(times[index]),
-        temperature: formatTemperature(temperatures[index]),
-        label: describeWmoCode(codes[index]).label,
-        precipitation: Number.isFinite(chance) ? Math.round(chance) : null,
-        isNow: hours.length === 0
-      });
-    }
-
-    const daily = payload.daily || {};
-    const highs = Array.isArray(daily.temperature_2m_max) ? daily.temperature_2m_max : [];
-    const lows = Array.isArray(daily.temperature_2m_min) ? daily.temperature_2m_min : [];
-    const humidity = Number(current.relative_humidity_2m);
-    const wind = Number(current.wind_speed_10m);
-
-    // The highest chance in the six hours on screen: "will I need a coat" is one
-    // number, and a per-hour percentage is already in the strip.
-    let rainChance = null;
-    hours.forEach(function (hour) {
-      if (hour.precipitation === null) return;
-      rainChance = rainChance === null ? hour.precipitation : Math.max(rainChance, hour.precipitation);
-    });
-
-    return {
-      temperature: formatTemperature(current.temperature_2m),
-      apparent: formatTemperature(current.apparent_temperature),
-      high: formatTemperature(highs[0]),
-      low: formatTemperature(lows[0]),
-      humidity: Number.isFinite(humidity) ? Math.round(humidity) + '%' : '—',
-      wind: Number.isFinite(wind)
-        ? Math.round(wind) + (unit === 'fahrenheit' ? ' mph' : ' km/h')
-        : '—',
-      rain: rainChance === null ? '—' : rainChance + '%',
-      isDay: Number(current.is_day) !== 0,
-      code: Number(current.weather_code),
-      label: condition.label,
-      glyph: condition.glyph,
-      unit: unit,
-      unitSuffix: unit === 'fahrenheit' ? '°F' : '°C',
-      hours: hours
-    };
-  }
-
-  /** `{ results: [...] }` → the plain place list the picker rows render. */
-  function parseGeocodingResults(payload) {
-    const results = payload && Array.isArray(payload.results) ? payload.results : [];
-    const places = [];
-    results.slice(0, 6).forEach(function (entry) {
-      if (!entry || typeof entry !== 'object') return;
-      const latitude = Number(entry.latitude);
-      const longitude = Number(entry.longitude);
-      const name = clipText(entry.name, 80);
-      if (!name || !Number.isFinite(latitude) || !Number.isFinite(longitude)) return;
-      const region = clipText(entry.admin1, 60);
-      const country = clipText(entry.country, 60);
-      places.push({
-        id: String(entry.id || name + '@' + latitude + ',' + longitude),
-        name: name,
-        region: region,
-        country: country,
-        latitude: latitude,
-        longitude: longitude,
-        label: [name, region, country].filter(Boolean).join(' · ')
-      });
-    });
-    return places;
-  }
-
-  /* ----------------------------------------------------------------------- *
-   * Widget plumbing
-   * ------------------------------------------------------------------------ */
-
-  /** The place the weather card last showed, or `null` if it never had one. */
-  function readWeatherPlace(storage) {
-    if (!storage) return null;
-    try {
-      const raw = storage.getItem(STORAGE_KEYS.weatherPlace);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      const latitude = Number(parsed && parsed.latitude);
-      const longitude = Number(parsed && parsed.longitude);
-      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
-      return {
-        name: clipText(parsed.name, 80) || 'Selected place',
-        region: clipText(parsed.region, 60),
-        country: clipText(parsed.country, 60),
-        latitude: latitude,
-        longitude: longitude
-      };
-    } catch (error) {
-      return null; // A cleared or hand-edited cache is "no place", not a crash.
-    }
-  }
-
-  function writeWeatherPlace(storage, place) {
-    if (!storage || !place) return;
-    try {
-      storage.setItem(
-        STORAGE_KEYS.weatherPlace,
-        JSON.stringify({
-          name: place.name,
-          region: place.region || '',
-          country: place.country || '',
-          latitude: place.latitude,
-          longitude: place.longitude
-        })
-      );
-    } catch (error) {
-      /* Private mode; the card still works for this session. */
-    }
-  }
-
-  function readWeatherUnit(storage) {
-    try {
-      return normalizeTemperatureUnit(storage && storage.getItem(STORAGE_KEYS.weatherUnit));
-    } catch (error) {
-      return 'celsius';
-    }
-  }
-
-  function writeWeatherUnit(storage, unit) {
-    try {
-      if (storage) storage.setItem(STORAGE_KEYS.weatherUnit, normalizeTemperatureUnit(unit));
-    } catch (error) {
-      /* Private mode. */
-    }
-  }
-
-  /**
-   * `fetch` with a hard timeout, used by the weather card and nothing else.
-   *
-   * Only ever called after the card is opened, so a wallpaper nobody touches makes
-   * no request at all. `credentials: 'omit'` keeps the request anonymous — it
-   * carries no cookie from this app, because there is nothing to authenticate.
-   */
-  function fetchJson(win, url, timeoutMs) {
-    if (typeof win.fetch !== 'function') {
-      return Promise.reject(new Error('This host cannot reach the network.'));
-    }
-    const Controller = typeof win.AbortController === 'function' ? win.AbortController : null;
-    const controller = Controller ? new Controller() : null;
-    const timer = win.setTimeout(function () {
-      if (controller) controller.abort();
-    }, timeoutMs || WEATHER_TIMEOUT_MS);
-    const options = controller
-      ? { signal: controller.signal, credentials: 'omit' }
-      : { credentials: 'omit' };
-
-    return win.fetch(url, options).then(
-      function (response) {
-        win.clearTimeout(timer);
-        if (!response.ok) throw new Error('The service answered ' + response.status + '.');
-        return response.json();
-      },
-      function (error) {
-        win.clearTimeout(timer);
-        throw error;
-      }
-    );
-  }
-
-  /** Turn whatever the network threw into a sentence the card can show. */
-  function describeFetchError(error) {
-    if (error && error.name === 'AbortError') return 'The service took too long to answer.';
-    if (error && typeof error.message === 'string' && error.message) return error.message;
-    return 'The request failed.';
-  }
 
   /**
    * Hand a URL to the operating system.
@@ -3566,9 +2806,9 @@
       persistConfig(cache, storage);
       render({ animate: true });
 
-      // The satellites are not the greeting's to rebuild: hand the switches to the widget
-      // controller, which knows how to hide, unplace, dismiss and re-deal them.
-      if (widgetsRef && WIDGET_SETTING_FIELDS.some(function (field) { return touched[field]; })) {
+      // The orbit is not the greeting's to rebuild: hand the master switch to the apps
+      // controller, which knows how to unplace, dismiss and re-deal it.
+      if (widgetsRef && touched.widgets) {
         widgetsRef.applyConfig(next);
       }
     }
@@ -3715,235 +2955,89 @@
     };
   }
 
-  /** YouTube Music stations — searches, because YouTube Music has no public API. */
-  const MUSIC_STATIONS = Object.freeze([
-    Object.freeze({ title: 'Deep focus', meta: 'Instrumental mixes for long work', query: 'deep focus' }),
-    Object.freeze({ title: 'Lo-fi beats', meta: 'Slow, warm, no vocals', query: 'lofi beats' }),
-    Object.freeze({ title: 'Coding mode', meta: 'Synth, house and driving beats', query: 'coding playlist' }),
-    Object.freeze({ title: 'Jazz in the background', meta: 'Standards and café trios', query: 'jazz background' }),
-    Object.freeze({ title: 'Piano and rain', meta: 'Quiet keys for reading', query: 'piano rain' })
-  ]);
-
-  /** The Google News desks the card offers; `''` is the front page itself. */
-  const NEWS_DESKS = Object.freeze([
-    Object.freeze({ title: 'Top stories', meta: 'The front page as Google ranks it', query: '' }),
-    Object.freeze({ title: 'Technology', meta: 'Hardware, software and the industry', query: 'technology' }),
-    Object.freeze({ title: 'World', meta: 'Global reporting as it lands', query: 'world news' }),
-    Object.freeze({ title: 'Business', meta: 'Markets, deals and the economy', query: 'business' }),
-    Object.freeze({ title: 'Science', meta: 'Space, climate and research', query: 'science' })
-  ]);
-
-  /**
-   * Weather glyphs, as SVG path data in a 24×24 box.
-   *
-   * Inline paths rather than four image files: the card must render the same in a
-   * host with no network, no extra request and no second asset to keep in sync.
-   */
-  const WEATHER_GLYPHS = Object.freeze({
-    clear:
-      '<circle cx="12" cy="12" r="4.1"/>' +
-      '<path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M18.7 5.3l-1.6 1.6M6.9 17.1l-1.6 1.6"/>',
-    partly:
-      '<circle cx="8.1" cy="8.2" r="2.9"/>' +
-      '<path d="M8.1 2.6v1.5M2.6 8.2h1.5M4.2 4.3l1 1M12.1 4.3l-1 1"/>' +
-      '<path d="M17.9 19.6H9.6a4.3 4.3 0 0 1 .4-8.6 5.4 5.4 0 0 1 10.2 1.5 3.6 3.6 0 0 1-2.3 7.1Z"/>',
-    cloud:
-      '<path d="M17.4 18.6H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z"/>',
-    rain:
-      '<path d="M17.4 15.6H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z"/>' +
-      '<path d="M9 19l-1 2M13 19l-1 2M17 19l-1 2"/>',
-    snow:
-      '<path d="M17.4 15.6H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z"/>' +
-      '<path d="M9 19v2M8.1 19.5l1.8 1M9.9 19.5l-1.8 1M15 19v2M14.1 19.5l1.8 1M15.9 19.5l-1.8 1"/>',
-    fog:
-      '<path d="M17.4 14.6H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z"/>' +
-      '<path d="M5 20h14M8 22.5h8"/>',
-    storm:
-      '<path d="M17.4 15H9.1a6.6 6.6 0 1 1 6.3-8.5h2a4.3 4.3 0 0 1 0 8.5Z"/>' +
-      '<path d="M13.4 17.5l-3 3.5h3l-1.4 3"/>'
-  });
-
-  /**
-   * Six cities the weather card can be pointed at with one click.
-   *
-   * The native desktop never gives the page the keyboard — the wallpaper window is not
-   * allowed to become key, which is what keeps every keystroke going to the app you are
-   * actually using — so a card that could only be pointed at a place by typing would be
-   * a dead end there. Coordinates come from the same geocoder the search uses, so a
-   * picked city and a searched one are the same shape.
-   */
-  const WEATHER_CITIES = Object.freeze([
-    Object.freeze({
-      name: 'London',
-      region: 'England',
-      country: 'United Kingdom',
-      latitude: 51.5074,
-      longitude: -0.1278
-    }),
-    Object.freeze({
-      name: 'New York',
-      region: 'New York',
-      country: 'United States',
-      latitude: 40.7128,
-      longitude: -74.006
-    }),
-    Object.freeze({
-      name: 'San Francisco',
-      region: 'California',
-      country: 'United States',
-      latitude: 37.7749,
-      longitude: -122.4194
-    }),
-    Object.freeze({
-      name: 'São Paulo',
-      region: 'São Paulo',
-      country: 'Brazil',
-      latitude: -23.5505,
-      longitude: -46.6333
-    }),
-    Object.freeze({
-      name: 'Tokyo',
-      region: 'Tokyo',
-      country: 'Japan',
-      latitude: 35.6895,
-      longitude: 139.6917
-    }),
-    Object.freeze({
-      name: 'Sydney',
-      region: 'New South Wales',
-      country: 'Australia',
-      latitude: -33.8688,
-      longitude: 151.2093
-    })
-  ]);
-
   /** The arrow that marks a row as leaving the wallpaper for the browser. */
   const ARROW_MARKUP =
     '<svg class="widget-row-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8"/></svg>';
 
-  /**
-   * The manager card's badge.
-   *
-   * Every other card clones the glyph of the satellite that opened it, but the manager has
-   * no satellite any more: the `+` lives in the card header, so the badge draws the same
-   * mark rather than borrowing one from the ring.
-   */
-  const SERVICES_BADGE_MARKUP =
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
-
-  function weatherGlyphMarkup(name) {
-    const paths = WEATHER_GLYPHS[name] || WEATHER_GLYPHS.cloud;
-    return '<svg class="widget-weather-glyph" viewBox="0 0 24 24" aria-hidden="true">' + paths + '</svg>';
-  }
-
   /* ----------------------------------------------------------------------- *
-   * Widget controller
+   * Apps controller
    * ------------------------------------------------------------------------ */
 
   /**
-   * Wire the four satellites to the frosted card.
+   * Wire the `+` satellite and every app the user keeps to the frosted Apps card.
    *
-   * One controller for every provider, because the parts that matter — which card
-   * is open, who had focus, where the native host may take a click, Escape and
-   * click-outside — are shared. The providers below only paint into the card body.
+   * One controller, because the parts that matter — whether the card is up, who had
+   * focus, where the native host may take a click, Escape and click-outside — belong to
+   * the wallpaper rather than to an app. An app is not a card: it is a bare glyph that
+   * leaves for the default browser (`openExternal`), and the card is the one place apps
+   * are added, launched and forgotten.
    *
-   * `options.config` is the resolved configuration: the master `widgets` switch and the
-   * four per-satellite flags decide what is on the desktop from the first frame, and
-   * `applyConfig()` keeps it in step with every later push.
+   * `options.config` is the resolved configuration: the master `widgets` switch decides
+   * whether the orbit is on the desktop from the first frame, and `applyConfig()` keeps
+   * it in step with every later push.
    *
-   * Returns `null` when the page has no satellites at all (an older index.html, a
-   * host page that stripped them): a wallpaper without widgets is still a
-   * wallpaper, and the greeting must not fail because of a missing button.
+   * Returns `null` when the page has no orbit at all (an older index.html, a host page
+   * that stripped it): a wallpaper without apps is still a wallpaper, and the greeting
+   * must not fail because of a missing button.
    */
   function createWidgets(win, doc, options) {
     const bar = doc.getElementById('widget-bar');
     const backdrop = doc.getElementById('widget-backdrop');
     const modal = doc.getElementById('widget-modal');
     const body = doc.getElementById('widget-modal-body');
-    const titleNode = doc.getElementById('widget-modal-title');
-    const captionNode = doc.getElementById('widget-modal-caption');
-    const badgeNode = doc.getElementById('widget-modal-badge');
     const closeNode = doc.getElementById('widget-modal-close');
-    // The header's own action: the way into the shortcuts manager, and the way back out of
-    // it. Optional on purpose — a host page that predates it still gets its four cards.
-    const servicesActionNode = doc.getElementById('widget-modal-services');
-    if (!bar || !backdrop || !modal || !body || !titleNode || !closeNode) return null;
+    if (!bar || !backdrop || !modal || !body) return null;
 
-    // The four built-in satellites are the ones the markup declares; the shortcuts are
-    // created from `localStorage` below. Nothing else is ever in the ring: the way to add
-    // one is a card control now (`#widget-modal-services`), not a satellite.
-    const buttons = Array.prototype.slice.call(bar.querySelectorAll('.widget-btn[data-widget]'));
-    if (buttons.length === 0) return null;
+    // The one control the markup declares. Every other satellite in the ring is created
+    // from `state.services` below, so the orbit and the card's list can never disagree.
+    const addButton = bar.querySelector('.widget-btn-add');
+    if (!addButton) return null;
     const serviceButtons = [];
 
     const storage = getStorage(win);
     const config = (options && options.config) || {};
+    // The hand belongs to the desktop, not to the page load: the seed that dealt it is
+    // read back before the first deal, so a reload, a relaunch or another app opening
+    // never rolls a new constellation. A fresh install rolls one seed and keeps it.
+    const storedSeed = readWidgetSeed(storage);
+    const seed = storedSeed || Math.floor(Math.random() * 0xfffffffe) + 1;
+    if (!storedSeed) writeWidgetSeed(storage, seed);
     const state = {
-      // The satellites' master switch. Off means "not on this desktop": nothing is
-      // placed, nothing is reported as clickable and the page holds no card.
+      // The orbit's master switch. Off means "not on this desktop": nothing is placed,
+      // nothing is reported as clickable and the card cannot be opened.
       enabled: config.widgets !== false,
       // Whether the first deal has happened yet: the initial `applyConfig()` call sets
-      // the per-satellite flags up before anything is measured, so it must not deal.
+      // the master flag up before anything is measured, so it must not deal.
       started: false,
-      activeId: '',
-      // The widget the manager was opened from, so the header's arrow can hand the user
-      // back to the card they were reading instead of dropping them at the wallpaper.
-      returnWidgetId: '',
+      // Whether the Apps card is up. There is exactly one card, so a boolean is the whole
+      // of it; `isOpen()` and `activeId()` are its read-only spellings.
+      open: false,
       lastFocus: null,
       hitFrame: 0,
       revealed: false,
       textObserver: null,
-      // The user's own shortcuts: read once from `localStorage`, then owned here. The
-      // draft and the message belong to the manager card, so a half-typed address and a
-      // validation line survive the card re-rendering under them.
+      // The user's own apps: read once from `localStorage`, then owned here. The draft and
+      // the message belong to the card, so a half-typed address and a validation line
+      // survive the card re-rendering under them.
       services: readCustomServices(storage),
-      // How often each satellite has been opened: read once, then kept in step with every
+      // How often each app has been launched: read once, then kept in step with every
       // click. It is the ranking the S/M/L footprints are drawn from.
       usage: readWidgetUsage(storage),
       serviceError: '',
       serviceDraft: { title: '', url: '' },
-      // One arrangement per page load: the wallpaper is dealt a fresh constellation
-      // every time it starts, and keeps it until the desktop changes shape.
-      seed: Math.floor(Math.random() * 0xfffffffe) + 1,
-      weather: {
-        place: readWeatherPlace(storage),
-        unit: readWeatherUnit(storage),
-        data: null,
-        // idle · empty · searching · choosing · loading · ready · error
-        status: 'idle',
-        error: '',
-        query: '',
-        matches: [],
-        fetchedAt: 0,
-        token: 0
-      }
+      // One arrangement per desktop: the seed is rolled by the first run — or by a new
+      // app — and kept, so the page never deals itself a different wallpaper.
+      seed: seed,
+      // The spot each satellite wears, in viewport pixels, keyed by the id it is counted
+      // under. Read back with the seed, so a reload wears the same hand.
+      positions: readWidgetPositions(storage),
+      // The viewport the hand was dealt on: a screen that changes shape is dealt a hand
+      // that fits inside it, rather than one that hangs off the edge.
+      viewportWidth: win.innerWidth || 0,
+      viewportHeight: win.innerHeight || 0
     };
 
-    function widgetById(id) {
-      for (let index = 0; index < WIDGETS.length; index += 1) {
-        if (WIDGETS[index].id === id) return WIDGETS[index];
-      }
-      return null;
-    }
-
-    function buttonById(id) {
-      for (let index = 0; index < buttons.length; index += 1) {
-        if (buttons[index].getAttribute('data-widget') === id) return buttons[index];
-      }
-      return null;
-    }
-
-    /**
-     * The built-in satellites on the desktop right now; `hidden` is the settings' doing.
-     *
-     * Shortcuts are not in here: they have no `data-widget`, because a widget id is what
-     * the per-satellite switches and the host report are keyed on.
-     */
-    function visibleBuiltins() {
-      return buttons.filter(function (button) {
-        return !button.hidden;
-      });
-    }
+    /* --- tiny DOM helpers -------------------------------------------------- */
 
     function el(tag, className, text) {
       const node = doc.createElement(tag);
@@ -3964,31 +3058,12 @@
       return el('p', 'widget-note', text);
     }
 
-    /** The loading/empty/error line: same box, so a failed fetch does not resize the card. */
+    /** The card's one message line: a refusal is the same box in a warmer ink. */
     function stateRow(text, options) {
       const settings = options || {};
       const row = el('p', 'widget-state' + (settings.error ? ' widget-state--error' : ''));
-      if (settings.busy) row.appendChild(el('span', 'widget-spinner'));
       row.appendChild(el('span', null, text));
       return row;
-    }
-
-    /**
-     * A row that opens `url` in the default browser. The page never navigates
-     * itself, and the arrow is the promise that the destination is elsewhere.
-     */
-    function actionRow(title, meta, url) {
-      const button = el('button', 'widget-row');
-      button.type = 'button';
-      const text = el('span', 'widget-row-text');
-      text.appendChild(el('span', 'widget-row-title', title));
-      if (meta) text.appendChild(el('span', 'widget-row-meta', meta));
-      button.appendChild(text);
-      button.insertAdjacentHTML('beforeend', ARROW_MARKUP);
-      button.addEventListener('click', function () {
-        openExternal(win, url);
-      });
-      return button;
     }
 
     function rowList(rows) {
@@ -3999,11 +3074,11 @@
       return list;
     }
 
-    /* --- custom services --------------------------------------------------- */
+    /* --- the orbit --------------------------------------------------------- */
 
-    /** Every element in the orbit: the built-in satellites and the user's shortcuts. */
+    /** Every element in the orbit: the `+`, then the user's apps in list order. */
     function orbitElements() {
-      return buttons.concat(serviceButtons);
+      return [addButton].concat(serviceButtons);
     }
 
     /** The orbit elements on the desktop right now; `hidden` is the settings' doing. */
@@ -4018,12 +3093,11 @@
     /**
      * The id a satellite's opens are counted under.
      *
-     * A built-in is its widget id and a shortcut is its `data-service` handle; a control
-     * with neither is not an app and is never ranked by how often it was pressed.
+     * An app is its `data-service` handle. The `+` has none and is deliberately left out
+     * of the ranking: adding an app is not using one, and letting it in would drag the
+     * least-opened app's count to zero and make a single open look like a hierarchy.
      */
     function usageIdOf(button) {
-      const widgetId = button.getAttribute('data-widget') || '';
-      if (widgetId) return widgetId;
       return button.getAttribute('data-service') || '';
     }
 
@@ -4031,8 +3105,7 @@
      * The S/M/L tier of each element in `elements`, in the same order.
      *
      * An element without an id is left out of the ranking altogether and wears the
-     * baseline: letting it in would drag the least-opened app's count to zero and make a
-     * single open look like a hierarchy over everything.
+     * baseline, so it never competes with the apps it sits beside.
      */
     function sizeTiers(elements) {
       const ids = elements.map(usageIdOf);
@@ -4060,19 +3133,20 @@
     }
 
     /**
-     * Count one open and deal again if it changed the hierarchy.
+     * Count one launch and wear the tiers it changed.
      *
-     * The footprints are what the user earns by using the wallpaper: open the same
-     * satellite a few times and it grows, leave one alone and it shrinks. Only a change
-     * of tier re-deals — an open that leaves every glyph where it was must not reshuffle
-     * the desktop out from under the card the user is reading.
+     * The footprints are what the user earns by using the wallpaper: launch the same app
+     * a few times and it grows, leave one alone and it shrinks. A tier change re-applies
+     * the hand — the glyph changes size where it stands, and nothing else on the desktop
+     * moves, which is what keeps the card the user is reading from being pulled out from
+     * under it.
      */
     function noteUsage(id) {
       if (!id) return;
       const before = sizeTiers(placedButtons()).join('');
       const tally = recordWidgetUsage(storage, id);
       // The store is the record whenever it works — so a host script that clears the
-      // tally is honoured on the next open — and the page's own copy is the fallback for
+      // tally is honoured on the next launch — and the page's own copy is the fallback for
       // a blocked `localStorage`, which still ranks what this session opened.
       const stored = readWidgetUsage(storage);
       state.usage = stored[normalizeWidgetUsageId(id)]
@@ -4081,7 +3155,7 @@
       if (sizeTiers(placedButtons()).join('') !== before) scatter();
     }
 
-    /** A shortcut's satellite: a bare glyph in the ring, exactly like a built-in one. */
+    /** An app's satellite: a bare glyph in the ring, exactly like the `+` beside it. */
     function createServiceButton(service) {
       const button = el('button', 'widget-btn widget-btn-service');
       button.type = 'button';
@@ -4090,9 +3164,9 @@
       button.title = service.title;
       button.setAttribute('aria-label', 'Open ' + service.title + ' in your browser');
 
-      // The drift is per-satellite: every shortcut breathes out of step with its
-      // neighbours, from values derived from its place in the list, so the orbit looks
-      // the same on every load instead of reshuffling.
+      // The drift is per-satellite: every app breathes out of step with its neighbours,
+      // from values derived from its place in the list, so the orbit looks the same on
+      // every load instead of reshuffling.
       const position = serviceButtons.length;
       const phase = (position * 3.7) % 13;
       const driftX = (position % 2 === 0 ? 1 : -1) * (0.12 + (position % 3) * 0.02);
@@ -4104,18 +3178,18 @@
       button.innerHTML = serviceGlyphMarkup(service);
       button.addEventListener('click', function (event) {
         event.preventDefault();
-        // A shortcut is not a card: it leaves for the default browser through the same
-        // native bridge the cards' link rows use, so the wallpaper never loads the site.
-        openExternal(win, service.url);
-        // …and it counts as a use like any other glyph, so the footprint follows how
-        // often it is actually reached for. Its handle is positional, like every
-        // shortcut's, so the tally follows the slot in the list.
-        noteUsage(service.id);
+        // An app is not a card: it leaves for the default browser through the same native
+        // bridge the card's own rows use, so the wallpaper never loads the site.
+        const opened = openExternal(win, service.url);
+        // …and it counts as a launch, so the footprint follows how often it is actually
+        // reached for. Its handle is positional, like every app's, so the tally follows
+        // the slot in the list.
+        if (opened) noteUsage(service.id);
       });
       return button;
     }
 
-    /** Rebuild the shortcut satellites from `state.services`, in list order. */
+    /** Rebuild the app satellites from `state.services`, in list order. */
     function rebuildServiceButtons() {
       while (serviceButtons.length > 0) {
         const stale = serviceButtons.pop();
@@ -4129,23 +3203,29 @@
     }
 
     /**
-     * Adopt a new list: cache it, rebuild the ring and deal the satellites again.
+     * Adopt a new list: cache it, rebuild the ring and — when the list grew — deal the
+     * satellites again.
      *
-     * The manager card is rebuilt in place when it is the card that asked, so a
-     * delete disappears from the list the moment it is pressed and the ring closes the
-     * gap behind it.
+     * A new app is the only thing that rearranges the desktop: it rolls a new seed and
+     * deals the whole orbit around the newcomer. An app that was removed leaves every
+     * other glyph on exactly the pixels it was wearing, and the card is rebuilt in place
+     * when it is the card that asked, so a delete disappears from the list the moment it
+     * is pressed without the ring closing the gap behind it.
      */
-    function commitServices(next) {
+    function commitServices(next, options) {
+      const settings = options || {};
       state.services = next.slice(0, MAX_CUSTOM_SERVICES);
       writeCustomServices(storage, state.services);
       rebuildServiceButtons();
-      if (state.activeId === SERVICE_MANAGER_ID) renderWidget(SERVICE_MANAGER_ID);
-      scatter();
-      if (state.activeId === SERVICE_MANAGER_ID) refocusManagerField();
+      if (state.open) renderCard();
+      scatter({ isNewApp: Boolean(settings.isNewApp) });
+      // The caret goes back to the first field when the form is what committed, so a
+      // second app can be typed without reaching for the mouse again.
+      if (state.open && settings.focus) refocusAddField();
       return state.services;
     }
 
-    /** Add a shortcut from the card or a host script; `null` when it cannot be added. */
+    /** Add an app from a host script or the console; `null` when it cannot be added. */
     function addService(title, url) {
       if (state.services.length >= MAX_CUSTOM_SERVICES) return null;
       const service = createCustomService(title, url, { index: state.services.length + 1 });
@@ -4154,22 +3234,34 @@
         return existing.url === service.url;
       });
       if (duplicate) return null;
-      commitServices(state.services.concat([service]));
+      commitServices(state.services.concat([service]), { isNewApp: true });
       return service;
     }
 
-    /** Forget one shortcut. Returns whether the list changed. */
+    /** Forget one app. Returns whether the list changed. */
     function removeService(id) {
       const next = state.services.filter(function (service) {
         return service.id !== id;
       });
       if (next.length === state.services.length) return false;
+      // The app takes its spot with it; its neighbours keep exactly theirs.
+      state.positions = withoutWidgetPosition(state.positions, id);
+      writeWidgetPositions(storage, state.positions);
       commitServices(next);
       return true;
     }
 
+    /** `true` while an address is already on the desktop. */
+    function hasServiceUrl(url) {
+      const address = normalizeServiceUrl(url);
+      if (!address) return false;
+      return state.services.some(function (service) {
+        return service.url === address;
+      });
+    }
+
     /** Put the caret back in the first field after the card rebuilt itself. */
-    function refocusManagerField() {
+    function refocusAddField() {
       const field = body.querySelector('.widget-input');
       if (!field || typeof field.focus !== 'function') return;
       try {
@@ -4235,26 +3327,32 @@
     }
 
     /**
-     * Deal the satellites a hand.
+     * Wear the hand the desktop was dealt.
      *
-     * Once per page load, then again only when the wallpaper changes shape: a window
-     * resize re-deals from the same seed, so the new viewport gets an arrangement
-     * with the same character rather than a reshuffle. Below the breakpoint style.css
-     * docks them in a row, and no inline position is written at all — the properties
-     * are removed and the media query decides.
+     * The arrangement belongs to the desktop, not to the page load. The seed that dealt
+     * it and the spot each glyph wears are cached (`dynawall.widgetSeed`,
+     * `dynawall.widgetPositions`), and every deal that is not a new app re-applies them
+     * exactly: a reload, an app launch, a card closing, a tier change or an app being
+     * removed never moves a glyph the user did not ask to move.
      *
-     * Switched off there is nothing to place (and no fade-in to arm), so the deal
-     * waits until the master switch comes back on and `applyConfig()` calls it again.
+     * `options.isNewApp` is the one thing that changes the composition: it rolls a new
+     * seed and deals every satellite again, so the newcomer has a place among them and
+     * the ring closes around the larger hand. A screen that changed shape is dealt again
+     * from the same seed — inside its new bounds and clear of the greeting — rather than
+     * reshuffled, and a greeting that grew over a satellite asks for the same re-deal
+     * (`options.reflow`).
      *
-     * Only the satellites that are on the desktop are dealt: the ring is sized for the
-     * set actually on screen, so hiding YouTube — or adding a shortcut — closes or opens
-     * a gap instead of leaving one.
+     * Below the breakpoint style.css docks them in a row, and no inline position is
+     * written at all — the properties are removed and the media query decides.
      *
-     * Each one is dealt at its own footprint: the S, M and L tiers the click tally earned
-     * are applied before anything is measured, so the engine knows how much room every
-     * glyph really needs and can balance the two flanks by the weight on them.
+     * Switched off there is nothing to place (and no fade-in to arm), so the deal waits
+     * until the master switch comes back on and `applyConfig()` calls it again.
+     *
+     * Each one is dealt at its own footprint: the S, M and L tiers the launch tally
+     * earned are applied before anything is measured, so the engine knows how much room
+     * every glyph really needs and can balance the two flanks by the weight on them.
      */
-    function scatter() {
+    function scatter(options) {
       if (!state.enabled) return;
 
       reveal();
@@ -4282,10 +3380,42 @@
         return;
       }
 
+      const settings = options || {};
       const width = win.innerWidth || 0;
       const height = win.innerHeight || 0;
       const size = satelliteSize();
       if (width <= 0 || height <= 0 || size <= 0) return;
+
+      // A hand still the shape of this desktop is worn as it is: same pixels, same
+      // glyphs, same wallpaper. This is the path every open, every tier change, every
+      // removal and every reload takes — a new footprint or a new card must never
+      // rearrange the desktop out from under the user.
+      const resized = width !== state.viewportWidth || height !== state.viewportHeight;
+      const fits =
+        !settings.isNewApp &&
+        !settings.reflow &&
+        !resized &&
+        coversWidgetPositions(state.positions, active.map(usageIdOf), {
+          width: width,
+          height: height
+        });
+      if (fits) {
+        active.forEach(function (button) {
+          const spot = widgetPositionOf(state.positions, usageIdOf(button));
+          if (!spot) return;
+          button.style.setProperty('--widget-x', spot.x + 'px');
+          button.style.setProperty('--widget-y', spot.y + 'px');
+        });
+        scheduleHitRegions();
+        return;
+      }
+
+      // A new app is a new composition: a fresh seed, so the whole orbit is dealt again
+      // around the newcomer instead of keeping a gap it was never part of.
+      if (settings.isNewApp) {
+        state.seed = Math.floor(Math.random() * 0xfffffffe) + 1;
+        writeWidgetSeed(storage, state.seed);
+      }
 
       // One footprint per glyph, in the order they are dealt. A satellite the browser has
       // not laid out yet falls back to the first measured one, so a single missing box
@@ -4324,12 +3454,23 @@
         seed: state.seed
       });
 
+      // Where each glyph ended up, keyed by the id it is counted under: this is the hand
+      // the next reload wears, the one a tier change re-applies and the one a removal
+      // edits instead of re-dealing.
+      const positions = {};
       active.forEach(function (button, index) {
         const point = points[index];
         if (!point) return;
-        button.style.setProperty('--widget-x', Math.round(point.x) + 'px');
-        button.style.setProperty('--widget-y', Math.round(point.y) + 'px');
+        const spot = { x: Math.round(point.x), y: Math.round(point.y) };
+        button.style.setProperty('--widget-x', spot.x + 'px');
+        button.style.setProperty('--widget-y', spot.y + 'px');
+        const id = usageIdOf(button);
+        if (id) positions[id] = spot;
       });
+      state.positions = positions;
+      state.viewportWidth = width;
+      state.viewportHeight = height;
+      writeWidgetPositions(storage, state.positions);
       scheduleHitRegions();
     }
 
@@ -4363,7 +3504,7 @@
     /**
      * Tell the host where the page is willing to take a click.
      *
-     * While no card is up the wallpaper window ignores the mouse entirely
+     * While the card is down the wallpaper window ignores the mouse entirely
      * (`ignoresMouseEvents` on macOS, a click-through desktop layer on Windows), which is
      * what keeps Finder drag-select, right-click, desktop icons and Mission Control
      * working. That also means the page never sees the cursor, so it cannot notice a
@@ -4372,14 +3513,14 @@
      * `HIT_PADDING` so the rim of a button — and its 0.3 rem drift — does not flicker in
      * and out.
      *
-     * While a card is open the whole viewport is reported, because the backdrop is
-     * itself a click target: clicking anywhere outside the card closes it. That report is
-     * also what hands the display its mouse and keyboard on macOS — the host stops being
-     * click-through for as long as a card is up, so the field under the pointer takes a
+     * While the card is up the whole viewport is reported, because the backdrop is itself
+     * a click target: clicking anywhere outside the card closes it. That report is also
+     * what hands the display its mouse and keyboard on macOS — the host stops being
+     * click-through for as long as the card is up, so the field under the pointer takes a
      * caret and the typing (and `Esc`, and `⌘V`) reaches the page.
      *
-     * With the satellites switched off nothing is reported at all: the host then keeps
-     * every click for the desktop, which is exactly what "no widgets" should mean.
+     * With the orbit switched off nothing is reported at all: the host then keeps every
+     * click for the desktop, which is exactly what "no apps" should mean.
      */
     function publishHitRegions() {
       const handlers = win.webkit && win.webkit.messageHandlers;
@@ -4388,7 +3529,7 @@
       const webview2 = webview && typeof webview.postMessage === 'function';
       if (!webkit && !webview2) return;
 
-      const open = state.enabled && Boolean(state.activeId);
+      const open = state.enabled && state.open;
       const width = win.innerWidth || 0;
       const height = win.innerHeight || 0;
       const regions = [];
@@ -4396,8 +3537,8 @@
       if (open) {
         regions.push([0, 0, width, height]);
       } else if (state.enabled) {
-        // Every glyph on the orbit is a target — the four built-ins and each shortcut —
-        // and nothing else is: the rest of the wallpaper stays click-through.
+        // Every glyph on the orbit is a target — the `+` and each app — and nothing else
+        // is: the rest of the wallpaper stays click-through.
         placedButtons().forEach(function (button) {
           const rect = button.getBoundingClientRect();
           if (!rect || rect.width <= 0 || rect.height <= 0) return;
@@ -4451,9 +3592,8 @@
       const node = doc.elementFromPoint(px, py);
       if (!node || typeof node.dispatchEvent !== 'function') return false;
 
-      // A synthetic click has no default action: focus the control by hand, so a
-      // field in the weather card takes the keystrokes the host forwards and the
-      // arrow keys still walk the link rows.
+      // A synthetic click has no default action: focus the control by hand, so a field in
+      // the Apps card takes the keystrokes the host forwards.
       if (typeof node.focus === 'function') {
         try {
           node.focus({ preventScroll: true });
@@ -4465,8 +3605,8 @@
       // The point lands on the deepest element under it, which is rarely the control
       // itself: a row's title is a `<span>` inside its `<button>`. Ask the owning button
       // for a real click — `click()` runs the activation behaviour (submitting a form
-      // included) that a dispatched `MouseEvent` never does, which is what makes
-      // "Search" and "Find" work when a click arrives this way.
+      // included) that a dispatched `MouseEvent` never does, which is what makes "Add"
+      // work when a click arrives this way.
       const control = buttonAt(node);
       if (control) {
         control.click();
@@ -4512,91 +3652,8 @@
 
     /* --- open & close ------------------------------------------------------ */
 
-    /** The satellite's own glyph, cloned into the card header. */
-    function badgeMarkupFor(id) {
-      // The manager has no satellite to clone: it wears the `+` that adds a shortcut — the
-      // same mark as the header action that opens it, exactly like a provider's card and
-      // its satellite.
-      if (id === SERVICE_MANAGER_ID) return SERVICES_BADGE_MARKUP;
-      for (let index = 0; index < buttons.length; index += 1) {
-        const button = buttons[index];
-        if (button.getAttribute('data-widget') !== id) continue;
-        const glyph = button.querySelector('svg');
-        return glyph ? glyph.outerHTML : '';
-      }
-      return '';
-    }
-
-    /**
-     * The header action, in whichever of its two jobs the card needs right now.
-     *
-     * On a widget it is `+` — "Manage shortcuts" — and on the manager it is the way back to
-     * the card that led there. The label names the destination, so the arrow is never a
-     * riddle: `Back to YouTube`, or a plain `Back` when the manager was opened on its own
-     * (there is then nothing behind it, and pressing it simply closes the card).
-     */
-    function syncServicesAction() {
-      if (!servicesActionNode) return;
-      const manager = state.activeId === SERVICE_MANAGER_ID;
-      const behind = manager ? widgetById(state.returnWidgetId) : null;
-      const label = manager ? (behind ? 'Back to ' + behind.title : 'Back') : 'Manage shortcuts';
-      // One attribute for the stylesheet to cross-fade the `+` and the arrow with, and the
-      // same words for the pointer and for a screen reader.
-      servicesActionNode.setAttribute('data-mode', manager ? 'back' : 'add');
-      servicesActionNode.title = label;
-      servicesActionNode.setAttribute('aria-label', label);
-    }
-
-    function openWidget(id) {
-      const manager = id === SERVICE_MANAGER_ID;
-      const widget = manager ? null : widgetById(id);
-      if (!manager && !widget) return false;
-      // A satellite that was switched off is not on the desktop, so there is nothing to
-      // open — a host script asking for it gets `false` instead of a card with no anchor.
-      const button = buttonById(id);
-      if (button && button.hidden) return false;
-      if (state.activeId === id) return true;
-
-      // A switch between two views of the same card is not an open: the dialog is already
-      // up, so its focus home — the satellite that brought it up — must survive the swap.
-      const wasOpen = Boolean(state.activeId);
-
-      // Coming from a card into the manager remembers that card, so the header's arrow can
-      // hand the user straight back. Any other open forgets it: a card never points behind
-      // itself.
-      if (manager) {
-        if (wasOpen && state.activeId !== SERVICE_MANAGER_ID) state.returnWidgetId = state.activeId;
-      } else {
-        state.returnWidgetId = '';
-      }
-
-      state.activeId = id;
-      if (!wasOpen) state.lastFocus = doc.activeElement;
-      // A card always opens clean: no message left over from the last time it was up,
-      // and an empty form rather than the half-typed address the user abandoned.
-      state.serviceError = '';
-      state.serviceDraft = { title: '', url: '' };
-
-      titleNode.textContent = widget ? widget.title : 'Services';
-      if (captionNode) captionNode.textContent = widget ? widget.caption : 'Shortcuts in your orbit';
-      if (badgeNode) badgeNode.innerHTML = badgeMarkupFor(id);
-      buttons.forEach(function (button) {
-        button.setAttribute(
-          'aria-expanded',
-          button.getAttribute('data-widget') === id ? 'true' : 'false'
-        );
-      });
-      // The header's action belongs to the card, not the orbit: it says where it goes right
-      // now — `+` on a widget, the way back on the manager.
-      syncServicesAction();
-
-      backdrop.classList.add('is-open');
-      backdrop.setAttribute('aria-hidden', 'false');
-      renderWidget(id);
-      scheduleHitRegions();
-
-      // The dialog itself takes focus: Tab then starts at the close button and a
-      // screen reader announces the card before its contents.
+    /** Hand the focus to the dialog: Tab then starts at the close button, or `Esc` leaves. */
+    function focusModal() {
       try {
         modal.focus({ preventScroll: true });
       } catch (error) {
@@ -4606,48 +3663,80 @@
           /* A host that refuses focus; the card still works with the mouse. */
         }
       }
+    }
 
-      // An open is a use. It is written after the card is up, because the tally can
-      // re-deal the ring — and a card must never wait for the satellites behind it. A
-      // view switch inside an open card is not an open, and does not count.
-      if (button && !wasOpen) noteUsage(usageIdOf(button));
+    /** Give the focus back to whatever had it before the card came up — usually the `+`. */
+    function restoreFocus() {
+      const previous = state.lastFocus;
+      state.lastFocus = null;
+      if (!previous || typeof previous.focus !== 'function') return;
+      try {
+        previous.focus({ preventScroll: true });
+      } catch (error) {
+        try {
+          previous.focus();
+        } catch (ignored) {
+          /* Nothing left to restore. */
+        }
+      }
+    }
+
+    /**
+     * Put the Apps card up.
+     *
+     * There is one card and one way in — the `+` — so an open needs no id: it is the
+     * card, or it is nothing. `openWidget()` still takes one, because a host script asks
+     * for a card by name and `APPS_CARD_ID` is the only name that answers.
+     */
+    function openCard() {
+      if (state.open) return true;
+      state.open = true;
+      state.lastFocus = doc.activeElement;
+      // A card always opens clean: no message left over from the last time it was up, and
+      // an empty form rather than the half-typed address the user abandoned.
+      state.serviceError = '';
+      state.serviceDraft = { title: '', url: '' };
+      addButton.setAttribute('aria-expanded', 'true');
+      backdrop.classList.add('is-open');
+      backdrop.setAttribute('aria-hidden', 'false');
+      renderCard();
+      scheduleHitRegions();
+      focusModal();
       return true;
     }
 
-    function closeWidget() {
-      if (!state.activeId) return false;
-      state.activeId = '';
-      state.returnWidgetId = '';
+    function closeCard() {
+      if (!state.open) return false;
+      state.open = false;
+      addButton.setAttribute('aria-expanded', 'false');
       backdrop.classList.remove('is-open');
       backdrop.setAttribute('aria-hidden', 'true');
-      buttons.forEach(function (button) {
-        button.setAttribute('aria-expanded', 'false');
-      });
-      // A closed card must not keep a fetched forecast, a half-typed city or a
-      // focused field in the heap: the body is rebuilt on the next open.
+      // A closed card keeps neither a half-typed address nor a message in the heap: the
+      // body is rebuilt on the next open.
       state.serviceError = '';
       state.serviceDraft = { title: '', url: '' };
       clearBody();
       scheduleHitRegions();
-
-      const previous = state.lastFocus;
-      state.lastFocus = null;
-      if (previous && typeof previous.focus === 'function') {
-        try {
-          previous.focus({ preventScroll: true });
-        } catch (error) {
-          try {
-            previous.focus();
-          } catch (ignored) {
-            /* Nothing left to restore. */
-          }
-        }
-      }
+      restoreFocus();
       return true;
     }
 
     function clearBody() {
       while (body.firstChild) body.removeChild(body.firstChild);
+    }
+
+    /**
+     * Open the Apps card by its reserved id.
+     *
+     * A host script written for the old built-in providers asks for `music` or `weather`;
+     * there is no such card any more, so an unknown id is refused (`false`) instead of
+     * opening a card with no anchor. A switched-off orbit answers `false` too: the card
+     * is not on the desktop, so there is nothing to open.
+     */
+    function openWidget(id) {
+      if (id !== APPS_CARD_ID) return false;
+      if (!state.enabled) return false;
+      return openCard();
     }
 
     /* --- keyboard & focus -------------------------------------------------- */
@@ -4680,25 +3769,82 @@
     }
 
     function onKeyDown(event) {
-      if (!state.activeId) return;
+      if (!state.open) return;
       const key = event.key;
       if (key === 'Escape' || key === 'Esc') {
         event.preventDefault();
-        closeWidget();
+        closeCard();
         return;
       }
       if (key === 'Tab') trapFocus(event);
     }
 
-    /* --- providers --------------------------------------------------------- */
+    /* --- the card ---------------------------------------------------------- */
 
     /**
-     * The add form: a name, an address and nothing else.
+     * Paint the card: the presets, the form, and the apps the user keeps.
+     *
+     * The order is the gesture: press a chip if the app is one of the ones everybody
+     * keeps, type an address if it is not, then read the list back — one row per glyph,
+     * so adding an app and watching the orbit grow is the same act seen twice.
+     */
+    function renderCard() {
+      clearBody();
+      body.appendChild(section('Quick add', presetChips()));
+      body.appendChild(section('Or paste an address', serviceForm()));
+      if (state.serviceError) body.appendChild(stateRow(state.serviceError, { error: true }));
+      body.appendChild(
+        section(
+          'Your apps',
+          state.services.length > 0
+            ? rowList(state.services.map(serviceRow))
+            : stateRow('Nothing here yet. Press a chip above, or paste an address.')
+        )
+      );
+      body.appendChild(
+        note(
+          'An app opens in your default browser. The wallpaper never loads the site, so nothing about it is fetched until you press it.'
+        )
+      );
+    }
+
+    /**
+     * The one-tap presets.
+     *
+     * A preset is nothing but a name and an `https` address: pressing a chip runs the very
+     * same `addServiceFromValues()` a typed address does, so a preset can never create a
+     * record the form could not. A preset that is already on the desktop wears its state
+     * (pressed, and not pressable) instead of disappearing, so the row of chips never
+     * reflows under the pointer.
+     */
+    function presetChips() {
+      const chips = el('div', 'widget-chips');
+      APP_PRESETS.forEach(function (preset) {
+        const added = hasServiceUrl(preset.url);
+        const chip = el('button', 'widget-chip', preset.title);
+        chip.type = 'button';
+        chip.setAttribute('aria-pressed', added ? 'true' : 'false');
+        chip.setAttribute(
+          'aria-label',
+          added ? preset.title + ' is already on your desktop' : 'Add ' + preset.title
+        );
+        if (added) chip.disabled = true;
+        chip.addEventListener('click', function () {
+          addServiceFromValues(preset.title, preset.url);
+        });
+        chips.appendChild(chip);
+      });
+      return chips;
+    }
+
+    /**
+     * The add form: a name, an address and one button.
      *
      * The address is validated before it is stored (`normalizeServiceUrl`), and the
-     * message below says why when it is refused: a wallpaper opens nothing but a plain
-     * `https` page, so a paste of `javascript:` or a bare `github.com` is turned away
-     * instead of quietly repaired.
+     * message under the fields says why when it is refused: a wallpaper opens nothing but
+     * a plain `https` page, so a paste of `javascript:` or a bare `github.com` is turned
+     * away instead of quietly repaired. The name is optional — an address already knows
+     * what to call itself (`serviceHostLabel`).
      */
     function serviceForm() {
       const form = el('form', 'widget-service-form');
@@ -4706,7 +3852,7 @@
       const nameInput = el('input', 'widget-input');
       nameInput.type = 'text';
       nameInput.placeholder = 'Name (optional)';
-      nameInput.setAttribute('aria-label', 'Service name');
+      nameInput.setAttribute('aria-label', 'App name');
       nameInput.setAttribute('autocomplete', 'off');
       nameInput.spellcheck = false;
       nameInput.value = state.serviceDraft.title;
@@ -4714,100 +3860,78 @@
       const field = el('div', 'widget-field');
       const urlInput = el('input', 'widget-input');
       urlInput.type = 'url';
-      urlInput.placeholder = 'Paste an https address';
-      urlInput.setAttribute('aria-label', 'Service address');
+      urlInput.placeholder = 'https://example.com';
+      urlInput.setAttribute('aria-label', 'App address');
       urlInput.setAttribute('autocomplete', 'off');
       urlInput.spellcheck = false;
       urlInput.value = state.serviceDraft.url;
 
-      const submit = el('button', 'widget-submit', 'Add');
-      submit.type = 'submit';
+      const submitButton = el('button', 'widget-submit', 'Add');
+      submitButton.type = 'submit';
 
-      function submitService() {
+      function submitDraft() {
         state.serviceDraft = { title: nameInput.value, url: urlInput.value };
-        addServiceFromForm();
+        addServiceFromValues(state.serviceDraft.title, state.serviceDraft.url);
       }
 
       field.appendChild(urlInput);
-      field.appendChild(submit);
+      field.appendChild(submitButton);
       form.appendChild(nameInput);
       form.appendChild(field);
       form.addEventListener('submit', function (event) {
         event.preventDefault();
-        submitService();
+        submitDraft();
       });
-      // A replayed click is synthetic, so the button answers it itself instead of
-      // relying on an implicit form submission that never comes (the same reason the
-      // YouTube and weather cards wire theirs by hand).
-      submit.addEventListener('click', function (event) {
+      // A replayed click is synthetic, so the button answers it itself instead of relying
+      // on an implicit form submission that never comes.
+      submitButton.addEventListener('click', function (event) {
         event.preventDefault();
-        submitService();
+        submitDraft();
       });
       return form;
     }
 
-    /** Store the draft, or say why it cannot be stored. */
-    function addServiceFromForm() {
+    /**
+     * Store an app from its parts, or say why it cannot be stored.
+     *
+     * One path for the form and the preset chips, so the two can never disagree about
+     * what an app is: the address is validated, a duplicate is refused by address rather
+     * than by name, and the message below the fields says which of the two happened.
+     */
+    function addServiceFromValues(title, url) {
       if (state.services.length >= MAX_CUSTOM_SERVICES) {
-        failService('The orbit holds ' + MAX_CUSTOM_SERVICES + ' services. Remove one to add another.');
+        failService('The desktop holds ' + MAX_CUSTOM_SERVICES + ' apps. Remove one to add another.');
         return false;
       }
-      const url = normalizeServiceUrl(state.serviceDraft.url);
-      if (!url) {
+      const address = normalizeServiceUrl(url);
+      if (!address) {
         failService('Paste the whole address, beginning with https. Nothing else is ever opened.');
         return false;
       }
-      const name = clipText(state.serviceDraft.title, MAX_SERVICE_TITLE) || serviceHostLabel(url);
-      const service = createCustomService(name, url, { index: state.services.length + 1 });
+      const name = clipText(title, MAX_SERVICE_TITLE) || serviceHostLabel(address);
+      const service = createCustomService(name, address, { index: state.services.length + 1 });
       if (!service) {
-        failService('That address cannot be turned into a shortcut.');
+        failService('That address cannot be turned into an app.');
         return false;
       }
-      const duplicate = state.services.some(function (existing) {
-        return existing.url === service.url;
-      });
-      if (duplicate) {
-        failService('That address is already in your orbit.');
+      if (hasServiceUrl(service.url)) {
+        failService('That address is already on your desktop.');
         return false;
       }
       state.serviceError = '';
       state.serviceDraft = { title: '', url: '' };
-      commitServices(state.services.concat([service]));
+      commitServices(state.services.concat([service]), { isNewApp: true, focus: true });
       return true;
     }
 
     /** Show why the draft was refused, keeping what the user typed in the fields. */
     function failService(message) {
       state.serviceError = message;
-      renderWidget(SERVICE_MANAGER_ID);
-      refocusManagerField();
+      if (state.open) renderCard();
+      refocusAddField();
     }
 
-    /**
-     * The manager card: the form, the list, and one honest note about what a shortcut is.
-     *
-     * The list is the orbit, one row per glyph, so adding a service and watching the ring
-     * grow is the same gesture seen twice.
-     */
-    function renderServices() {
-      body.appendChild(section('Add a service', serviceForm()));
-      if (state.serviceError) body.appendChild(stateRow(state.serviceError, { error: true }));
-      body.appendChild(
-        section(
-          state.services.length > 0 ? 'In orbit' : 'Shortcuts',
-          state.services.length > 0
-            ? rowList(state.services.map(serviceRow))
-            : stateRow('No shortcuts yet — add one above.')
-        )
-      );
-      body.appendChild(
-        note(
-          'A shortcut opens in your default browser. The wallpaper never loads the site, so nothing about it is fetched until you click.'
-        )
-      );
-    }
-
-    /** One row: the shortcut's mark, its name and address, and the way to forget it. */
+    /** One row: the app's mark, its name and address, and the way to forget it. */
     function serviceRow(service) {
       const row = el('div', 'widget-service');
 
@@ -4823,13 +3947,13 @@
       open.appendChild(text);
       open.insertAdjacentHTML('beforeend', ARROW_MARKUP);
       open.addEventListener('click', function () {
-        openExternal(win, service.url);
+        if (openExternal(win, service.url)) noteUsage(service.id);
       });
 
       const remove = el('button', 'widget-service-remove');
       remove.type = 'button';
       remove.title = 'Remove ' + service.title;
-      remove.setAttribute('aria-label', 'Remove ' + service.title + ' from the orbit');
+      remove.setAttribute('aria-label', 'Remove ' + service.title + ' from the desktop');
       remove.insertAdjacentHTML('beforeend', REMOVE_MARKUP);
       remove.addEventListener('click', function () {
         removeService(service.id);
@@ -4840,450 +3964,27 @@
       return row;
     }
 
-    function renderWidget(id) {
-      clearBody();
-      if (id === SERVICE_MANAGER_ID) renderServices();
-      else if (id === 'music') renderMusic();
-      else if (id === 'news') renderNews();
-      else if (id === 'youtube') renderYouTube();
-      else if (id === 'weather') renderWeather();
-    }
-
-    function renderMusic() {
-      body.appendChild(
-        section(
-          'Stations',
-          rowList(
-            MUSIC_STATIONS.map(function (station) {
-              return actionRow(station.title, station.meta, buildYouTubeMusicSearchUrl(station.query));
-            })
-          )
-        )
-      );
-      body.appendChild(
-        section(
-          'Library',
-          rowList([
-            actionRow('Open YouTube Music', 'music.youtube.com', YOUTUBE_MUSIC_HOME),
-            actionRow(
-              'Liked music',
-              'Everything you have thumbed up',
-              withQuery(YOUTUBE_MUSIC_HOME + 'playlist', { list: 'LM' })
-            )
-          ])
-        )
-      );
-      body.appendChild(
-        note(
-          'YouTube Music publishes no API and ships no embeddable player, so a station opens in your browser. The wallpaper never frames YouTube or loads its artwork.'
-        )
-      );
-    }
-
-    function renderNews() {
-      body.appendChild(
-        section(
-          'Desks',
-          rowList(
-            NEWS_DESKS.map(function (desk) {
-              return actionRow(desk.title, desk.meta, buildGoogleNewsUrl(desk.query));
-            })
-          )
-        )
-      );
-      body.appendChild(
-        note(
-          'Google publishes no News API, and its RSS feed cannot be read from a local page, so each desk opens today’s Google News page in your browser rather than imitating a reader.'
-        )
-      );
-    }
-
-    function youtubeSearchForm() {
-      const form = el('form', 'widget-field');
-      const input = el('input', 'widget-input');
-      input.type = 'search';
-      input.placeholder = 'Search YouTube';
-      input.setAttribute('aria-label', 'Search YouTube');
-      input.setAttribute('autocomplete', 'off');
-      input.spellcheck = false;
-
-      const submit = el('button', 'widget-submit', 'Search');
-      submit.type = 'submit';
-
-      function submitSearch() {
-        const term = clipText(input.value, MAX_WIDGET_TEXT);
-        if (!term) {
-          input.focus();
-          return;
-        }
-        openExternal(win, buildYouTubeSearchUrl(term));
-      }
-
-      form.appendChild(input);
-      form.appendChild(submit);
-      form.addEventListener('submit', function (event) {
-        event.preventDefault();
-        submitSearch();
-      });
-      // A click the host replays into the page is synthetic, and a synthetic click on a
-      // submit button does not reliably submit its form. The button runs the search
-      // itself, so "Search" behaves the same for a real pointer, for `Enter` in the
-      // field and for a click that arrived through `clickAt()`.
-      submit.addEventListener('click', function (event) {
-        event.preventDefault();
-        submitSearch();
-      });
-      return form;
-    }
-
-    function renderYouTube() {
-      const region = regionCodeFromLocale(win.navigator ? win.navigator.language : '');
-      body.appendChild(
-        section(
-          'Jump to',
-          rowList([
-            actionRow(
-              'Trending now',
-              'What YouTube is pushing in your region',
-              buildYouTubeTrendingUrl(region)
-            ),
-            actionRow('Music', 'Charts, videos and live sessions', buildYouTubeSearchUrl('music')),
-            actionRow('Live', 'Streams happening right now', buildYouTubeSearchUrl('live')),
-            actionRow('Watch later', 'Your saved queue', YOUTUBE_HOME + 'playlist?list=WL')
-          ])
-        )
-      );
-      body.appendChild(section('Search', youtubeSearchForm()));
-      body.appendChild(
-        note(
-          'Playback happens in your browser: a YouTube player embedded in a local page is refused by the player itself, so a card that claimed to play here would only ever fail.'
-        )
-      );
-    }
-
-    /* --- weather ----------------------------------------------------------- */
-
-    function placeLabel(place) {
-      if (!place) return '';
-      return [place.name, place.region, place.country].filter(Boolean).join(' · ');
-    }
-
-    /**
-     * The weather card — the only provider with a request of its own, and it runs
-     * when the card is opened: never on load, never on a timer. The place and the
-     * unit belong to the user and live in localStorage; the forecast itself is kept
-     * for ten minutes in memory, so flipping between cards does not re-ask.
-     */
-    function renderWeather() {
-      const weather = state.weather;
-      const wrapper = el('div', 'widget-weather');
-
-      if (weather.status === 'searching') {
-        wrapper.appendChild(stateRow('Looking for “' + weather.query + '”…', { busy: true }));
-      } else if (weather.status === 'loading') {
-        wrapper.appendChild(stateRow('Reading the sky…', { busy: true }));
-      } else if (weather.status === 'error') {
-        wrapper.appendChild(stateRow(weather.error, { error: true }));
-        if (weather.place) {
-          const retry = el('button', 'widget-submit', 'Try again');
-          retry.type = 'button';
-          retry.addEventListener('click', function () {
-            loadWeather(true);
-          });
-          wrapper.appendChild(retry);
-        }
-      } else if (weather.data && weather.place) {
-        wrapper.appendChild(weatherNow(weather.data));
-        wrapper.appendChild(el('p', 'widget-weather-place', placeLabel(weather.place)));
-        wrapper.appendChild(metricGrid(weather.data));
-        wrapper.appendChild(hourStrip(weather.data));
-      } else if (weather.place) {
-        wrapper.appendChild(stateRow('No forecast for ' + placeLabel(weather.place) + ' yet.'));
-      } else {
-        wrapper.appendChild(stateRow('Search for a city to see its weather.'));
-      }
-
-      wrapper.appendChild(weather.status === 'choosing' ? placeChoices() : weatherSearchForm());
-      // A place can also be picked with one click: the field above is only typeable where
-      // the page has the keyboard (a card the host has focused, or a plain browser), and a
-      // desktop without one still has to reach a forecast.
-      if (!weather.place && weather.status !== 'choosing') {
-        wrapper.appendChild(section('Popular cities', placeRowList(WEATHER_CITIES)));
-      }
-      wrapper.appendChild(unitChips());
-      wrapper.appendChild(weatherFootnote());
-      body.appendChild(wrapper);
-
-      // First open with a saved place: ask now, and never again while it is fresh.
-      if (weather.status === 'idle') loadWeather(false);
-    }
-
-    function loadWeather(force) {
-      const weather = state.weather;
-      if (!weather.place) {
-        weather.status = 'empty';
-        return false;
-      }
-
-      const fresh = weather.data && Date.now() - weather.fetchedAt < WEATHER_FRESH_MS;
-      if (fresh && !force) {
-        weather.status = 'ready';
-        if (state.activeId === 'weather') renderWidget('weather');
-        return false;
-      }
-
-      const token = (weather.token += 1);
-      weather.status = 'loading';
-      weather.error = '';
-      weather.matches = [];
-      if (state.activeId === 'weather') renderWidget('weather');
-
-      fetchJson(win, buildWeatherForecastUrl(weather.place), WEATHER_TIMEOUT_MS)
-        .then(function (payload) {
-          if (token !== weather.token) return;
-          const data = parseWeatherPayload(payload, { unit: weather.unit });
-          if (data) {
-            weather.data = data;
-            weather.fetchedAt = Date.now();
-            weather.status = 'ready';
-          } else {
-            // A closed card still keeps whatever arrived, so reopening is instant.
-            weather.status = 'error';
-            weather.error = 'The forecast service returned something unexpected.';
-          }
-          if (state.activeId === 'weather') renderWidget('weather');
-        })
-        .catch(function (error) {
-          if (token !== weather.token) return;
-          weather.status = 'error';
-          weather.error = describeFetchError(error);
-          if (state.activeId === 'weather') renderWidget('weather');
-        });
-      return true;
-    }
-
-    function searchPlaces(rawName) {
-      const name = clipText(rawName, 80);
-      if (!name) return false;
-
-      const weather = state.weather;
-      const token = (weather.token += 1);
-      weather.status = 'searching';
-      weather.query = name;
-      weather.error = '';
-      weather.matches = [];
-      if (state.activeId === 'weather') renderWidget('weather');
-
-      fetchJson(win, buildGeocodingUrl(name), WEATHER_TIMEOUT_MS)
-        .then(function (payload) {
-          if (token !== weather.token) return;
-          const places = parseGeocodingResults(payload);
-          if (places.length === 0) {
-            weather.status = 'error';
-            weather.error = 'No place called “' + name + '”. Try the country as well.';
-          } else if (places.length === 1) {
-            selectPlace(places[0]);
-            return;
-          } else {
-            weather.matches = places;
-            weather.status = 'choosing';
-          }
-          if (state.activeId === 'weather') renderWidget('weather');
-        })
-        .catch(function (error) {
-          if (token !== weather.token) return;
-          weather.status = 'error';
-          weather.error = describeFetchError(error);
-          if (state.activeId === 'weather') renderWidget('weather');
-        });
-      return true;
-    }
-
-    function selectPlace(place) {
-      const weather = state.weather;
-      weather.place = place;
-      weather.matches = [];
-      weather.query = '';
-      weather.data = null;
-      weather.fetchedAt = 0;
-      writeWeatherPlace(storage, place);
-      loadWeather(true);
-    }
-
-    function weatherNow(data) {
-      const now = el('div', 'widget-weather-now');
-      now.insertAdjacentHTML('beforeend', weatherGlyphMarkup(data.glyph));
-
-      const reading = el('div', 'widget-weather-reading');
-      reading.appendChild(el('span', 'widget-weather-temp', data.temperature));
-      reading.appendChild(el('span', 'widget-weather-summary', data.label));
-      reading.appendChild(
-        el(
-          'span',
-          'widget-weather-summary',
-          'Feels like ' + data.apparent + ' · H ' + data.high + ' / L ' + data.low
-        )
-      );
-      now.appendChild(reading);
-      return now;
-    }
-
-    function metricGrid(data) {
-      const grid = el('div', 'widget-weather-metrics');
-      [
-        ['Humidity', data.humidity],
-        ['Wind', data.wind],
-        ['Rain', data.rain]
-      ].forEach(function (pair) {
-        const cell = el('div', 'widget-metric');
-        cell.appendChild(el('span', 'widget-metric-value', pair[1]));
-        cell.appendChild(el('span', 'widget-metric-label', pair[0]));
-        grid.appendChild(cell);
-      });
-      return grid;
-    }
-
-    function hourStrip(data) {
-      const strip = el('div', 'widget-hours');
-      data.hours.forEach(function (hour) {
-        const cell = el('div', 'widget-hour' + (hour.isNow ? ' is-now' : ''));
-        cell.title = hour.hour + ' · ' + hour.label;
-        cell.appendChild(el('span', null, hour.hour));
-        cell.appendChild(el('span', 'widget-hour-temp', hour.temperature));
-        cell.appendChild(el('span', null, hour.precipitation === null ? '' : hour.precipitation + '%'));
-        strip.appendChild(cell);
-      });
-      return strip;
-    }
-
-    function weatherSearchForm() {
-      const form = el('form', 'widget-field');
-      const input = el('input', 'widget-input');
-      input.type = 'search';
-      input.placeholder = state.weather.place ? 'Another city' : 'City or town';
-      input.setAttribute('aria-label', 'City or town');
-      input.setAttribute('autocomplete', 'off');
-      input.spellcheck = false;
-
-      const submit = el('button', 'widget-submit', 'Find');
-      submit.type = 'submit';
-
-      function submitPlace() {
-        searchPlaces(input.value);
-      }
-
-      form.appendChild(input);
-      form.appendChild(submit);
-      form.addEventListener('submit', function (event) {
-        event.preventDefault();
-        submitPlace();
-      });
-      // Same as the YouTube card: a replayed click is synthetic, so the button answers it
-      // itself instead of relying on an implicit form submission that never comes.
-      submit.addEventListener('click', function (event) {
-        event.preventDefault();
-        submitPlace();
-      });
-      return form;
-    }
-
-    function placeChoices() {
-      return section('Places', placeRowList(state.weather.matches));
-    }
-
-    /** One clickable row per place: a searched one, or one from the starter list. */
-    function placeRowList(places) {
-      const list = el('div', 'widget-rows');
-      places.forEach(function (place) {
-        const button = el('button', 'widget-row');
-        button.type = 'button';
-        const text = el('span', 'widget-row-text');
-        text.appendChild(el('span', 'widget-row-title', place.name));
-        const meta = [place.region, place.country].filter(Boolean).join(' · ');
-        if (meta) text.appendChild(el('span', 'widget-row-meta', meta));
-        button.appendChild(text);
-        button.addEventListener('click', function () {
-          selectPlace(place);
-        });
-        list.appendChild(button);
-      });
-      return list;
-    }
-
-    function unitChips() {
-      const chips = el('div', 'widget-chips');
-      [
-        ['celsius', 'Celsius'],
-        ['fahrenheit', 'Fahrenheit']
-      ].forEach(function (pair) {
-        const chip = el('button', 'widget-chip', pair[1]);
-        chip.type = 'button';
-        chip.setAttribute('aria-pressed', state.weather.unit === pair[0] ? 'true' : 'false');
-        chip.addEventListener('click', function () {
-          if (state.weather.unit === pair[0]) return;
-          state.weather.unit = pair[0];
-          writeWeatherUnit(storage, pair[0]);
-          // The cached readings are in the old unit; ask again rather than relabel.
-          state.weather.fetchedAt = 0;
-          loadWeather(true);
-        });
-        chips.appendChild(chip);
-      });
-      return section('Units', chips);
-    }
-
-    function weatherFootnote() {
-      if (state.weather.data) {
-        return note(
-          'Open-Meteo · updated ' +
-            relativeTime(state.weather.fetchedAt) +
-            ' · the only request this wallpaper ever makes'
-        );
-      }
-      return note('Forecast by Open-Meteo: keyless, free, and the only thing the wallpaper ever fetches.');
-    }
-
     /* --- wiring ------------------------------------------------------------ */
 
-    buttons.forEach(function (button) {
-      button.addEventListener('click', function (event) {
-        event.preventDefault();
-        const id = button.getAttribute('data-widget') || '';
-        if (state.activeId === id) {
-          closeWidget();
-          return;
-        }
-        openWidget(id);
-      });
+    // The `+` is the whole way in: pressing it opens the card, pressing it again dismisses
+    // it, exactly like a toggle on the desktop. The close button and the backdrop say the
+    // same thing in the two other places a user reaches for.
+    addButton.addEventListener('click', function (event) {
+      event.preventDefault();
+      if (state.open) closeCard();
+      else openCard();
     });
-
-    // The header action is one control with two jobs. On a card it opens the manager (and
-    // remembers which card to come back to); on the manager it hands that card straight
-    // back, or — when the manager was opened on its own — closes, because there is then
-    // nothing behind it. The close button beside it always means "dismiss", either way.
-    if (servicesActionNode) {
-      servicesActionNode.addEventListener('click', function (event) {
-        event.preventDefault();
-        if (state.activeId === SERVICE_MANAGER_ID) {
-          const behind = widgetById(state.returnWidgetId);
-          if (behind && openWidget(behind.id)) return;
-          closeWidget();
-          return;
-        }
-        openWidget(SERVICE_MANAGER_ID);
-      });
-    }
 
     if (closeNode) {
       closeNode.addEventListener('click', function () {
-        closeWidget();
+        closeCard();
       });
     }
 
-    // Clicking the dimmed wallpaper outside the card closes it, like a native
-    // panel; a click inside the card must not bubble out and dismiss it.
+    // Clicking the dimmed wallpaper outside the card closes it, like a native panel; a
+    // click inside the card must not bubble out and dismiss it.
     backdrop.addEventListener('click', function (event) {
-      if (event.target === backdrop) closeWidget();
+      if (event.target === backdrop) closeCard();
     });
     modal.addEventListener('click', function (event) {
       event.stopPropagation();
@@ -5291,18 +3992,19 @@
 
     doc.addEventListener('keydown', onKeyDown);
 
-    // The shortcuts become satellites before the first deal, so the orbit opens with the
-    // set the user keeps instead of appearing to grow a moment later.
+    // The apps become satellites before the first deal, so the orbit opens with the set
+    // the user keeps instead of appearing to grow a moment later.
     rebuildServiceButtons();
 
-    // Adopt the settings before the first deal, so the page opens with exactly the
-    // desktop the user picked — no flash of four satellites on their way out.
+    // Adopt the settings before the first deal, so the page opens with exactly the desktop
+    // the user picked — no flash of an orbit on its way out.
     applyConfig(config);
 
-    // Deal the first hand, then hold it: `scatter()` measures the greeting and the
-    // viewport, so it has to run again when either changes shape. The resize is
-    // debounced — a live drag would otherwise re-deal on every frame — while the hit
-    // regions are refreshed immediately, so a click during the drag still lands.
+    // Wear the first hand, then hold it: `scatter()` measures the greeting and the
+    // viewport, so it has to run again when either changes shape — and only then, so a
+    // deal never moves a satellite the user did not ask to move. The resize is debounced —
+    // a live drag would otherwise re-deal on every frame — while the hit regions are
+    // refreshed immediately, so a click during the drag still lands.
     state.started = true;
     scatter();
     let scatterTimer = 0;
@@ -5317,43 +4019,43 @@
 
     const contentNode = doc.getElementById('content');
     if (contentNode) {
-      // The entrance slides and scales `.wallpaper-content` for 900 ms, so the
-      // satellite rectangles measured before it settled sit a few pixels off.
-      // Re-measure when that transition lands — once, not on every frame.
+      // The entrance slides and scales `.wallpaper-content` for 900 ms, so the satellite
+      // rectangles measured before it settled sit a few pixels off. Re-measure when that
+      // transition lands — once, not on every frame.
       contentNode.addEventListener('transitionend', function (event) {
         if (event.target === contentNode) scheduleHitRegions();
       });
 
-      // A longer name, a different greeting or the webfont finally arriving all
-      // change how wide the text block is, and can grow it over a satellite. Watch
-      // for that and deal again rather than letting the greeting collide.
+      // A longer name, a different greeting or the webfont finally arriving all change how
+      // wide the text block is, and can grow it over a satellite. Watch for that and deal
+      // again rather than letting the greeting collide.
       if (typeof win.ResizeObserver === 'function') {
         state.textObserver = new win.ResizeObserver(function () {
-          if (!isNarrow() && coversText()) scatter();
+          if (!isNarrow() && coversText()) scatter({ reflow: true });
         });
         state.textObserver.observe(contentNode);
       }
     }
+
     /**
-     * The satellites' switches — the master `widgets` setting and one flag per satellite,
-     * live.
+     * The orbit's master switch — the `widgets` setting, live.
      *
-     * Every host reaches this through the same configuration fields, so the five switches
-     * in the macOS popover, in the Windows window, in Lively and in Wallpaper Engine, plus
-     * `?widgets=false` / `?music=false` and `DynaWall.setWidgetsEnabled()` /
-     * `DynaWall.setWidgetEnabled()`, all land here. A satellite that is off is `hidden`:
-     * it is never placed, never measured, never reported as clickable and its card cannot
-     * be opened, which is what hands that corner of the desktop back to the Finder.
+     * Every host reaches this through the same configuration field, so the "Desktop apps"
+     * switch in the macOS popover, in the Windows window, in Lively and in Wallpaper
+     * Engine, plus `?widgets=false` and `DynaWall.setWidgetsEnabled()`, all land here. Off
+     * is `is-widgets-off` on the root: the orbit is not faded out but removed, so nothing
+     * drifts, nothing is left to click, and `publishHitRegions()` reports an empty list —
+     * the desktop underneath is the Finder's again.
      *
-     * The remaining satellites are dealt again whenever the set changes — the ring is
-     * sized for the set on screen, so a hidden one closes a gap instead of leaving one.
+     * Switched back on, the apps are worn as the hand has them: they appear on exactly the
+     * pixels they were dealt, rather than being re-dealt behind the user's back.
      *
-     * Returns the master switch in force.
+     * Returns the switch in force.
      */
     function applyConfig(next) {
       const source = next || {};
       const master = source.widgets !== false;
-      let changed = master !== state.enabled;
+      const changed = master !== state.enabled;
       state.enabled = master;
 
       const root = doc.documentElement;
@@ -5362,72 +4064,56 @@
         else root.classList.add('is-widgets-off');
       }
 
-      buttons.forEach(function (button) {
-        const id = button.getAttribute('data-widget') || '';
-        // A satellite this build has no setting for (a page that added one of its own)
-        // follows the master switch instead of disappearing for good.
-        const field = ownLookup(WIDGET_FIELDS, id);
-        const visible = master && (field ? source[field] !== false : true);
-        if (button.hidden !== !visible) {
-          button.hidden = !visible;
-          changed = true;
-        }
-        // A card whose satellite just left the desktop has nothing to go back to.
-        if (!visible && state.activeId === id) closeWidget();
-      });
+      // The `+` leaves with the orbit. `hidden` rather than `opacity: 0`, because a
+      // switched-off orbit must not be measured or clicked either.
+      const hide = !master;
+      if (addButton.hidden !== hide) addButton.hidden = hide;
 
-      // Custom shortcuts are never hidden one by one — they are added and removed
-      // deliberately — so the master switch is all they answer to, which the orbit's
-      // own `display: none` already covers.
-      if (!master && state.activeId === SERVICE_MANAGER_ID) closeWidget();
+      if (!master && state.open) closeCard();
 
       // Before the first deal there is nothing to re-deal: creation scatters once at the
-      // end, with the visibility above already in place.
+      // end, with the switch above already in place.
       if (!changed || !state.started) return state.enabled;
 
-      if (master) {
-        scatter();
-      } else {
-        if (state.activeId) closeWidget();
-        scheduleHitRegions();
-      }
+      if (master) scatter();
+      else scheduleHitRegions();
       return state.enabled;
     }
 
     scheduleHitRegions();
 
     return {
-      /** `true` while a card is on screen. */
+      /** `true` while the Apps card is on screen. */
       isOpen: function () {
-        return Boolean(state.activeId);
+        return state.open;
       },
-      /** The id of the open card, or `''`. */
+      /** The open card's id — `apps`, or `''` when the card is down. */
       activeId: function () {
-        return state.activeId;
+        return state.open ? APPS_CARD_ID : '';
       },
-      /** Whether the satellites are on the desktop right now. */
+      /** Whether the orbit is on the desktop right now. */
       enabled: function () {
         return state.enabled;
       },
-      /** The built-in satellites on the desktop right now, by widget id. */
-      visibleIds: function () {
-        return visibleBuiltins().map(function (button) {
-          return button.getAttribute('data-widget') || '';
-        });
-      },
-      /** The custom shortcuts in the orbit, as `{ id, title, url, icon }`. */
+      /** The apps in the orbit, as `{ id, title, url, icon }`. */
       services: function () {
         return state.services.map(function (service) {
           return { id: service.id, title: service.title, url: service.url, icon: service.icon };
         });
       },
-      /** Add a shortcut and deal it into the ring; `null` when it cannot be added. */
+      /** The quick-add presets, as `{ title, url }` — the list the chips are cut from. */
+      presets: function () {
+        return APP_PRESETS.map(function (preset) {
+          return { title: preset.title, url: preset.url };
+        });
+      },
+      /** Add an app and deal it into the ring; `null` when it cannot be added. */
       addService: addService,
-      /** Forget a shortcut; whether the list changed. */
+      /** Forget an app; whether the list changed. */
       removeService: removeService,
       applyConfig: applyConfig,
       open: openWidget,
-      close: closeWidget,
+      close: closeCard,
       clickAt: clickAt
     };
   }
@@ -5490,17 +4176,11 @@
     mapLivelyProperty: mapLivelyProperty,
     mapWallpaperEngineProperties: mapWallpaperEngineProperties,
 
-    /* Widgets. The catalogue, the hosts the popups are allowed to name, and the
-       pure half of every provider — URL building and payload parsing — so the
-       headless tests can check them without a DOM or a network. */
-    WIDGETS: WIDGETS,
-    /** Satellite id → the configuration field that shows or hides it. */
-    WIDGET_FIELDS: WIDGET_FIELDS,
-    /** The five widget settings: the master switch plus one flag per satellite. */
-    WIDGET_SETTING_FIELDS: WIDGET_SETTING_FIELDS,
-    WIDGET_FETCH_HOSTS: WIDGET_FETCH_HOSTS,
-    WIDGET_LINK_HOSTS: WIDGET_LINK_HOSTS,
-    WIDGET_REMOTE_HOSTS: WIDGET_REMOTE_HOSTS,
+    /* The orbit. The card's reserved id and the presets it offers, then the pure half of
+       the placement — the scatter, the seed and the tally — so the headless tests can
+       hold them to account without a DOM or a layout engine. */
+    APPS_CARD_ID: APPS_CARD_ID,
+    APP_PRESETS: APP_PRESETS,
     WIDGET_NARROW_QUERY: WIDGET_NARROW_QUERY,
     /** The three footprints a satellite can wear, smallest first (`s`, `m`, `l`). */
     WIDGET_SIZE_TIERS: WIDGET_SIZE_TIERS,
@@ -5516,17 +4196,33 @@
     recordWidgetUsage: recordWidgetUsage,
     clearWidgetUsage: clearWidgetUsage,
     computeWidgetSizes: computeWidgetSizes,
+    /**
+     * Where the hand the satellites were dealt is cached — the seed that dealt it and the
+     * spot each glyph wears — plus the pure half that reads it: a host script can see, or
+     * forget, exactly the arrangement the page is wearing.
+     */
+    WIDGET_SEED_KEY: WIDGET_SEED_KEY,
+    WIDGET_POSITIONS_KEY: WIDGET_POSITIONS_KEY,
+    normalizeWidgetSeed: normalizeWidgetSeed,
+    readWidgetSeed: readWidgetSeed,
+    writeWidgetSeed: writeWidgetSeed,
+    normalizeWidgetPositions: normalizeWidgetPositions,
+    readWidgetPositions: readWidgetPositions,
+    writeWidgetPositions: writeWidgetPositions,
+    clearWidgetPositions: clearWidgetPositions,
+    widgetPositionOf: widgetPositionOf,
+    withoutWidgetPosition: withoutWidgetPosition,
+    coversWidgetPositions: coversWidgetPositions,
     scatterWidgets: scatterWidgets,
     createRandom: createRandom,
 
-    /* Custom services. The same pure half the manager card uses, so a host script and
-       a paste into the card can never disagree about what a legal shortcut is. */
+    /* Apps. The same pure half the Apps card uses, so a host script and a paste into the
+       card can never disagree about what a legal app is. */
     CUSTOM_SERVICES_KEY: CUSTOM_SERVICES_KEY,
     MAX_CUSTOM_SERVICES: MAX_CUSTOM_SERVICES,
     MAX_SERVICE_TITLE: MAX_SERVICE_TITLE,
-    /** The reserved card id of the manager (`DynaWall.openWidget('services')`). */
-    SERVICE_MANAGER_ID: SERVICE_MANAGER_ID,
     SERVICE_ICONS: SERVICE_ICONS,
+    GENERIC_ICON_ID: GENERIC_ICON_ID,
     normalizeServiceUrl: normalizeServiceUrl,
     normalizeServiceIcon: normalizeServiceIcon,
     resolveServiceIcon: resolveServiceIcon,
@@ -5534,6 +4230,7 @@
     serviceIconMarkup: serviceIconMarkup,
     serviceMonogram: serviceMonogram,
     serviceGlyphMarkup: serviceGlyphMarkup,
+    serviceFaviconUrl: serviceFaviconUrl,
     serviceHostName: serviceHostName,
     serviceHostLabel: serviceHostLabel,
     createCustomService: createCustomService,
@@ -5541,49 +4238,23 @@
     serializeCustomServices: serializeCustomServices,
     readCustomServices: readCustomServices,
     writeCustomServices: writeCustomServices,
-    WEATHER_FRESH_MS: WEATHER_FRESH_MS,
-    WMO_CONDITIONS: WMO_CONDITIONS,
-    MUSIC_STATIONS: MUSIC_STATIONS,
-    NEWS_DESKS: NEWS_DESKS,
-    WEATHER_CITIES: WEATHER_CITIES,
-    WEATHER_GLYPHS: WEATHER_GLYPHS,
     clipText: clipText,
-    withQuery: withQuery,
-    buildYouTubeMusicSearchUrl: buildYouTubeMusicSearchUrl,
-    buildYouTubeSearchUrl: buildYouTubeSearchUrl,
-    buildYouTubeTrendingUrl: buildYouTubeTrendingUrl,
-    buildGoogleNewsUrl: buildGoogleNewsUrl,
-    buildWeatherForecastUrl: buildWeatherForecastUrl,
-    buildGeocodingUrl: buildGeocodingUrl,
-    normalizeTemperatureUnit: normalizeTemperatureUnit,
-    regionCodeFromLocale: regionCodeFromLocale,
-    describeWmoCode: describeWmoCode,
-    formatTemperature: formatTemperature,
-    hourLabel: hourLabel,
-    relativeTime: relativeTime,
-    indexOfHour: indexOfHour,
-    parseWeatherPayload: parseWeatherPayload,
-    parseGeocodingResults: parseGeocodingResults,
-    readWeatherPlace: readWeatherPlace,
-    writeWeatherPlace: writeWeatherPlace,
-    readWeatherUnit: readWeatherUnit,
-    writeWeatherUnit: writeWeatherUnit,
     openExternal: openExternal,
 
-    /** Open a card from the console or from a host script. */
+    /** Open the Apps card from the console or from a host script. */
     openWidget: function (id) {
       return widgetsRef ? widgetsRef.open(id) : false;
     },
-    /** Close whatever card is open. */
+    /** Close the Apps card. */
     closeWidget: function () {
       return widgetsRef ? widgetsRef.close() : false;
     },
     /**
-     * Turn all four desktop satellites on or off, exactly like the host's master switch.
+     * Turn the whole orbit on or off, exactly like the host's master switch.
      *
      * The value travels through the same update path a Lively/Wallpaper Engine property
-     * takes, so it is cached in `localStorage` and both the page and the widget
-     * controller agree on it afterwards. Returns the state now in force.
+     * takes, so it is cached in `localStorage` and both the page and the controller agree
+     * on it afterwards. Returns the state now in force.
      */
     setWidgetsEnabled: function (enabled) {
       const value = enabled !== false;
@@ -5596,37 +4267,19 @@
       }
       return widgetsRef ? widgetsRef.enabled() : false;
     },
-    /**
-     * Turn one satellite on or off: `DynaWall.setWidgetEnabled('youtube', false)`.
-     *
-     * `id` is a `WIDGETS` id (`music`, `news`, `youtube`, `weather`); an unknown id is
-     * refused rather than silently cached. Returns whether that satellite is now on the
-     * desktop.
-     */
-    setWidgetEnabled: function (id, enabled) {
-      const field = ownLookup(WIDGET_FIELDS, id);
-      if (!field) return false;
-      const value = enabled !== false;
-      if (appRef) {
-        appRef.applyUpdates([{ field: field, value: value }]);
-      }
-      if (!widgetsRef) return false;
-      const ids = widgetsRef.visibleIds();
-      return ids.indexOf(id) !== -1;
-    },
-    /** `true` while the satellites are on the desktop. */
+    /** `true` while the orbit is on the desktop. */
     widgetsEnabled: function () {
       return widgetsRef ? widgetsRef.enabled() : false;
     },
-    /** The satellites on the desktop right now, by id. */
-    enabledWidgets: function () {
-      return widgetsRef ? widgetsRef.visibleIds() : [];
+    /** The quick-add presets, as `{ title, url }`. */
+    appPresets: function () {
+      return widgetsRef ? widgetsRef.presets() : [];
     },
     /**
-     * The custom shortcuts in the orbit, as `{ id, title, url, icon }`.
+     * The apps in the orbit, as `{ id, title, url, icon }`.
      *
      * They are the user's own list, cached in `localStorage` rather than pushed by a
-     * host: a shortcut is added on the wallpaper (the card header's `+`) or through the
+     * host: an app is added on the wallpaper (the `+` satellite's card) or through the
      * two calls below, never from a popover.
      */
     customServices: function () {
@@ -5674,11 +4327,11 @@
       appRef = app;
       installBridges(window);
 
-      // The satellites are wired after the wallpaper itself is running: a card must
-      // never be able to stop the greeting, so a failure here leaves a perfectly
-      // good wallpaper with four inert buttons instead of a blank screen. They start
-      // in the state the configuration asked for: the master switch and the four
-      // per-satellite flags decide what is placed, drifted and reported as clickable.
+      // The orbit is wired after the wallpaper itself is running: a card must never be
+      // able to stop the greeting, so a failure here leaves a perfectly good wallpaper
+      // with one inert `+` instead of a blank screen. It starts in the state the
+      // configuration asked for: the master switch decides what is placed, drifted and
+      // reported as clickable.
       try {
         widgetsRef = createWidgets(window, document, { config: app.state.config });
       } catch (error) {

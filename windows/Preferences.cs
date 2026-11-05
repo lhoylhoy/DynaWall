@@ -60,20 +60,13 @@ internal sealed class Preferences
     public bool PhotoSync { get; set; } = true;
 
     /// <summary>
-    /// Whether the four desktop satellites (music, news, YouTube, weather) are on the
-    /// wallpaper. On by default; off hides them in the page, stops them drifting and
+    /// Whether the apps orbit — the <c>+</c> satellite and every app the user added — is
+    /// on the wallpaper. On by default; off removes it in the page, stops it drifting and
     /// leaves no click rectangles behind, so the desktop is the Finder's/Explorer's again.
-    /// The four below take one satellite off on its own.
+    /// The apps themselves are not settings: they are added, launched and forgotten on the
+    /// wallpaper, through the card the <c>+</c> opens.
     /// </summary>
     public bool Widgets { get; set; } = true;
-
-    public bool WidgetMusic { get; set; } = true;
-
-    public bool WidgetNews { get; set; } = true;
-
-    public bool WidgetYouTube { get; set; } = true;
-
-    public bool WidgetWeather { get; set; } = true;
 
     /// <summary>Empty means the twelve wallpapers that ship in <c>web/images</c>.</summary>
     public string PhotoFolder { get; set; } = string.Empty;
@@ -186,10 +179,6 @@ internal sealed class Preferences
         KenBurns = true;
         PhotoSync = true;
         Widgets = true;
-        WidgetMusic = true;
-        WidgetNews = true;
-        WidgetYouTube = true;
-        WidgetWeather = true;
         FontFamily = DefaultFontFamily;
         CustomFontPath = string.Empty;
     }
@@ -279,13 +268,8 @@ internal sealed class Preferences
         values.Add(("slideshowInterval", SlideshowInterval));
         values.Add(("slideshowShuffle", SlideshowShuffle));
         values.Add(("kenBurns", KenBurns));
-        // The satellites: one master switch plus one flag each, all plain booleans that
-        // script.js honours live.
+        // The apps orbit: one switch, a plain boolean that script.js honours live.
         values.Add(("widgets", Widgets));
-        values.Add(("widgetMusic", WidgetMusic));
-        values.Add(("widgetNews", WidgetNews));
-        values.Add(("widgetYouTube", WidgetYouTube));
-        values.Add(("widgetWeather", WidgetWeather));
         // The family only; the imported bytes ride in their own push (BuildFontScript),
         // because a data URL of a few megabytes has no business in a settings payload
         // that is re-sent on every keystroke.
@@ -370,10 +354,6 @@ internal sealed class Preferences
             ["slideshowShuffle"] = SlideshowShuffle,
             ["kenBurns"] = KenBurns,
             ["widgets"] = Widgets,
-            ["widgetMusic"] = WidgetMusic,
-            ["widgetNews"] = WidgetNews,
-            ["widgetYouTube"] = WidgetYouTube,
-            ["widgetWeather"] = WidgetWeather,
             // The family only: the imported bytes are pushed once the page is ready.
             ["fontFamily"] = FontFamily
         };

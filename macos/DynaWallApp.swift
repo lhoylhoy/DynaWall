@@ -1313,13 +1313,8 @@ final class WallpaperPreferences: ObservableObject {
         static let photoFolder = "photoFolderPath"
         static let photoCollection = "photoCollection"
         static let photoSync = "photoSyncTimeOfDay"
-        /// Whether the four desktop satellites (music, news, YouTube, weather) show.
+        /// Whether the apps orbit (the `+` and every app the user added) shows.
         static let widgets = "desktopWidgets"
-        /// …and one flag per satellite, so each can be taken off the desktop alone.
-        static let widgetMusic = "desktopWidgetMusic"
-        static let widgetNews = "desktopWidgetNews"
-        static let widgetYouTube = "desktopWidgetYouTube"
-        static let widgetWeather = "desktopWidgetWeather"
         static let launchAtLogin = "launchAtLogin"
         /// Greeting/subtitle family: an installed name or the imported file's family.
         static let fontFamily = "fontFamily"
@@ -1451,32 +1446,17 @@ final class WallpaperPreferences: ObservableObject {
         didSet { persist(photoSync, Key.photoSync) }
     }
 
-    /// The four desktop satellites: music, news, YouTube and weather.
+    /// The apps orbit: the `+` satellite and every app the user added to it.
     ///
-    /// On by default, and off is a real setting rather than a broken wallpaper: the
-    /// page hides the satellite, stops placing it and reports no click rectangle for it,
-    /// so that corner of the desktop is the Finder's again. `widgets` is the master
-    /// switch — it hides all four without forgetting which ones were picked — and the
-    /// four flags below take them one at a time. Every change is pushed to the page like
-    /// every other setting, which is what makes them live: no reload, no relaunch.
+    /// On by default, and off is a real setting rather than a broken wallpaper: the page
+    /// removes the orbit, stops placing it and reports no click rectangle at all, so the
+    /// desktop is the Finder's again. The apps themselves are not settings — they are
+    /// added, launched and forgotten on the wallpaper, through the card the `+` opens —
+    /// so this one switch is the whole of the host's business with them. Every change is
+    /// pushed to the page like every other setting, which is what makes it live: no
+    /// reload, no relaunch.
     @Published var widgets: Bool {
         didSet { persist(widgets, Key.widgets) }
-    }
-
-    @Published var widgetMusic: Bool {
-        didSet { persist(widgetMusic, Key.widgetMusic) }
-    }
-
-    @Published var widgetNews: Bool {
-        didSet { persist(widgetNews, Key.widgetNews) }
-    }
-
-    @Published var widgetYouTube: Bool {
-        didSet { persist(widgetYouTube, Key.widgetYouTube) }
-    }
-
-    @Published var widgetWeather: Bool {
-        didSet { persist(widgetWeather, Key.widgetWeather) }
     }
 
     /// The family the greeting and subtitle are set in. `Outfit` is the vendored
@@ -1753,10 +1733,6 @@ final class WallpaperPreferences: ObservableObject {
         photoCount = 0
         photoSync = true
         widgets = true
-        widgetMusic = true
-        widgetNews = true
-        widgetYouTube = true
-        widgetWeather = true
         fontFamily = WallpaperFont.defaultFamily
         customFontPath = ""
     }
@@ -1779,10 +1755,6 @@ final class WallpaperPreferences: ObservableObject {
             Key.photoCollection: PhotoCollection.custom.rawValue,
             Key.photoSync: true,
             Key.widgets: true,
-            Key.widgetMusic: true,
-            Key.widgetNews: true,
-            Key.widgetYouTube: true,
-            Key.widgetWeather: true,
             Key.launchAtLogin: false,
             Key.fontFamily: WallpaperFont.defaultFamily,
             Key.customFontPath: ""
@@ -1806,10 +1778,6 @@ final class WallpaperPreferences: ObservableObject {
         defaults.set(PhotoCollection.custom.rawValue, forKey: Key.photoCollection)
         photoSync = defaults.bool(forKey: Key.photoSync)
         widgets = defaults.bool(forKey: Key.widgets)
-        widgetMusic = defaults.bool(forKey: Key.widgetMusic)
-        widgetNews = defaults.bool(forKey: Key.widgetNews)
-        widgetYouTube = defaults.bool(forKey: Key.widgetYouTube)
-        widgetWeather = defaults.bool(forKey: Key.widgetWeather)
         launchAtLogin = LaunchAtLogin.isEnabled
         // Bundled families are hidden from the dropdown; an old pick that pointed at
         // one of them lands back on Outfit rather than at an invisible selection.
@@ -1871,10 +1839,6 @@ final class WallpaperPreferences: ObservableObject {
           window.livelyPropertyListener("slideshowShuffle", \(slideshowShuffle ? "true" : "false"));
           window.livelyPropertyListener("kenBurns", \(kenBurns ? "true" : "false"));
           window.livelyPropertyListener("widgets", \(widgets ? "true" : "false"));
-          window.livelyPropertyListener("widgetMusic", \(widgetMusic ? "true" : "false"));
-          window.livelyPropertyListener("widgetNews", \(widgetNews ? "true" : "false"));
-          window.livelyPropertyListener("widgetYouTube", \(widgetYouTube ? "true" : "false"));
-          window.livelyPropertyListener("widgetWeather", \(widgetWeather ? "true" : "false"));
           window.livelyPropertyListener("fontFamily", \(Self.jsLiteral(WallpaperFont.normalizedFamily(fontFamily))));
           return true;
         })();
@@ -1930,10 +1894,6 @@ final class WallpaperPreferences: ObservableObject {
         fields.append("\"slideshowShuffle\": \(slideshowShuffle ? "true" : "false")")
         fields.append("\"kenBurns\": \(kenBurns ? "true" : "false")")
         fields.append("\"widgets\": \(widgets ? "true" : "false")")
-        fields.append("\"widgetMusic\": \(widgetMusic ? "true" : "false")")
-        fields.append("\"widgetNews\": \(widgetNews ? "true" : "false")")
-        fields.append("\"widgetYouTube\": \(widgetYouTube ? "true" : "false")")
-        fields.append("\"widgetWeather\": \(widgetWeather ? "true" : "false")")
         fields.append("\"fontFamily\": \(Self.jsLiteral(WallpaperFont.normalizedFamily(fontFamily)))")
         // The imported face rides along so the first frame is already set in it; it
         // is re-read from disk here rather than stored, so a replaced file wins.
@@ -3189,8 +3149,8 @@ struct SettingsPopoverView: View {
     /// not the symbol — is what puts every section title on the same guide line.
     private static let headerIconSize: CGFloat = 14
 
-    /// The two-column slot every switch rides in, so the four satellites and the
-    /// slideshow options below them line up row after row.
+    /// The two-column slot every switch rides in, so the slideshow options line up row
+    /// after row.
     private static let toggleColumnSpacing: CGFloat = 10
 
     @ObservedObject var preferences: WallpaperPreferences
@@ -3831,72 +3791,30 @@ struct SettingsPopoverView: View {
         return true
     }
 
-    // MARK: Widgets
+    // MARK: Apps
 
-    /// The four desktop satellites: one master switch, then one switch each.
+    /// The apps orbit: one switch, and nothing else.
     ///
-    /// `widgets` is the wallpaper's master setting — off takes all four glyphs off the
-    /// desktop and their click rectangles with them — while the four below take them one
-    /// at a time without forgetting the others. The popover is sized from its measured
-    /// content, so they ride two to a row, and they only appear while the master switch
-    /// is on: the same progressive disclosure the slideshow's options use.
+    /// The apps themselves are not settings — they are added, launched and forgotten on
+    /// the wallpaper, through the card the `+` satellite opens — so the popover owns the
+    /// one thing a host can own: whether the orbit is on the desktop at all. Off removes
+    /// the `+` and every app with it, click rectangles included, and hands the desktop
+    /// back to the Finder; on wears the hand the apps were dealt, unchanged.
     private var widgetsCard: some View {
-        card(systemImage: "circle.grid.2x2", title: "Desktop widgets") {
-            VStack(alignment: .leading, spacing: 9) {
-                HStack(spacing: 8) {
-                    Toggle("On the desktop", isOn: $preferences.widgets)
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
-                    Spacer(minLength: 0)
-                    statusBadge(widgetSummary)
-                }
-
-                if preferences.widgets {
-                    Divider()
-                    // Two equal columns, two rows: the switch of each satellite sits
-                    // on its column's right edge and its label on the left, so the
-                    // four read as one grid rather than four switches drifting with
-                    // the width of their words.
-                    HStack(alignment: .center, spacing: Self.toggleColumnSpacing) {
-                        Toggle("Music", isOn: $preferences.widgetMusic)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Toggle("News", isOn: $preferences.widgetNews)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    HStack(alignment: .center, spacing: Self.toggleColumnSpacing) {
-                        Toggle("YouTube", isOn: $preferences.widgetYouTube)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Toggle("Weather", isOn: $preferences.widgetWeather)
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
+        card(systemImage: "plus.circle", title: "Desktop apps") {
+            HStack(spacing: 8) {
+                Toggle("On the desktop", isOn: $preferences.widgets)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                Spacer(minLength: 0)
+                statusBadge(widgetSummary)
             }
         }
-        .animation(.easeInOut(duration: 0.18), value: preferences.widgets)
     }
 
-    /// What the four satellite switches add up to, for the card's badge.
+    /// What the switch adds up to, for the card's badge.
     private var widgetSummary: String {
-        guard preferences.widgets else { return "Hidden" }
-        let shown = [
-            preferences.widgetMusic,
-            preferences.widgetNews,
-            preferences.widgetYouTube,
-            preferences.widgetWeather
-        ].filter { $0 }.count
-        switch shown {
-        case 4: return "All four"
-        case 0: return "None"
-        default: return "\(shown) of 4"
-        }
+        preferences.widgets ? "Shown" : "Hidden"
     }
 
     // MARK: Startup

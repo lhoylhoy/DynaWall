@@ -74,14 +74,9 @@ internal sealed class SettingsForm : Form
     private readonly ToggleSwitch kenBurnsBox = new();
     private readonly ToggleSwitch photoSyncBox = new();
     private readonly ToggleSwitch widgetsBox = new();
-    private readonly ToggleSwitch widgetMusicBox = new();
-    private readonly ToggleSwitch widgetNewsBox = new();
-    private readonly ToggleSwitch widgetYouTubeBox = new();
-    private readonly ToggleSwitch widgetWeatherBox = new();
     private readonly ToggleSwitch startupBox = new();
     private readonly SegmentedControl intervalChips = new();
     private readonly BufferedLayout slideshowOptions = new();
-    private readonly BufferedLayout widgetOptions = new();
     private readonly List<Font> ownedFonts = new();
     private readonly ToolTip tips = new();
     private readonly System.Windows.Forms.Timer debounce = new() { Interval = 250 };
@@ -120,10 +115,6 @@ internal sealed class SettingsForm : Form
         kenBurnsBox.CheckedChanged += OnOptionChanged;
         photoSyncBox.CheckedChanged += OnOptionChanged;
         widgetsBox.CheckedChanged += OnOptionChanged;
-        widgetMusicBox.CheckedChanged += OnOptionChanged;
-        widgetNewsBox.CheckedChanged += OnOptionChanged;
-        widgetYouTubeBox.CheckedChanged += OnOptionChanged;
-        widgetWeatherBox.CheckedChanged += OnOptionChanged;
         intervalChips.SelectedValueChanged += OnOptionChanged;
         startupBox.CheckedChanged += OnStartupChanged;
         preview.PauseRequested += OnPauseRequested;
@@ -331,17 +322,12 @@ internal sealed class SettingsForm : Form
 
         StyleToggle(slideshowBox, "Photo slideshow");
         StyleToggle(photoSyncBox, "Match photos to time of day");
-        StyleToggle(widgetsBox, "Desktop widgets (all four)");
-        StyleToggle(widgetMusicBox, "Music");
-        StyleToggle(widgetNewsBox, "News");
-        StyleToggle(widgetYouTubeBox, "YouTube");
-        StyleToggle(widgetWeatherBox, "Weather");
+        StyleToggle(widgetsBox, "Apps on the desktop");
         StyleToggle(shuffleBox, "Shuffle the order");
         StyleToggle(kenBurnsBox, "Slow zoom (Ken Burns)");
         StyleToggle(startupBox, "Start DynaWall when I sign in");
 
         BuildSlideshowOptions();
-        BuildWidgetOptions();
 
         AddCard(root, "Greeting",
             FieldRow("First name", firstNameField),
@@ -358,7 +344,7 @@ internal sealed class SettingsForm : Form
             BuildSlideshowSwitchRow(),
             slideshowOptions);
 
-        AddCard(root, "Widgets", widgetsBox, widgetOptions);
+        AddCard(root, "Desktop apps", widgetsBox);
 
         AddCard(root, "Startup", startupBox);
 
@@ -399,39 +385,6 @@ internal sealed class SettingsForm : Form
         intervalChips.Formatter = IntervalLabel;
         intervalChips.Height = 30;
         intervalChips.AccessibleName = "Slideshow interval";
-    }
-
-    /// <summary>
-    /// The four satellite switches, which appear only while the master switch is on —
-    /// the same progressive disclosure the slideshow's options use, and the same five
-    /// switches as the macOS popover.
-    /// </summary>
-    private void BuildWidgetOptions()
-    {
-        widgetOptions.Dock = DockStyle.Top;
-        widgetOptions.AutoSize = true;
-        widgetOptions.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-        widgetOptions.ColumnCount = 1;
-        widgetOptions.RowCount = 5;
-        widgetOptions.BackColor = UiTheme.Surface;
-        widgetOptions.Margin = new Padding(0);
-        widgetOptions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-
-        for (var row = 0; row < widgetOptions.RowCount; row += 1)
-        {
-            widgetOptions.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        }
-
-        widgetOptions.Controls.Add(new Divider
-        {
-            Dock = DockStyle.Top,
-            BackColor = UiTheme.Surface,
-            Margin = new Padding(0, 2, 0, 10)
-        }, 0, 0);
-        widgetOptions.Controls.Add(widgetMusicBox, 0, 1);
-        widgetOptions.Controls.Add(widgetNewsBox, 0, 2);
-        widgetOptions.Controls.Add(widgetYouTubeBox, 0, 3);
-        widgetOptions.Controls.Add(widgetWeatherBox, 0, 4);
     }
 
     /// <summary>Add a rounded card with a letter-spaced section header and its rows.</summary>
@@ -721,10 +674,6 @@ internal sealed class SettingsForm : Form
         kenBurnsBox.Checked = Preferences.KenBurns;
         photoSyncBox.Checked = Preferences.PhotoSync;
         widgetsBox.Checked = Preferences.Widgets;
-        widgetMusicBox.Checked = Preferences.WidgetMusic;
-        widgetNewsBox.Checked = Preferences.WidgetNews;
-        widgetYouTubeBox.Checked = Preferences.WidgetYouTube;
-        widgetWeatherBox.Checked = Preferences.WidgetWeather;
         intervalChips.SetValues(IntervalChoices(), Preferences.SlideshowInterval);
         startupBox.Checked = StartupRegistration.IsEnabled;
 
@@ -786,13 +735,7 @@ internal sealed class SettingsForm : Form
         photoSyncBox.Enabled = canRotate;
         nextButton.Enabled = canRotate;
 
-        // The four satellite switches only mean something while the master switch is on,
-        // exactly like the slideshow's options above them.
-        var satellites = widgetsBox.Checked;
-        if (widgetOptions.Visible != satellites) widgetOptions.Visible = satellites;
-
         slideshowOptions.Parent?.PerformLayout();
-        widgetOptions.Parent?.PerformLayout();
     }
 
     /// <summary>
@@ -991,10 +934,6 @@ internal sealed class SettingsForm : Form
         Preferences.KenBurns = kenBurnsBox.Checked;
         Preferences.PhotoSync = photoSyncBox.Checked;
         Preferences.Widgets = widgetsBox.Checked;
-        Preferences.WidgetMusic = widgetMusicBox.Checked;
-        Preferences.WidgetNews = widgetNewsBox.Checked;
-        Preferences.WidgetYouTube = widgetYouTubeBox.Checked;
-        Preferences.WidgetWeather = widgetWeatherBox.Checked;
 
         var minutes = intervalChips.SelectedValue;
         if (minutes > 0)

@@ -74,30 +74,10 @@
   },
   "__HEADER_WIDGETS__": {
     "type": "label",
-    "value": "Widgets"
+    "value": "Desktop apps"
   },
   "widgets": {
-    "text": "Desktop widgets (all four)",
-    "type": "checkbox",
-    "value": true
-  },
-  "widgetMusic": {
-    "text": "Music",
-    "type": "checkbox",
-    "value": true
-  },
-  "widgetNews": {
-    "text": "News",
-    "type": "checkbox",
-    "value": true
-  },
-  "widgetYouTube": {
-    "text": "YouTube",
-    "type": "checkbox",
-    "value": true
-  },
-  "widgetWeather": {
-    "text": "Weather",
+    "text": "Apps on the desktop",
     "type": "checkbox",
     "value": true
   }

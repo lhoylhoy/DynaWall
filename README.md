@@ -50,19 +50,19 @@ certutil -hashfile DynaWall-Setup.exe SHA256    # Windows equivalent
 | Refresh | One timer per real boundary (05:00 · 09:00 · 12:00 · 17:00 · 18:00 · 21:00) plus wake and focus — nothing polls |
 | Slideshow | Off by default. Cross-fades every 1–60 min, in order or shuffled, optional slow zoom, with a scrim that keeps the greeting readable |
 | Time-synced photos | On by default: only photos whose filename names the active band (`dawn`, `day`, `dusk`, `night`) are shown; untagged photos are spread across the four bands |
-| Widgets | Four clickable satellites — **Music**, **News**, **YouTube**, **Weather** — opening frosted cards. Each can be switched off individually; nothing is fetched before a card opens (weather uses keyless Open-Meteo) |
-| Shortcuts | Add your own services (GitHub, ChatGPT, Spotify, …) from the `+` in any card header: each becomes another satellite, wearing the official brand mark, that opens in your default browser. The header's arrow takes you back to the widget you were reading |
-| Widget footprints | The glyphs are ranked by how often you open them: **S** for the ones you never touch, **M** as the baseline, **L** for the one you live in. The tally lives in `localStorage` and is balanced across both sides of the greeting on every deal |
+| Desktop apps | One `+` satellite opens a frosted **Apps** card: quick-add chips (GitHub, ChatGPT, Claude, YouTube, Spotify, Reddit, Notion, Figma) or paste any `https` address. Every app becomes a satellite that opens in your default browser; the card lists them so you can remove one |
+| Nothing is fetched | The wallpaper loads no app, no feed and no forecast: an app is a link handed to the OS browser. The page's Content Security Policy allows no remote host at all |
+| App footprints | The glyphs are ranked by how often you launch them: **S** for the ones you never touch, **M** as the baseline, **L** for the one you live in. The tally lives in `localStorage`, and a glyph grows or shrinks where it stands — the desktop only rearranges when an app is added |
 | Typography | **Outfit** (default), **Google Sans Flex**, **Space Grotesk** and **Geist** ship with the app; any system or imported font also works |
-| Dependencies | None. Fonts and twelve wallpapers are bundled; the only network call is the weather forecast |
+| Dependencies | None. Fonts and twelve wallpapers are bundled; nothing is ever fetched |
 
 ## Native apps
 
 `DynaWall.app` and `DynaWall.exe` place one click-through WebView per display *behind* the desktop icons, so
-Finder/Mission Control (macOS) and icon selection and the context menu (Windows) keep working. Widget clicks
-are replayed from a system-wide mouse watch; only `https` links are opened in the browser. Windows runs
+Finder/Mission Control (macOS) and icon selection and the context menu (Windows) keep working. Clicking a
+satellite is replayed from a system-wide mouse watch; only `https` links are opened in the browser. Windows runs
 `PerMonitorV2`, so screen coordinates are physical pixels while the page reports CSS pixels: a click is
-divided by `window.DeviceScale` (`DeviceDpi / 96`) before it is matched, which keeps the satellites
+divided by `window.DeviceScale` (`DeviceDpi / 96`) before it is matched, which keeps the `+` and every app
 clickable at 125 / 150 / 175 / 200% scaling.
 
 ## Settings
@@ -82,8 +82,7 @@ Booleans accept `true` / `false`.
 | Shuffle | `shuffle` | `slideshowShuffle` / `slideshowshuffle` | on |
 | Slow zoom (Ken Burns) | `kenBurns` | `kenBurns` / `kenburns` | on |
 | Match time of day | `photoSync` | `photoSync` / `photosync` | on |
-| Desktop widgets | `widgets` | `widgets` | on |
-| One satellite | `music`, `news`, `youtube`, `weather` | `widgetMusic`, `widgetNews`, `widgetYouTube`, `widgetWeather` (lowercase in Wallpaper Engine) | on |
+| Desktop apps | `widgets` (alias `apps`, `satellites`) | `widgets` | on |
 | Photo list | `photos` | — | twelve bundled wallpapers |
 | Font family | `font` | `fontFamily` / `fontfamily` | `Outfit` |
 | Imported font file | `fonturl` | — (native apps import files instead) | — |
@@ -178,11 +177,22 @@ the artifact.
   launch); settings in the `com.dynawall.macos` defaults domain (`defaults delete com.dynawall.macos`
   resets them); imported fonts in `~/Library/Application Support/DynaWall/Fonts`.
 - **Windows** — settings, logs and the WebView2 profile in `%LOCALAPPDATA%\DynaWall\`.
-- **Everywhere** — the shortcut list and how often each glyph was opened are cached in `localStorage`
+- **Everywhere** — the app list and how often each glyph was launched are cached in `localStorage`
   (`dynawall.customServices`, `dynawall.widgetUsage`), never pushed by a host control.
   `DynaWall.clearWidgetUsage(localStorage)` from the console empties the tally, which puts every glyph
   back on the baseline; `DynaWall.computeWidgetSizes(ids, DynaWall.readWidgetUsage(localStorage))`
   shows the ranking it produces.
+- **The apps themselves** — the console can drive the same calls the card does:
+  `DynaWall.appPresets()` lists the quick-add chips, `DynaWall.customServices()` lists the apps in the
+  orbit, `DynaWall.addCustomService('GitHub', 'https://github.com')` adds one (refused unless it is a
+  plain `https` address) and `DynaWall.removeCustomService(id)` forgets it. `DynaWall.openWidget('apps')`
+  and `DynaWall.closeWidget()` open and dismiss the card; `DynaWall.setWidgetsEnabled(false)` is the
+  switch, from a script instead of a popover.
+- **The orbit's arrangement** — the seed the desktop was dealt and the spot each glyph wears are cached
+  in `localStorage` too (`dynawall.widgetSeed`, `dynawall.widgetPositions`), so a reload, an app launch,
+  a footprint change or a removed app never moves a satellite. Only adding an app re-deals the
+  constellation. `DynaWall.clearWidgetPositions(localStorage)` forgets the hand and lets the next deal
+  lay the orbit out from scratch.
 
 ## Releases
 
@@ -201,15 +211,7 @@ git push origin v1.0.0
   [Google Sans Flex](https://fonts.google.com/specimen/Google+Sans+Flex),
   [Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk) and
   [Geist](https://fonts.google.com/specimen/Geist) — all SIL OFL 1.1, licences in `assets/fonts/`.
-- Brand marks: the YouTube Music, YouTube and Google News glyphs on the satellites, and the marks a
-  shortcut can wear (GitHub, OpenAI/ChatGPT, Spotify, Discord, Reddit, Slack, X, Notion, Figma,
-  Instagram, Twitch, Netflix, Gmail, Drive, Docs, WhatsApp, Telegram, Apple, LinkedIn, Linear, Claude
-  and Gemini), are trademarks of their respective owners, traced to the official geometry as line art
-  purely to identify the app each one opens. They ship as path data in `index.html` and `script.js` —
-  no image files, no sprite sheet, no icons fetched at runtime — and DynaWall is not affiliated with or
-  endorsed by any of them. A shortcut nothing matches wears its own initials instead. The weather glyph
-  is a plain cloud — Open-Meteo is a data source, not a brand the wallpaper dresses as.
+- App icons: 100% high-resolution site favicons retrieved dynamically from each site's domain and rendered with subtle rounded squircle framing. An app whose icon cannot be loaded falls back cleanly to a generic application window drawn by the wallpaper itself.
 - Photos: six Golden Gate 5K time-of-day wallpapers plus six generated abstracts, free to replace via
   `GOLDEN_GATE_PHOTOS` / `ABSTRACT_PHOTOS` in `script.js`.
-- Weather: keyless [Open-Meteo](https://open-meteo.com/) forecast, requested only when the card opens.
 

@@ -615,14 +615,14 @@ function auditBenchmarks() {
   });
 
   const layers = {
-    ipc: { firstName: 'Ada', slideshow: true, widgetWeather: false },
+    ipc: { firstName: 'Ada', slideshow: true, widgets: false },
     seed: { subtitle: 'Shipping the wallpaper', theme: 'dusk', slideshowInterval: 5 },
     url: { name: 'Grace', bgColor: '#0b0f19', kenBurns: false },
     storage: { photoSync: false, fontFamily: 'Geist', slideshowShuffle: false },
     defaults: DynaWall.DEFAULT_CONFIG
   };
 
-  benchmark('resolveConfig() — five layers, 17 fields', {
+  benchmark('resolveConfig() — five layers, 13 fields', {
     iterations: 10000,
     run: () => DynaWall.resolveConfig(layers)
   });
@@ -670,12 +670,21 @@ function auditBenchmarks() {
       )
   });
 
+  // A shortcut has to find its mark on every render, so the catalogue lookup is on the hot
+  // path too — and the pack made it five hundred marks wide. The worst case is a title that
+  // matches nothing, because that is the lookup that has to look at everything it can.
+  const iconLookup = benchmark('serviceIconId() — one lookup in a 500-mark catalogue', {
+    iterations: 2000,
+    run: () => DynaWall.serviceIconId('Something Unmatched', 'https://example.com/notes')
+  });
+
   metric('classifyPhotos() speed-up from the WeakMap cache', `${(cold.meanUs / warm.meanUs).toFixed(1)}×`);
   metric(
     'normalizePhotos() speed-up over the quadratic path (500 entries)',
     `${(quadratic.meanUs / linear.meanUs).toFixed(1)}×`
   );
   metric('render() hot path, p95', micros(renderPath.p95Us));
+  metric('serviceIconId(), p95', micros(iconLookup.p95Us));
 
   note(`classification cache pays for itself: ${(cold.meanUs / warm.meanUs).toFixed(1)}× faster warm`);
   note(`linear de-duplication beats the quadratic path: ${(quadratic.meanUs / linear.meanUs).toFixed(1)}×`);
@@ -695,6 +704,10 @@ function auditBenchmarks() {
 
   check('a full render path costs well under one frame (p95 < 1 ms)', () => {
     if (!(renderPath.p95Us < 1000)) throw new Error(`p95 ${micros(renderPath.p95Us)}`);
+  });
+
+  check('a catalogue lookup is far below a frame even at five hundred marks (p95 < 250 µs)', () => {
+    if (!(iconLookup.p95Us < 250)) throw new Error(`p95 ${micros(iconLookup.p95Us)}`);
   });
 
   check('no hot routine is slower than the frame budget it lives in', () => {
@@ -760,10 +773,11 @@ const LAYOUT_PROPERTIES = new Set([
 
 /**
  * Infinite animations that are deliberately allowed to keep running while the
- * wallpaper is suspended. Each one is a card-internal state, not a desktop
- * layer, and each is reported as a finding so the list cannot grow silently.
+ * wallpaper is suspended. The apps card has no spinner left — an app is a link,
+ * not a request — so the list is empty, and it stays a list so a future exception
+ * has to be declared here instead of slipping through.
  */
-const SUSPENSION_EXCEPTIONS = new Set(['.widget-spinner']);
+const SUSPENSION_EXCEPTIONS = new Set();
 
 function isTimingToken(token) {
   const value = String(token || '').toLowerCase();
@@ -1296,10 +1310,8 @@ function auditAssets() {
       if (defaultSrc !== "'none'") throw new Error(`default-src is "${defaultSrc}"`);
     });
 
-    check('the only network hosts are the two Open-Meteo endpoints', () => {
-      const allowed = ['https://api.open-meteo.com', 'https://geocoding-api.open-meteo.com'];
-      const unexpected = connectSrc.filter((source) => allowed.indexOf(source) === -1);
-      if (unexpected.length) throw new Error(unexpected.join(', '));
+    check('the page cannot reach any network host at all', () => {
+      if (connectSrc.length) throw new Error(connectSrc.join(', '));
     });
 
     check('no page script is allowed to eval', () => {
@@ -1308,36 +1320,29 @@ function auditAssets() {
     });
   }
 
-  // The one network call: a forecast requested only when the weather card opens,
-  // with a hard abort and a cache window so re-opening it costs nothing.
+  // No network call at all: an app is handed to the OS browser, never loaded by the
+  // page, so there is no request to cache, abort or leak.
   const script = readText('script.js');
-  const fetchJson = functionBody(script, 'function fetchJson(', '\n  }');
-  metric(
-    'Weather cache window',
-    '10 min',
-    'a card opened again inside the window renders from memory, no request'
-  );
-  metric('Weather request timeout', '9 s', 'AbortController, cleared on both settle paths');
+  metric('Requests the page makes', '0', 'every app leaves for the default browser');
 
-  check('the weather request cannot leak a timer or a socket', () => {
-    if (!fetchJson) throw new Error('fetchJson() is missing');
-    const clears = (fetchJson.match(/win\.clearTimeout\(timer\)/g) || []).length;
-    if (clears < 2) throw new Error(`the abort timer is cleared on ${clears} of 2 settle paths`);
-    if (!/controller\.abort\(\)/.test(fetchJson)) throw new Error('no hard timeout: the request could hang');
-    if (!/credentials: 'omit'/.test(fetchJson)) throw new Error('the request must stay anonymous');
+  check('nothing in the page opens a socket', () => {
+    if (/\bfetch\(|XMLHttpRequest|navigator\.sendBeacon/.test(script)) {
+      throw new Error('the page must not fetch: an app is a link, not a request');
+    }
+    if (/api\.open-meteo\.com/.test(script)) {
+      throw new Error('the forecast endpoint must be gone with the weather card');
+    }
   });
 
-  check('nothing is fetched until a card is opened', () => {
-    const calls = script.match(/\bfetchJson\(/g) || [];
-    const sites = script.match(/(?<!function )\bfetchJson\(win,/g) || [];
-    if (calls.length !== 3) {
-      throw new Error(`${calls.length - 1} call site(s) — only the forecast and the city search may fetch`);
+  check('a link is the only thing a click produces', () => {
+    if (!/function openExternal\(win, url\)/.test(script)) {
+      throw new Error('openExternal() is missing: nothing could leave for the browser');
     }
-    if (sites.length !== 2) {
-      throw new Error(`${sites.length} call site(s): only the forecast and the city search may fetch`);
+    if (!script.includes('^https:\\/\\/[^\\s]+$')) {
+      throw new Error('only https may leave the wallpaper');
     }
-    if (!/Date\.now\(\) - weather\.fetchedAt < WEATHER_FRESH_MS/.test(script)) {
-      throw new Error('the card must render a fresh forecast without asking again');
+    if (!script.includes('dynawallOpenURL') || !script.includes("win.open(target, '_blank', 'noopener')")) {
+      throw new Error('the link must reach the native bridge, or the browser');
     }
   });
 

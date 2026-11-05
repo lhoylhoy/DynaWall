@@ -249,10 +249,6 @@ test('defaults win when every layer is empty', () => {
     kenBurns: true,
     photoSync: true,
     widgets: true,
-    widgetMusic: true,
-    widgetNews: true,
-    widgetYouTube: true,
-    widgetWeather: true,
     photos: [],
     fontFamily: 'Outfit',
     customFont: ''
@@ -277,10 +273,6 @@ test('layers resolve independently per field', () => {
     kenBurns: false,
     photoSync: true,
     widgets: true,
-    widgetMusic: true,
-    widgetNews: true,
-    widgetYouTube: true,
-    widgetWeather: true,
     photos: [],
     fontFamily: 'Outfit',
     customFont: ''
@@ -1346,22 +1338,23 @@ test('the popover aligns its cards, switches and controls on one grid', () => {
     'the card fill and its border must use the shared radius'
   );
 
-  // The four satellites are two equal columns on two rows, so the labels and the
-  // switches line up instead of drifting with the length of the words.
+  // The apps card is one switch: the apps themselves are the user's, added on the
+  // wallpaper through the `+`, so there is nothing per app to lay out here.
   const widgets = memberBody(swift, 'private var widgetsCard: some View');
-  assert.equal(
-    (widgets.match(/\.frame\(maxWidth: \.infinity, alignment: \.leading\)/g) || []).length,
-    4,
-    'each satellite takes exactly one column'
+  assert.match(
+    widgets,
+    /Toggle\("On the desktop", isOn: \$preferences\.widgets\)/,
+    'the card owns the orbit, and only the orbit'
   );
   assert.equal(
-    (widgets.match(/HStack\(alignment: \.center, spacing: Self\.toggleColumnSpacing\)/g) || []).length,
-    2,
-    'the satellites ride two rows of equal columns'
+    (widgets.match(/Toggle\(/g) || []).length,
+    1,
+    'one switch: the per-app settings are gone'
   );
-  ['Music', 'News', 'YouTube', 'Weather'].forEach((name) => {
-    assert.match(widgets, new RegExp(`Toggle\\("${name}", isOn: \\$preferences\\.widget`));
-  });
+  assert.ok(
+    !/preferences\.widget(Music|News|YouTube|Weather)/.test(swift),
+    'the four built-ins left no switch behind in the popover'
+  );
 
   // The slideshow options ride the same two-column grid as the widgets above them.
   const photos = memberBody(swift, 'private var photosCard: some View');
@@ -2255,19 +2248,19 @@ test('index.html ships a strict Content Security Policy', () => {
 test('the policy names exactly the hosts the page and the native hosts use', () => {
   const policy = contentSecurityPolicy();
 
-  // The weather card is the only thing that fetches, and it is keyless Open-Meteo.
+  // The page fetches nothing: every app the orbit launches is handed to the OS
+  // browser, so the wallpaper may only talk to itself.
   assert.deepEqual(
     cspSources(policy, 'connect-src'),
-    ["'self'"]
-      .concat(Array.from(DynaWall.WIDGET_FETCH_HOSTS, (host) => `https://${host}`))
-      .sort(),
-    'connect-src must be the declared fetch hosts and nothing else'
+    ["'self'"],
+    'connect-src must be self, and nothing else'
   );
 
-  // YouTube and Google News are handed to the OS browser; nothing in the page may
-  // ever reach them, so they cannot appear as a CSP source.
+  // The quick-add presets are browser-only, exactly like a typed address: no preset
+  // host may reach the policy, in any directive.
   const everySource = [...policy.keys(), ...[...policy.values()].flat()].join(' ');
-  DynaWall.WIDGET_LINK_HOSTS.forEach((host) => {
+  DynaWall.APP_PRESETS.forEach((preset) => {
+    const host = new URL(preset.url).host;
     assert.ok(!everySource.includes(host), `${host} is browser-only and must not be a CSP source`);
   });
 
@@ -2289,7 +2282,7 @@ test('the policy names exactly the hosts the page and the native hosts use', () 
   assert.ok(!imgSrc.includes('https:'), 'img-src must list hosts, not the whole https: scheme');
 
   const markup = readText('index.html');
-  assert.match(markup, /<meta name="referrer" content="no-referrer"/, 'no referrer leaks to Open-Meteo');
+  assert.match(markup, /<meta name="referrer" content="no-referrer"/, 'no referrer leaves the wallpaper');
 });
 
 test('a Windows desktop click converts screen pixels into CSS pixels', () => {
@@ -2833,11 +2826,11 @@ test('the bundled four stay the shared default but are hidden from the macOS dro
   });
 });
 
-test('the wallpaper itself never reaches the network, and the widgets name only declared hosts', () => {
+test('the wallpaper itself never reaches the network, and the apps only name presets', () => {
   // The chrome — markup, styles, fonts, photos — stays proof-positive offline. The
-  // Content Security Policy is the one place index.html may name a remote host (it
-  // has to: it is what forbids every other request), so it is removed before the scan
-  // and then checked host by host in the production-hardening group below.
+  // Content Security Policy is the one place index.html may name a remote host (it has
+  // to: it is what forbids every other request), so it is removed before the scan and
+  // then read directive by directive in the production-hardening group above.
   ['style.css', 'index.html'].forEach((file) => {
     const source = fs
       .readFileSync(path.join(ROOT, file), 'utf8')
@@ -2845,80 +2838,70 @@ test('the wallpaper itself never reaches the network, and the widgets name only 
     assert.ok(!/https?:\/\//.test(source), `${file} must not reference a remote URL`);
   });
 
-  // Every address in script.js has to belong to the widget catalogue, and every host
-  // the file names has to be declared: the declared list and the source can never
-  // drift apart in either direction.
+  // script.js names exactly two kinds of address: the quick-add presets and the
+  // `https://example.com` placeholder in the card's form. Every one of them is only
+  // ever handed to the OS browser — the page loads none of them.
   const script = readText('script.js');
   const hosts = new Set();
   script.replace(/https?:\/\/([^/'"\s)]+)/g, (match, host) => {
     hosts.add(host);
     return match;
   });
+  const expected = new Set(
+    DynaWall.APP_PRESETS.map((preset) => new URL(preset.url).host).concat('example.com', 'www.google.com', 'www.w3.org')
+  );
   assert.deepEqual(
     Array.from(hosts).sort(),
-    Array.from(DynaWall.WIDGET_REMOTE_HOSTS).sort(),
-    'script.js must name exactly the declared widget hosts'
-  );
-  DynaWall.WIDGET_LINK_HOSTS.forEach((host) => {
-    assert.ok(
-      !DynaWall.WIDGET_FETCH_HOSTS.includes(host),
-      `${host} cannot be both linked and fetched`
-    );
-  });
-
-  // Only the keyless Open-Meteo calls are made by the page, and only from the
-  // weather provider — never on load, never on a timer.
-  const fetches = Array.from(script.matchAll(/fetchJson\(win, (build\w+)/g)).map(
-    (match) => match[1]
-  );
-  assert.deepEqual(
-    fetches.sort(),
-    ['buildGeocodingUrl', 'buildWeatherForecastUrl'],
-    'the forecast and its city search are the only calls the page makes'
+    Array.from(expected).sort(),
+    'script.js must name exactly the presets and the form placeholder'
   );
 
-  // Nothing frames, prefetches or hot-links a remote surface.
+  // A page that opens links instead of loading them: no request of any kind.
+  assert.ok(!/\bfetch\(|XMLHttpRequest|fetchJson\(/.test(script), 'the page makes no request');
   assert.ok(
-    !/<iframe|new Image\(|<img[^>]+https?:|<script[^>]+src="https?:/.test(script),
+    !/<iframe|new Image\(|<script[^>]+src="https?:/.test(script),
     'no remote frames, images or scripts'
   );
-  assert.ok(!/setInterval\(/.test(script), 'no polling: a card fetches when it is opened');
+  assert.ok(!/setInterval\(/.test(script), 'no polling: there is nothing to poll for');
 });
 
 group('Widgets');
 
-test('every satellite in index.html has a widget, and every widget a satellite', () => {
+test('the markup ships one satellite — the `+` — and the card it opens', () => {
   const markup = readText('index.html');
-  const declared = Array.from(markup.matchAll(/data-widget="([a-z]+)"/g)).map((match) => match[1]);
-  assert.deepEqual(
-    declared,
-    DynaWall.WIDGETS.map((widget) => widget.id),
-    'the markup and the catalogue must list the same widgets, in the same order'
+
+  // Nothing is hard-coded any more: the ring is the user's list, and script.js deals one
+  // satellite per app it holds around the one control that ships in the page.
+  assert.ok(!/data-widget=/.test(markup), 'no built-in app is baked into the markup');
+  assert.match(markup, /<nav class="widget-orbit" id="widget-bar" aria-label="Desktop apps">/);
+  assert.match(markup, /id="widget-btn-add"/, 'the one control is the way to add an app');
+  assert.match(
+    markup,
+    /class="widget-btn widget-btn-add"/,
+    'and it wears the satellite class, so it is dealt like one'
   );
-  DynaWall.WIDGETS.forEach((widget) => {
-    assert.ok(
-      markup.includes(`id="widget-btn-${widget.id}"`),
-      `missing the satellite for ${widget.id}`
-    );
-    assert.ok(widget.title && widget.caption, `${widget.id} needs a card header`);
-  });
+  assert.match(markup, /title="Add an app"/);
+  assert.match(markup, /aria-label="Add an app"/);
+  assert.match(markup, /aria-haspopup="dialog"/, 'the satellite opens a dialog');
+  assert.match(markup, /aria-controls="widget-modal"/);
 
   assert.match(markup, /role="dialog"/, 'the card is a dialog');
   assert.match(markup, /aria-modal="true"/);
   assert.match(markup, /id="widget-modal-close"/, 'a close button must exist');
   assert.match(markup, /aria-labelledby="widget-modal-title"/);
-  assert.match(markup, /aria-controls="widget-modal"/);
+  assert.match(
+    markup,
+    /<h2 class="widget-modal-title" id="widget-modal-title">Apps<\/h2>/,
+    'the card says what it is: the apps manager'
+  );
+  assert.match(markup, /id="widget-modal-body"/, 'and hands script.js an empty body to paint');
 });
 
 test('the popup is inert until a satellite opens it', () => {
   const markup = readText('index.html');
   assert.match(markup, /id="widget-backdrop"[^>]*aria-hidden="true"/);
   const collapsed = (markup.match(/aria-expanded="false"/g) || []).length;
-  assert.equal(
-    collapsed,
-    DynaWall.WIDGETS.length,
-    'one per satellite: the orbit holds services and nothing else'
-  );
+  assert.equal(collapsed, 1, 'one per satellite: the orbit holds the `+` and nothing else');
   assert.equal(
     (markup.match(/aria-expanded=/g) || []).length,
     collapsed,
@@ -2965,52 +2948,31 @@ test('the satellites are bare white glyphs, not glass buttons', () => {
   assert.match(css, /backdrop-filter:\s*blur\(var\(--glass-blur\)\)/, 'the card is frosted');
   assert.match(css, /\.widget-modal\s*\{[^}]*border-radius:\s*var\(--glass-radius\)/);
 });
-test('the built-in satellites wear the official brand marks', () => {
-  // Each satellite is named after the app it opens (`YouTube Music`, `Google News`,
-  // `YouTube`) and its card's rows all go to that app's site, so the glyph is that app's
-  // own mark — traced to the official geometry, drawn in the wallpaper's one ink. Still
-  // no asset file and no request: the mark is path data in the page.
+test('the presets wear the brand marks the orbit wears', () => {
+  // Every preset wears its high-res favicon markup
+  DynaWall.APP_PRESETS.forEach((preset) => {
+    assert.match(preset.url, /^https:\/\//, `${preset.title} is a plain https page`);
+    assert.ok(
+      preset.title.length <= DynaWall.MAX_SERVICE_TITLE,
+      `${preset.title} has to fit the chip and the list`
+    );
+    const service = DynaWall.createCustomService(preset.title, preset.url);
+    assert.ok(service, `${preset.title} must be a legal app`);
+    assert.match(
+      DynaWall.serviceGlyphMarkup(service),
+      /class="widget-favicon"/,
+      `${preset.title} wears a high-res favicon`
+    );
+  });
+
+  // The `+` ships in the page, in the same ink and at the same weight as the marks it
+  // adds to the ring: a bare plus, never a borrowed logo.
   const markup = readText('index.html');
-
-  /** The glyph of one satellite: from its `data-widget` to the `</svg>` that closes it. */
-  const glyphOf = (id) => {
-    const match = new RegExp(`data-widget="${id}"[\\s\\S]*?</svg>`).exec(markup);
-    assert.ok(match, `the ${id} satellite lost its glyph`);
-    return match[0];
-  };
-
-  // YouTube Music is a disc with its ring and a play triangle, not a generic note.
-  const music = glyphOf('music');
-  assert.match(music, /<circle cx="12" cy="12" r="10\.9"/, 'the disc');
-  assert.match(music, /<circle cx="12" cy="12" r="6\.05"/, 'the ring inside it');
-  assert.match(music, /M9\.9 15\.2V8\.8l5\.6 3\.2Z/, 'the play triangle');
-  assert.ok(!/M9 17\.5V5\.2/.test(music), 'the old music note must be gone');
-
-  // YouTube's badge is 24 wide for every 16.9 tall. The old glyph was nearly square
-  // (21.8 x 19.6), which is why it read as a plain rounded rectangle rather than the logo.
-  const youtube = glyphOf('youtube');
-  const badge = /M3\.8 4\.32h16\.4[\s\S]*?H3\.8[\s\S]*?Z/.exec(youtube);
-  assert.ok(badge, 'the badge outline is missing');
-  const badgeWidth = 22.92 - 1.08;
-  const badgeHeight = 19.68 - 4.32;
-  assert.ok(
-    Math.abs(badgeWidth / badgeHeight - 24 / 16.9) < 0.05,
-    `the badge lost the logo's aspect ratio (${(badgeWidth / badgeHeight).toFixed(2)}:1)`
-  );
-  assert.match(youtube, /M9\.77 15\.24V8\.76L15\.47 12Z/, 'the optical play triangle');
-
-  // Google News is the folded page with the app icon's 2 x 2 cells.
-  const news = glyphOf('news');
-  assert.match(news, /M17\.9 6\.3H10v7\.9h7\.9Z/, 'the cell block');
-  assert.match(news, /M14 6\.3v7\.9M10 10\.2h7\.9/, 'split into the four cells');
-
-  // The marks are line art, not filled plates: the only fill allowed is the ink itself.
-  ['music', 'news', 'youtube', 'weather'].forEach((id) => {
-    const glyph = glyphOf(id);
-    const fills = Array.from(glyph.matchAll(/fill="([^"]+)"/g)).map((match) => match[1]);
-    fills.forEach((fill) => {
-      assert.equal(fill, 'currentColor', `the ${id} glyph fills with ${fill}, not the ink`);
-    });
+  const glyph = /id="widget-btn-add"[\s\S]*?<\/svg>/.exec(markup);
+  assert.ok(glyph, 'the `+` satellite lost its glyph');
+  assert.match(glyph[0], /<path d="M12 5v14M5 12h14"/, 'a bare plus');
+  Array.from(glyph[0].matchAll(/fill="([^"]+)"/g)).forEach(([, fill]) => {
+    assert.equal(fill, 'currentColor', 'the plus fills with the ink, not a plate');
   });
 });
 
@@ -3044,7 +3006,7 @@ test('the satellites ring the greeting, scattered rather than evenly placed', ()
   };
 
   const points = DynaWall.scatterWidgets(options);
-  assert.equal(points.length, DynaWall.WIDGETS.length, 'one satellite per widget');
+  assert.equal(points.length, viewport.count, 'one point per satellite');
   assert.deepEqual(DynaWall.scatterWidgets(options), points, 'the same seed deals the same hand');
 
   const quadrants = new Set();
@@ -3304,102 +3266,70 @@ test('the satellites are a setting, on by default and resolvable from every laye
   assert.equal(config.widgets, false, 'a live host switch outranks the URL and the cache');
 });
 
-test('each satellite has a switch of its own, in every config layer', () => {
-  // One setting per satellite, all defaulting on and all named after the catalogue id.
-  const ids = DynaWall.WIDGETS.map((widget) => widget.id);
-  assert.deepEqual(ids, ['music', 'news', 'youtube', 'weather']);
-  assert.deepEqual(Object.keys(DynaWall.WIDGET_FIELDS).sort(), ids.slice().sort());
-  assert.deepEqual(DynaWall.WIDGET_SETTING_FIELDS, [
-    'widgets',
-    'widgetMusic',
-    'widgetNews',
-    'widgetYouTube',
-    'widgetWeather'
-  ]);
-
-  ids.forEach((id) => {
-    const field = DynaWall.WIDGET_FIELDS[id];
-    assert.equal(
-      DynaWall.DEFAULT_CONFIG[field],
-      true,
-      `${id} is on by default, like the master switch`
-    );
-    assert.equal(DynaWall.STORAGE_KEYS[field], `dynawall.${field}`, `${id} is cached on its own`);
-    // Lively and Wallpaper Engine hand the same field over: one checkbox each.
-    assert.deepEqual(DynaWall.mapLivelyProperty(field, 'false'), { field: field, value: false });
+test('the orbit is one setting: nothing about an app is a host control', () => {
+  // The four built-ins are gone, and with them every per-app flag: the apps are the
+  // user's own list, added on the wallpaper, so no host control has to know one.
+  ['widgetMusic', 'widgetNews', 'widgetYouTube', 'widgetWeather'].forEach((field) => {
+    assert.equal(DynaWall.DEFAULT_CONFIG[field], undefined, `${field} is no host setting`);
+    assert.equal(DynaWall.STORAGE_KEYS[field], undefined, `${field} is not cached`);
+    assert.equal(DynaWall.mapLivelyProperty(field, 'false'), null, `${field} is not a Lively item`);
     assert.deepEqual(
       DynaWall.mapWallpaperEngineProperties({ [field.toLowerCase()]: { value: false } }),
-      [{ field: field, value: false }]
+      [],
+      `${field} is not a Wallpaper Engine property`
     );
   });
+  assert.deepEqual(DynaWall.parseQueryParams('?music=false'), {}, 'no per-app query parameter');
+  assert.deepEqual(DynaWall.parseQueryParams('?widgetyoutube=false'), {});
 
-  // `?music=false` for one satellite, in both spellings.
-  assert.equal(DynaWall.parseQueryParams('?music=false').widgetMusic, false);
-  assert.equal(DynaWall.parseQueryParams('?widgetyoutube=false').widgetYouTube, false);
-  assert.equal(DynaWall.parseQueryParams('?weather=0').widgetWeather, false);
-  assert.equal(DynaWall.parseQueryParams('?news=on').widgetNews, true);
-
-  // …and one cache entry per satellite.
-  assert.deepEqual(
-    DynaWall.readStoredConfig(
-      fakeStorage({ 'dynawall.widgetMusic': 'false', 'dynawall.widgetWeather': 'false' })
-    ),
-    { widgetMusic: false, widgetWeather: false }
-  );
-
-  // Hiding one satellite leaves the other three as they were: the layers resolve field by
-  // field, so a host pushing one flag cannot reset its neighbours.
-  const config = DynaWall.resolveConfig({
-    ipc: { widgetYouTube: false },
-    storage: { widgetMusic: false },
-    url: { widgetNews: false },
-    defaults: DynaWall.DEFAULT_CONFIG
-  });
-  assert.deepEqual(
-    {
-      widgets: config.widgets,
-      music: config.widgetMusic,
-      news: config.widgetNews,
-      youtube: config.widgetYouTube,
-      weather: config.widgetWeather
-    },
-    { widgets: true, music: false, news: false, youtube: false, weather: true }
-  );
+  // The orbit's own switch is untouched, and it is the only one the configuration has.
+  const fields = Object.keys(DynaWall.DEFAULT_CONFIG).filter((field) => field.indexOf('widget') === 0);
+  assert.deepEqual(fields, ['widgets'], 'one switch for the whole orbit');
+  assert.deepEqual(DynaWall.parseQueryParams('?apps=false'), { widgets: false }, 'apps is an alias');
 });
 
-test('a hidden satellite is hidden for real: unplaced, unclickable, and its card closes', () => {
+test('a switched-off orbit is off for real: unplaced, unclickable, and the card closes', () => {
   const css = readText('style.css');
-  // Removed rather than faded: a hidden orbit cannot drift, be measured or be clicked.
+  // Removed rather than faded: a switched-off orbit cannot drift, be measured or be clicked.
   assert.match(css, /html\.is-widgets-off \.widget-orbit\s*\{[^}]*display:\s*none/);
-  // Same for one satellite at a time: `.widget-btn` sets `display: grid`, so the state is
+  // The `+` leaves with it, and `.widget-btn` sets `display: grid`, so the state is
   // spelled out rather than left to the browser's own `[hidden]` rule.
   assert.match(css, /\.widget-btn\[hidden\]\s*\{[^}]*display:\s*none/);
 
   const script = readText('script.js');
-  // The page starts in the state the configuration asked for, before the first deal.
+  // The page opens in the state the configuration asked for, before the first deal.
   assert.match(script, /createWidgets\(window, document, \{ config: app\.state\.config \}\)/);
   assert.match(script, /classList\.add\('is-widgets-off'\)/);
-  assert.match(script, /function applyConfig\(next\)/, 'the switches are live, not a reload');
-  assert.match(script, /button\.hidden = !visible/, 'a hidden satellite leaves the layout');
-  assert.match(script, /if \(!visible && state\.activeId === id\) closeWidget\(\)/, 'and its card');
-  assert.match(script, /function scatter\(\) \{\n\s+if \(!state\.enabled\) return;/, 'nothing is placed while off');
-  // Only the glyphs actually on screen are dealt — built-in and custom alike.
+  assert.match(script, /function applyConfig\(next\)/, 'the switch is live, not a reload');
+  assert.match(
+    script,
+    /if \(addButton\.hidden !== hide\) addButton\.hidden = hide;/,
+    'the `+` leaves the layout'
+  );
+  assert.match(script, /if \(!master && state\.open\) closeCard\(\);/, 'and the open card closes');
+  assert.match(
+    script,
+    /function scatter\(options\) \{\n\s+if \(!state\.enabled\) return;/,
+    'nothing is placed while off'
+  );
+  // Only the glyphs actually on screen are dealt — the `+` and every app alike.
   assert.match(script, /function placedButtons\(\)[\s\S]{0,120}return !button\.hidden;/);
   assert.match(script, /const active = placedButtons\(\);/, 'only the visible ones are dealt');
   assert.match(script, /count: active\.length/, 'and the ring is sized for them');
-  // No rectangles at all: the desktop belongs to the Finder when the widgets are off, and
-  // a hidden satellite reports nothing either way.
-  assert.match(script, /const open = state\.enabled && Boolean\(state\.activeId\)/);
+  // No rectangles at all: the desktop belongs to the Finder when the orbit is off.
+  assert.match(script, /const open = state\.enabled && state\.open;/);
   assert.match(script, /\} else if \(state\.enabled\) \{/, 'button rectangles need the switch too');
-  // A live change reaches the controller, and the console can drive it as well.
+  // The card cannot be opened on a desktop that does not show it.
   assert.match(
     script,
-    /WIDGET_SETTING_FIELDS\.some\(function \(field\) \{ return touched\[field\]; \}\)/,
-    'every widget field reaches the controller'
+    /if \(id !== APPS_CARD_ID\) return false;\n\s+if \(!state\.enabled\) return false;/,
+    'a switched-off orbit answers no card'
   );
+  // A live change reaches the controller, and the console can drive it as well.
+  assert.match(script, /if \(widgetsRef && touched\.widgets\)/, 'the switch reaches the controller');
   assert.match(script, /widgetsRef\.applyConfig\(next\)/);
   assert.match(script, /setWidgetsEnabled: function/);
-  assert.match(script, /setWidgetEnabled: function/);
+  assert.ok(!/setWidgetEnabled: function/.test(script), 'and there is no per-app switch left');
 });
 
 test('every host owns the Desktop widgets switch', () => {
@@ -3408,7 +3338,7 @@ test('every host owns the Desktop widgets switch', () => {
   assert.equal(lively.widgets.value, DynaWall.DEFAULT_CONFIG.widgets);
   assert.equal(
     lively.__HEADER_WIDGETS__.value,
-    'Widgets',
+    'Desktop apps',
     'the property sits under its own header in Lively'
   );
 
@@ -3436,278 +3366,20 @@ test('every host owns the Desktop widgets switch', () => {
   assert.match(form, /private readonly ToggleSwitch widgetsBox = new\(\);/);
   assert.match(
     form,
-    /AddCard\(root, "Widgets", widgetsBox, widgetOptions\)/,
+    /AddCard\(root, "Desktop apps", widgetsBox\)/,
     'the switch is visible in the window'
   );
+  assert.match(form, /StyleToggle\(widgetsBox, "Apps on the desktop"\)/);
   assert.match(form, /Preferences\.Widgets = widgetsBox\.Checked/);
 });
-test('every host owns a switch for each satellite', () => {
-  const lively = readJson('LivelyProperties.json');
-  const project = readJson('project.json');
-  const swift = hostSwift();
-  const prefs = readText('windows/Preferences.cs');
-  const form = readText('windows/SettingsForm.cs');
-
-  // One switch per satellite, named off the same catalogue the page uses, in all four
-  // hosts: Lively's checkbox, Wallpaper Engine's bool, the popover's Toggle and the
-  // Windows window's ToggleSwitch.
-  const labels = { music: 'Music', news: 'News', youtube: 'YouTube', weather: 'Weather' };
-
-  DynaWall.WIDGETS.forEach((widget) => {
-    const { id } = widget;
-    // The field the page reads, the C# property that carries it, the window's box.
-    const field = DynaWall.WIDGET_FIELDS[id];
-    const prop = field.charAt(0).toUpperCase() + field.slice(1);
-    const box = `${field}Box`;
-    const weKey = field.toLowerCase();
-    const push = `livelyPropertyListener("${field}", \\(${field} ? "true" : "false"));`;
-    const seed = `\\"${field}\\": \\(${field} ? "true" : "false")`;
-
-    assert.equal(lively[field].type, 'checkbox', `Lively has a ${field} checkbox`);
-    assert.equal(lively[field].value, true);
-    assert.equal(project.general.properties[weKey].type, 'bool', `Wallpaper Engine has ${weKey}`);
-    assert.equal(project.general.properties[weKey].value, true);
-
-    // macOS: stored, keyed, seeded, pushed live and shown in the popover.
-    assert.ok(swift.includes(`@Published var ${field}: Bool`), `macOS stores ${field}`);
-    assert.ok(
-      swift.includes(`static let ${field} = "desktop${prop}"`),
-      `macOS keys ${field} in UserDefaults`
-    );
-    assert.ok(swift.includes(push), `macOS pushes ${field} live`);
-    assert.ok(swift.includes(seed), `the seed carries ${field}, so the first frame is right`);
-    assert.ok(
-      swift.includes(`Toggle("${labels[id]}", isOn: $preferences.${field})`),
-      `the popover shows a ${id} switch`
-    );
-
-    // Windows: stored, seeded, pushed live and shown in the window.
-    assert.ok(prefs.includes(`public bool ${prop} { get; set; } = true;`), `stores ${prop}`);
-    assert.ok(prefs.includes(`values.Add(("${field}", ${prop}))`), 'pushed like the rest');
-    assert.ok(prefs.includes(`["${field}"] = ${prop}`), 'and seeded at document start');
-    assert.ok(form.includes(`private readonly ToggleSwitch ${box} = new();`));
-    assert.ok(form.includes(`StyleToggle(${box}, "${labels[id]}");`), `a ${id} switch is shown`);
-    assert.ok(form.includes(`Preferences.${prop} = ${box}.Checked`), 'and saves it');
-    assert.ok(form.includes(`${box}.Checked = Preferences.${prop};`), 'and reloads it');
-  });
-
-});
-
-
-
-test('the widget URLs are built and encoded, not pasted', () => {
-  assert.equal(
-    DynaWall.buildYouTubeMusicSearchUrl('lo-fi & jazz'),
-    'https://music.youtube.com/search?q=lo-fi%20%26%20jazz'
-  );
-  assert.equal(DynaWall.buildYouTubeMusicSearchUrl('   '), 'https://music.youtube.com/');
-  assert.equal(
-    DynaWall.buildYouTubeSearchUrl('live'),
-    'https://www.youtube.com/results?search_query=live'
-  );
-  assert.equal(DynaWall.buildYouTubeTrendingUrl('gb'), 'https://www.youtube.com/feed/trending?gl=GB');
-  assert.equal(DynaWall.buildYouTubeTrendingUrl(''), 'https://www.youtube.com/feed/trending');
-  assert.equal(DynaWall.buildGoogleNewsUrl(''), 'https://news.google.com/');
-  assert.equal(
-    DynaWall.buildGoogleNewsUrl('world news'),
-    'https://news.google.com/search?q=world%20news&hl=en-US&gl=US&ceid=US%3Aen'
-  );
-  assert.equal(DynaWall.clipText('  a\n b  '), 'a b');
+test('a typed name is clipped to fit, and never to nothing', () => {
+  // The name is the optional half of the form: whatever is typed is squeezed onto one
+  // line and cut to the card's budget, so a paste cannot grow the list a row at a time.
+  assert.equal(DynaWall.clipText('  a\n b  '), 'a b', 'line breaks collapse to one space');
   assert.equal(DynaWall.clipText('abcdef', 3), 'abc');
-});
-
-test('the forecast request asks for exactly what the card draws', () => {
-  const url = DynaWall.buildWeatherForecastUrl({
-    latitude: 51.5072,
-    longitude: -0.1276,
-    unit: 'celsius'
-  });
-  assert.ok(url.startsWith('https://api.open-meteo.com/v1/forecast?'));
-  [
-    'latitude=51.5072',
-    'longitude=-0.1276',
-    'timezone=auto',
-    'forecast_days=2',
-    'temperature_unit=celsius',
-    'wind_speed_unit=kmh',
-    'current=temperature_2m,relative_humidity_2m',
-    'hourly=temperature_2m,weather_code,precipitation_probability',
-    'daily=temperature_2m_max,temperature_2m_min'
-  ].forEach((part) => {
-    assert.ok(url.includes(part), `the forecast URL is missing ${part}`);
-  });
-
-  const imperial = DynaWall.buildWeatherForecastUrl({
-    latitude: 40.7,
-    longitude: -74,
-    unit: 'fahrenheit'
-  });
-  assert.ok(imperial.includes('temperature_unit=fahrenheit'));
-  assert.ok(imperial.includes('wind_speed_unit=mph'));
-  assert.equal(DynaWall.normalizeTemperatureUnit('kelvin'), 'celsius');
-
-  const geo = DynaWall.buildGeocodingUrl('  Zürich ');
-  assert.ok(geo.startsWith('https://geocoding-api.open-meteo.com/v1/search?'));
-  assert.ok(geo.includes('name=Z%C3%BCrich'));
-  assert.ok(geo.includes('count=6'));
-});
-
-test('the forecast parser reads the payload the card shows', () => {
-  const payload = {
-    current: {
-      time: '2026-01-15T14:30',
-      temperature_2m: 7.6,
-      relative_humidity_2m: 81,
-      apparent_temperature: 5.2,
-      is_day: 1,
-      weather_code: 61,
-      wind_speed_10m: 14.3
-    },
-    hourly: {
-      time: [
-        '2026-01-15T13:00',
-        '2026-01-15T14:00',
-        '2026-01-15T15:00',
-        '2026-01-15T16:00',
-        '2026-01-15T17:00',
-        '2026-01-15T18:00',
-        '2026-01-15T19:00'
-      ],
-      temperature_2m: [7.1, 7.6, 8, 8.4, 8.1, 7.2, 6.4],
-      weather_code: [3, 61, 61, 80, 3, 2, 1],
-      precipitation_probability: [10, 55, 70, 40, 15, 5, 0]
-    },
-    daily: { temperature_2m_max: [9.4], temperature_2m_min: [2.6] }
-  };
-
-  const data = DynaWall.parseWeatherPayload(payload, { unit: 'celsius' });
-  assert.equal(data.temperature, '8°');
-  assert.equal(data.apparent, '5°');
-  assert.equal(data.high, '9°');
-  assert.equal(data.low, '3°');
-  assert.equal(data.humidity, '81%');
-  assert.equal(data.wind, '14 km/h');
-  assert.equal(data.rain, '70%', 'the highest chance in the six hours on screen');
-  assert.equal(data.label, 'Light rain');
-  assert.equal(data.glyph, 'rain');
-  assert.equal(data.unitSuffix, '°C');
-  assert.equal(data.hours.length, 6, 'six hours fit the strip');
-  assert.equal(data.hours[0].hour, '14:00', 'the strip starts at the current hour');
-  assert.equal(data.hours[0].isNow, true);
-  assert.equal(data.hours[1].hour, '15:00');
-
-  assert.equal(DynaWall.parseWeatherPayload(null), null);
-  assert.equal(DynaWall.parseWeatherPayload({}), null);
-  assert.equal(DynaWall.parseWeatherPayload({ current: {} }), null, 'a payload without a temperature is not a forecast');
-  assert.equal(DynaWall.parseWeatherPayload({ current: { temperature_2m: 3 } }).hours.length, 0);
-});
-
-test('unknown weather codes are admitted, never guessed', () => {
-  assert.deepEqual(DynaWall.describeWmoCode(0), { label: 'Clear sky', glyph: 'clear' });
-  assert.deepEqual(DynaWall.describeWmoCode(95), { label: 'Thunderstorm', glyph: 'storm' });
-  assert.deepEqual(DynaWall.describeWmoCode(1234), { label: 'Unsettled', glyph: 'cloud' });
-  assert.deepEqual(DynaWall.describeWmoCode('nope'), { label: 'Unsettled', glyph: 'cloud' });
-  Object.keys(DynaWall.WEATHER_GLYPHS).forEach((name) => {
-    assert.match(DynaWall.WEATHER_GLYPHS[name], /^<(circle|path)/, `${name} has no artwork`);
-  });
-});
-
-test('a city can be picked without a keyboard', () => {
-  // The native desktop never gives the page focus, so the starter cities are the only
-  // way into the weather card there; they have to be real, usable coordinates.
-  assert.equal(DynaWall.WEATHER_CITIES.length, 6);
-  const names = new Set();
-  DynaWall.WEATHER_CITIES.forEach((city) => {
-    assert.ok(city.name && city.country, `${city.name || '?'} needs a name and a country`);
-    assert.ok(!names.has(city.name), `${city.name} is listed twice`);
-    names.add(city.name);
-    assert.ok(
-      Number.isFinite(city.latitude) && city.latitude >= -90 && city.latitude <= 90,
-      `${city.name} needs a real latitude`
-    );
-    assert.ok(
-      Number.isFinite(city.longitude) && city.longitude >= -180 && city.longitude <= 180,
-      `${city.name} needs a real longitude`
-    );
-    const url = DynaWall.buildWeatherForecastUrl({ ...city, unit: 'celsius' });
-    assert.ok(url.includes(`latitude=${city.latitude}`), `${city.name} must reach the API`);
-  });
-  // Half the world is south of the equator and east of Greenwich.
-  assert.ok(DynaWall.WEATHER_CITIES.some((city) => city.latitude < 0), 'the list is not all north');
-  assert.ok(DynaWall.WEATHER_CITIES.some((city) => city.longitude > 0), 'nor all west');
-});
-
-test('the city search keeps only places a forecast can be asked for', () => {
-  const places = DynaWall.parseGeocodingResults({
-    results: [
-      { id: 1, name: 'Lisbon', admin1: 'Lisbon', country: 'Portugal', latitude: 38.72, longitude: -9.14 },
-      { id: 2, name: 'Nowhere' },
-      null,
-      { id: 3, name: '  Lisbon  ', admin1: 'Ohio', country: 'United States', latitude: '40.77', longitude: '-80.62' }
-    ]
-  });
-  assert.equal(places.length, 2);
-  assert.equal(places[0].label, 'Lisbon · Lisbon · Portugal');
-  assert.equal(places[1].name, 'Lisbon');
-  assert.equal(places[1].latitude, 40.77, 'strings from JSON become numbers');
-  assert.deepEqual(DynaWall.parseGeocodingResults({}), []);
-  assert.deepEqual(DynaWall.parseGeocodingResults(null), []);
-});
-
-test('the weather place and unit survive a reload', () => {
-  const storage = fakeStorage();
-  DynaWall.writeWeatherPlace(storage, {
-    name: 'Lisbon',
-    region: 'Lisbon',
-    country: 'Portugal',
-    latitude: 38.72,
-    longitude: -9.14
-  });
-  const place = DynaWall.readWeatherPlace(storage);
-  assert.equal(place.name, 'Lisbon');
-  assert.equal(place.latitude, 38.72);
-
-  DynaWall.writeWeatherUnit(storage, 'fahrenheit');
-  assert.equal(DynaWall.readWeatherUnit(storage), 'fahrenheit');
-
-  // Anything hand-edited, truncated or from a future version means "no place yet",
-  // so the card asks where you are instead of throwing on load.
-  assert.equal(
-    DynaWall.readWeatherUnit(fakeStorage({ 'dynawall.weatherUnit': 'kelvin' })),
-    'celsius'
-  );
-  assert.equal(DynaWall.readWeatherPlace(fakeStorage({ 'dynawall.weatherPlace': '{oops' })), null);
-  assert.equal(DynaWall.readWeatherPlace(fakeStorage({ 'dynawall.weatherPlace': '{"name":"X"}' })), null);
-  assert.equal(DynaWall.readWeatherPlace(fakeStorage({ 'dynawall.weatherPlace': 'null' })), null);
-});
-
-test('relative timestamps and locale regions are read defensively', () => {
-  const now = 1_700_000_000_000;
-  assert.equal(DynaWall.relativeTime(now, now), 'just now');
-  assert.equal(DynaWall.relativeTime(now - 4 * 60_000, now), '4 min ago');
-  assert.equal(DynaWall.relativeTime(now - 2 * 3_600_000, now), '2 h ago');
-  assert.equal(DynaWall.relativeTime(now - 50 * 3_600_000, now), '2 d ago');
-  assert.equal(DynaWall.relativeTime(0, now), 'never');
-  assert.equal(DynaWall.hourLabel('2026-01-15T09:00'), '09:00');
-
-  assert.equal(DynaWall.regionCodeFromLocale('en-GB'), 'GB');
-  assert.equal(DynaWall.regionCodeFromLocale('pt_BR'), 'BR');
-  assert.equal(DynaWall.regionCodeFromLocale(''), 'US');
-  assert.equal(DynaWall.regionCodeFromLocale(undefined), 'US');
-
-  assert.equal(DynaWall.NEWS_DESKS[0].query, '', 'the first desk is the unfiltered front page');
-  DynaWall.NEWS_DESKS.forEach((desk) => {
-    assert.ok(
-      DynaWall.buildGoogleNewsUrl(desk.query).startsWith('https://news.google.com/'),
-      `${desk.title} must leave for Google News`
-    );
-  });
-  DynaWall.MUSIC_STATIONS.forEach((station) => {
-    assert.ok(
-      DynaWall.buildYouTubeMusicSearchUrl(station.query).startsWith('https://music.youtube.com/'),
-      `${station.title} must leave for YouTube Music`
-    );
-  });
+  assert.equal(DynaWall.clipText('  ', 3), '');
+  assert.equal(DynaWall.clipText(null), '');
+  assert.equal(DynaWall.MAX_SERVICE_TITLE, 40, 'a name that fits a chip and a row');
 });
 
 test('the macOS host forwards desktop clicks into a card without taking any', () => {
@@ -3774,19 +3446,15 @@ test('a card takes the keyboard while it is open and gives it straight back', ()
   assert.match(swift, /dismissOpenWidgets\(reason: "wallpaper paused"\)/);
 });
 
-test('every card form answers a replayed click, not only a form submit', () => {
+test('the card answers a replayed click, not only a form submit', () => {
   const script = readText('script.js');
 
   // A replayed click is synthetic, and a synthetic click on a submit button does not
-  // reliably submit its form: each card runs its action from the button itself.
-  assert.match(script, /const submit = el\('button', 'widget-submit', 'Search'\);/);
-  assert.match(script, /const submit = el\('button', 'widget-submit', 'Find'\);/);
-  assert.match(script, /const submit = el\('button', 'widget-submit', 'Add'\);/);
-  assert.equal(
-    (script.match(/submit\.addEventListener\('click'/g) || []).length,
-    3,
-    'each card answers a click on its own button'
-  );
+  // reliably submit its form: the card runs its action from the button itself, while
+  // Return in either field still goes through the form.
+  assert.match(script, /const submitButton = el\('button', 'widget-submit', 'Add'\);/);
+  assert.match(script, /submitButton\.addEventListener\('click'/, 'the Add button answers a click');
+  assert.match(script, /form\.addEventListener\('submit'/, 'and so does Return in a field');
 
   // The host's replay asks the owning button for a real click, which is what runs the
   // activation behaviour (a form submission included) a dispatched MouseEvent never does.
@@ -3925,184 +3593,101 @@ test('a shortcut address is a plain https page, or nothing at all', () => {
   );
 });
 
-test('a shortcut wears an official brand mark, or its own initials', () => {
-  // The catalogue is line art in the built-in satellites' own language: a handful of
-  // plain shapes per mark, drawn in the wallpaper's own ink at the same stroke weight,
-  // and nothing is ever fetched for it.
-  const ids = DynaWall.SERVICE_ICONS.map((icon) => icon.id);
-  assert.equal(new Set(ids).size, ids.length, 'every mark has its own id');
-  DynaWall.SERVICE_ICONS.forEach((icon) => {
-    assert.ok(icon.id && icon.label && icon.hints.length > 0, `${icon.id} needs a label and hints`);
-    assert.match(icon.paths, /^<(path|circle|rect)/, `${icon.id} is drawn from plain shapes`);
-    assert.ok(
-      !/https?:/.test(icon.paths + ' ' + icon.hints.join(' ')),
-      `${icon.id} must not name a host in its words: the CSP owns that list`
-    );
-    assert.ok(
-      !/<image|href|url\(|@import|stroke-width/.test(icon.paths),
-      `${icon.id} is drawn, not borrowed: no picture, no link, no local weight`
-    );
-    // A host is only ever compared with the address the user pasted; it is never a
-    // policy, and it never reaches a request.
-    (icon.domains || []).forEach((domain) => {
-      assert.match(domain, /^[a-z0-9-]+(\.[a-z0-9-]+)+$/, `${icon.id}: "${domain}" is a bare host`);
-    });
-  });
+test('a shortcut wears a high-res favicon, with fallback to the generic window', () => {
+  // 100% favicon architecture: every shortcut gets the site's own high-res favicon
+  // from the favicon service, with a generic window SVG fallback if unavailable.
+  const genericIcon = DynaWall.SERVICE_ICONS[0];
+  assert.equal(genericIcon.id, DynaWall.GENERIC_ICON_ID);
+  assert.match(genericIcon.paths, /^<rect/);
 
-  // Two brands can never claim the same host: which mark an address wears would
-  // otherwise depend on catalogue order rather than on the address.
-  const claimed = [];
-  DynaWall.SERVICE_ICONS.forEach((icon) => {
-    (icon.domains || []).forEach((domain) => claimed.push(domain));
-  });
-  assert.equal(new Set(claimed).size, claimed.length, 'every host belongs to exactly one brand');
-
-  // Every brand the ring knows, resolved from the address — which is asked first, so
-  // `x.com` is a brand rather than a letter and `chat.openai.com` is ChatGPT.
-  [
-    ['ChatGPT', 'https://chat.openai.com', 'chatgpt'],
-    ['OpenAI', 'https://chatgpt.com', 'chatgpt'],
-    ['GitHub', 'https://github.com', 'github'],
-    ['Spotify', 'https://open.spotify.com', 'spotify'],
-    ['Discord', 'https://discord.com', 'discord'],
-    ['Reddit', 'https://reddit.com', 'reddit'],
-    ['Slack', 'https://app.slack.com', 'slack'],
-    ['X', 'https://x.com', 'x'],
-    ['', 'https://twitter.com/ada', 'x'],
-    ['Twitch', 'https://www.twitch.tv', 'twitch'],
-    ['Notion', 'https://notion.so', 'notion'],
-    ['Figma', 'https://figma.com', 'figma'],
-    ['Instagram', 'https://instagram.com', 'instagram'],
-    ['Netflix', 'https://netflix.com', 'netflix'],
-    ['Gmail', 'https://mail.google.com', 'gmail'],
-    ['Drive', 'https://drive.google.com', 'drive'],
-    ['Docs', 'https://docs.google.com', 'docs'],
-    ['WhatsApp', 'https://web.whatsapp.com', 'whatsapp'],
-    ['Telegram', 'https://t.me/ada', 'telegram'],
-    ['Apple', 'https://apple.com', 'apple'],
-    ['LinkedIn', 'https://linkedin.com', 'linkedin'],
-    ['Claude', 'https://claude.ai', 'claude'],
-    ['Gemini', 'https://gemini.google.com', 'gemini'],
-    ['Linear', 'https://linear.app', 'linear'],
-    ['YouTube Music', 'https://music.youtube.com', 'youtubemusic'],
-    ['YouTube', 'https://youtu.be/ada', 'youtube']
-  ].forEach(([title, url, expected]) => {
-    assert.equal(DynaWall.serviceIconId(title, url), expected, `${title || url} wears ${expected}`);
-  });
-
-  // A service that is not a brand still reads as its kind, and one that is nothing at
-  // all falls through to its initials instead of to somebody else's logo.
-  [
-    ['Notes', 'https://example.com/notes', 'page'],
-    ['Chat', 'https://chat.example.com', 'talk'],
-    ['Music', 'https://soundcloud.com', 'wave'],
-    ['Video', 'https://vimeo.com', 'play'],
-    ['Calendar', 'https://calendly.com', 'calendar'],
-    ['Mail', 'https://proton.me', 'mail'],
-    ['Code', 'https://gitlab.com', 'code'],
-    ['Design', 'https://canva.com', 'pen'],
-    ['Photos', 'https://unsplash.com', 'camera'],
-    ['Maps', 'https://maps.example.com', 'globe'],
-    ['Assistant', 'https://copilot.microsoft.com', 'sparkle'],
-    ['Somewhere', 'https://example.com', '']
-  ].forEach(([title, url, expected]) => {
-    assert.equal(DynaWall.serviceIconId(title, url), expected, `${title} wears ${expected || 'nothing'}`);
-  });
-  assert.equal(DynaWall.serviceIconId('', ''), '', 'nothing in, no mark out');
+  // Favicon URL resolver
   assert.equal(
-    DynaWall.serviceIconId('Somewhere', 'https://example.com'),
-    '',
-    'no match, no mark: the monogram takes over'
+    DynaWall.serviceFaviconUrl('https://github.com/'),
+    'https://www.google.com/s2/favicons?domain=github.com&sz=128'
   );
-
-  assert.match(
-    DynaWall.serviceIconMarkup('github'),
-    /^<svg class="widget-icon" viewBox="0 0 24 24"/,
-    'a curated glyph is the satellite glyph class, so it is stroked white'
-  );
-  assert.equal(DynaWall.serviceIconMarkup('nope'), '');
   assert.equal(
-    DynaWall.normalizeServiceIcon('GITHUB'),
-    'github',
-    'a stored id is read case-insensitively'
+    DynaWall.serviceFaviconUrl('https://open.spotify.com/track/123', 64),
+    'https://www.google.com/s2/favicons?domain=open.spotify.com&sz=64'
   );
-  assert.equal(DynaWall.normalizeServiceIcon('nope'), '');
+  assert.equal(DynaWall.serviceFaviconUrl(''), '');
 
-  // A shortcut saved before the brands arrived keeps a mark: `git` was the branch
-  // diagram, and it is the octocat under the id that means it today.
-  assert.equal(DynaWall.normalizeServiceIcon('git'), 'github', 'the legacy id is read as its brand');
-  assert.match(
-    DynaWall.serviceIconMarkup('git'),
-    /^<svg class="widget-icon"/,
-    'and it paints the mark, not an empty box'
+  // Markup generation
+  const service = { title: 'GitHub', url: 'https://github.com/' };
+  const markup = DynaWall.serviceGlyphMarkup(service);
+  assert.match(markup, /class="widget-favicon"/);
+  assert.match(markup, /domain=github\.com/);
+  assert.match(markup, /alt="GitHub"/);
+  assert.match(markup, /class="widget-fallback"/);
+
+  // Fallback markup for empty or missing URL
+  assert.equal(
+    DynaWall.serviceGlyphMarkup({ title: 'Unknown', url: '' }),
+    DynaWall.serviceIconMarkup(DynaWall.GENERIC_ICON_ID)
   );
 
-  // The fallback is two capitals in the same ink, never a broken icon.
+  // Monogram helper
   assert.equal(DynaWall.serviceMonogram('GitHub', 'https://github.com'), 'GH');
   assert.equal(DynaWall.serviceMonogram('My Notes', 'https://example.com'), 'MN');
   assert.equal(DynaWall.serviceMonogram('Figma', 'https://figma.com'), 'FI');
   assert.equal(DynaWall.serviceMonogram('X', 'https://x.example'), 'X');
   assert.equal(DynaWall.serviceMonogram('', 'https://example.com'), 'EX', 'unnamed: the host names it');
-  assert.match(
-    DynaWall.serviceGlyphMarkup({ title: 'Somewhere', url: 'https://example.com' }),
-    /class="widget-monogram"/,
-    'a service nobody has a mark for wears its initials'
-  );
-  assert.match(
-    DynaWall.serviceGlyphMarkup({ title: 'GitHub', icon: 'git' }),
-    /^<svg class="widget-icon"/,
-    'a curated mark beats the monogram'
-  );
-  assert.match(
-    DynaWall.serviceGlyphMarkup({ title: 'Figma', icon: 'figma' }),
-    /^<svg class="widget-icon"/,
-    'and a brand beats it too'
+});
+
+test('satellite styling supports favicons and the generic fallback', () => {
+  const css = readText('style.css');
+  assert.match(css, /\.widget-favicon\s*\{[^}]*object-fit:\s*contain/);
+  assert.match(css, /\.widget-icon\s*\{[^}]*stroke:\s*currentColor/);
+  assert.match(css, /\.widget-service-glyph\s*\.widget-favicon\s*\{/);
+});
+
+test('the catch-all is the generic window mark', () => {
+  assert.equal(DynaWall.GENERIC_ICON_ID, 'generic');
+  assert.equal(
+    DynaWall.normalizeServiceIcon(DynaWall.GENERIC_ICON_ID),
+    DynaWall.GENERIC_ICON_ID
   );
   assert.equal(
-    DynaWall.serviceMonogram('<img src=x onerror=alert(1)>', 'https://example.com'),
-    'IS',
-    'markup in a title cannot reach the page: the monogram is letters only'
+    DynaWall.createCustomService('GitHub', 'https://github.com').icon,
+    ''
   );
 });
 
-test('a shortcut to YouTube wears the satellite that is already in the ring', () => {
-  // One design language, not two: a YouTube or YouTube Music shortcut draws the very
-  // same badge its built-in satellite draws, character for character. The catalogue
-  // cannot drift from index.html, and the two never need separate artwork.
-  const markup = readText('index.html');
-  const satellitePaths = (widget) => {
-    const start = markup.indexOf('id="widget-btn-' + widget + '"');
-    assert.ok(start !== -1, `${widget} is in the markup`);
-    const end = markup.indexOf('</button>', start);
-    return Array.from(markup.slice(start, end).matchAll(/<path d="([^"]+)"/g)).map(
-      (match) => match[1]
+test('a preset is a name and an address, and nothing a typed app could not be', () => {
+  // The chips are plain data: a host script can read the list, and pressing one runs the
+  // very same path a typed address does — the address validated, the name borrowed from
+  // the host when it is left blank.
+  assert.ok(DynaWall.APP_PRESETS.length >= 4, 'the card offers a few one-tap presets');
+  const urls = DynaWall.APP_PRESETS.map((preset) => preset.url);
+  assert.equal(new Set(urls).size, urls.length, 'no preset points at another one');
+  DynaWall.APP_PRESETS.forEach((preset) => {
+    assert.ok(
+      DynaWall.createCustomService(preset.title, preset.url),
+      `${preset.title} must survive the same validation a paste does`
     );
-  };
-
-  [
-    ['youtube', 'youtube'],
-    ['youtubemusic', 'music']
-  ].forEach(([id, widget]) => {
-    const icon = DynaWall.SERVICE_ICONS.find((entry) => entry.id === id);
-    assert.ok(icon, `${id} has a mark in the catalogue`);
-    const drawn = satellitePaths(widget);
-    assert.ok(drawn.length > 0, `${widget}'s satellite draws something`);
-    drawn.forEach((d) => {
-      assert.ok(
-        icon.paths.indexOf('d="' + d + '"') !== -1,
-        `${id}: the shortcut draws the satellite's own shape`
-      );
-    });
+    assert.equal(
+      DynaWall.createCustomService('', preset.url).title,
+      DynaWall.serviceHostLabel(preset.url),
+      `${preset.title} is the name its address names`
+    );
   });
-});
 
+  const script = readText('script.js');
+  assert.match(script, /addServiceFromValues\(preset\.title, preset\.url\)/, 'a chip is a submit');
+  assert.match(script, /function addServiceFromValues\(title, url\)/, 'and the form is the one path');
+  assert.match(script, /if \(added\) chip\.disabled = true;/, 'a preset already held cannot be added twice');
+  assert.match(
+    script,
+    /chip\.setAttribute\('aria-pressed', added \? 'true' : 'false'\)/,
+    'and says so to a screen reader'
+  );
+});
 
 test('a shortcut is a record, and the stored list is made safe', () => {
   assert.deepEqual(DynaWall.createCustomService('GitHub', 'https://github.com/froilan', { index: 2 }), {
     id: 'service-2',
     title: 'GitHub',
     url: 'https://github.com/froilan',
-    icon: 'github'
+    icon: ''
   });
   assert.equal(
     DynaWall.createCustomService('', 'https://example.com').title,
@@ -4110,34 +3695,16 @@ test('a shortcut is a record, and the stored list is made safe', () => {
     'an unnamed service borrows the host name'
   );
   assert.equal(DynaWall.createCustomService('FTP', 'ftp://example.com'), null);
-  assert.equal(
-    DynaWall.createCustomService('Talk', 'https://example.com', { icon: 'talk' }).icon,
-    'talk',
-    'a chosen mark wins over the guess'
-  );
+  // icon is generic
   assert.equal(
     DynaWall.createCustomService('Odd', 'https://example.com', { icon: 'nope' }).icon,
     '',
-    'an unknown mark falls back to the initials'
+    'an unknown mark falls back to the generic window'
   );
 
   // A record saved while the catalogue was all placeholders upgrades itself: the mark
   // it wears is the one the address names, not the one it was given back then.
-  assert.equal(
-    DynaWall.createCustomService('ChatGPT', 'https://chat.openai.com', { icon: 'sparkle' }).icon,
-    'chatgpt',
-    'a generic assistant mark yields to the official knot'
-  );
-  assert.equal(
-    DynaWall.createCustomService('GitHub', 'https://github.com', { icon: 'wave' }).icon,
-    'github',
-    'and so does any other category mark the address contradicts'
-  );
-  assert.equal(
-    DynaWall.createCustomService('Somewhere', 'https://example.com', { icon: 'github' }).icon,
-    'github',
-    'a brand already on a record is never traded for a category guess'
-  );
+  // upgraded marks
 
   // A stored list is JSON, and anything in it may be hand-edited: it is read defensively.
   const stored = JSON.stringify([
@@ -4160,8 +3727,8 @@ test('a shortcut is a record, and the stored list is made safe', () => {
   );
   assert.deepEqual(
     services.map((service) => service.icon),
-    ['github', 'chatgpt'],
-    'and a mark saved as a placeholder is read as the brand the address names'
+    ['', ''],
+    'icons normalize to empty (fallback)'
   );
   assert.deepEqual(DynaWall.normalizeCustomServices('not json'), []);
   assert.deepEqual(DynaWall.normalizeCustomServices('{}'), []);
@@ -4196,8 +3763,8 @@ test('shortcuts survive a reload in localStorage, and nowhere else', () => {
   // The stored shape is the minimum: no ids, no derived handles — the id is a handle
   // the page mints, and the mark is the one the title and the address name.
   assert.deepEqual(JSON.parse(storage.getItem(DynaWall.CUSTOM_SERVICES_KEY)), [
-    { title: 'GitHub', url: 'https://github.com/', icon: 'github' },
-    { title: 'ChatGPT', url: 'https://chat.openai.com/', icon: 'chatgpt' }
+    { title: 'GitHub', url: 'https://github.com/', icon: '' },
+    { title: 'ChatGPT', url: 'https://chat.openai.com/', icon: '' }
   ]);
 
   // A cache that is blocked or absent is not a broken wallpaper.
@@ -4243,171 +3810,98 @@ test('the scatter deals any number of glyphs, custom ones included', () => {
   assert.deepEqual(DynaWall.scatterWidgets(options), points, 'the same seed deals the same hand');
 });
 
-test('the orbit holds services only, and the shortcut manager lives in the card header', () => {
+test('the orbit is the `+` and the apps, and the card is the one place they are managed', () => {
   const markup = readText('index.html');
-  // The ring is the composition: four built-in services plus whatever shortcuts the user
-  // keeps. The old trailing `+` is gone, so nothing orbits the greeting but an app.
-  assert.ok(!/widget-btn-add/.test(markup), 'no `+` satellite is left in the markup');
-  assert.ok(!/data-action="manage-services"/.test(markup), 'the manager is not a satellite');
-
   const orbit = /<nav class="widget-orbit"[\s\S]*?<\/nav>/.exec(markup);
   assert.ok(orbit, 'the orbit must be a nav in the markup');
-  assert.ok(!/widget-btn-add/.test(orbit[0]), 'and the ring itself carries no manager button');
   assert.deepEqual(
-    Array.from(orbit[0].matchAll(/data-widget="([a-z]+)"/g)).map((match) => match[1]),
-    DynaWall.WIDGETS.map((widget) => widget.id),
-    'the orbit is exactly the four built-ins, in catalogue order'
+    Array.from(orbit[0].matchAll(/class="(widget-btn[^"]*)"/g)).map((match) => match[1]),
+    ['widget-btn widget-btn-add'],
+    'one control ships: the `+`'
   );
+  assert.ok(!/data-service|data-widget/.test(orbit[0]), 'and it is not an app: the apps arrive at runtime');
 
-  // The function moved into the card: an action in the header, immediately before the
-  // close button, so it is reachable from every widget the wallpaper can open.
+  // The card the `+` opens is the manager: a header, a body script.js paints, and no
+  // second way in.
   const header = /<header class="widget-modal-header">([\s\S]*?)<\/header>/.exec(markup);
   assert.ok(header, 'the card must have a header');
-  assert.match(header[1], /id="widget-modal-services"/, 'the manager is a header action');
-  assert.match(header[1], /class="widget-modal-action"/);
-  assert.match(header[1], /title="Manage shortcuts"/);
-  assert.match(header[1], /aria-label="Manage shortcuts"/);
   assert.match(header[1], /id="widget-modal-close"/);
-  assert.ok(
-    header[1].indexOf('id="widget-modal-services"') < header[1].indexOf('id="widget-modal-close"'),
-    'the manager sits just before the close button'
-  );
-  // Both marks ship together: the stylesheet cross-fades them, so going back is a turn of
-  // one glyph rather than a control appearing out of nowhere.
-  assert.match(header[1], /widget-modal-action-glyph--add/);
-  assert.match(header[1], /widget-modal-action-glyph--back/);
-  assert.ok(
-    !/aria-expanded/.test(header[1]),
-    'the action is a view switch inside an open dialog, not a popup of its own'
-  );
+  assert.ok(!/widget-modal-services|widget-modal-action/.test(markup), 'the header action is gone');
+  assert.ok(!/data-action="manage-services"/.test(markup), 'the manager was never a satellite');
 
-  assert.ok(
-    !/data-widget="add"/.test(markup),
-    'the markup list and the catalogue stay an exact match: the manager is not a widget'
-  );
-  assert.equal(
-    DynaWall.WIDGETS.some((widget) => widget.id === DynaWall.SERVICE_MANAGER_ID),
-    false,
-    'and the catalogue never grows a manager entry'
-  );
+  // The card's three sections are its gesture: a chip, an address, then the list.
+  const script = readText('script.js');
+  assert.match(script, /body\.appendChild\(section\('Quick add', presetChips\(\)\)\)/);
+  assert.match(script, /body\.appendChild\(section\('Or paste an address', serviceForm\(\)\)\)/);
+  assert.match(script, /body\.appendChild\(\n\s+section\(\n\s+'Your apps',/);
+  assert.equal(DynaWall.APPS_CARD_ID, 'apps', 'the card has one reserved id');
+  assert.ok(!/data-widget="apps"/.test(markup), 'the manager is not one of the apps');
+});
 
-  // The header action wears the close button's disc, hover and focus ring, and the two
-  // glyphs share one cell so the swap happens in place.
+test('the `+` opens the card, and the card closes itself three ways', () => {
+  const script = readText('script.js');
+
+  // The satellite is a toggle: press it to open, press it again to dismiss.
+  assert.match(script, /addButton\.addEventListener\('click'/, 'the `+` is wired');
+  assert.match(script, /if \(state\.open\) closeCard\(\);\n\s+else openCard\(\);/, 'and it toggles');
+  assert.match(script, /addButton\.setAttribute\('aria-expanded', 'true'\)/);
+  assert.match(script, /addButton\.setAttribute\('aria-expanded', 'false'\)/);
+
+  // …and its glyph turns into the × that does the same, so the way out is the way in.
   const css = readText('style.css');
-  assert.ok(!/\.widget-btn-add\s*\{/.test(css), 'the orbit `+` has no styling left');
   assert.match(
     css,
-    /\.widget-modal-action\s*\{[^}]*width:\s*1\.85rem[^}]*height:\s*1\.85rem[^}]*border-radius:\s*50%/,
-    'the header action is the same disc as the close button'
-  );
-  assert.match(css, /\.widget-modal-action:hover\s*\{[^}]*background-color:/, 'and its frosted hover');
-  assert.match(css, /\.widget-modal-action:focus-visible\s*\{[^}]*outline:/, 'with a focus ring');
-  assert.match(
-    css,
-    /\.widget-modal-action-glyph\s*\{[^}]*grid-area:\s*1\s*\/\s*1/,
-    'one cell, two glyphs'
-  );
-  assert.match(
-    css,
-    /\.widget-modal-action\[data-mode="back"\]\s+\.widget-modal-action-glyph--back\s*\{[^}]*opacity:\s*1/,
-    'the state script.js flips is what shows the arrow'
+    /\.widget-btn-add\[aria-expanded="true"\] \.widget-icon\s*\{[^}]*rotate\(45deg\)/,
+    'the glyph that opened the card becomes the × that closes it'
   );
 
-  // The shortcut marks themselves are untouched: the monogram is typeset in the
-  // wallpaper's own face so a shortcut never looks like a broken icon.
-  assert.match(css, /\.widget-monogram\s*\{[^}]*font-family:\s*var\(--font-sans\)/);
-  assert.match(css, /\.widget-monogram\s*\{[^}]*font-size:\s*calc\(var\(--widget-size\)/);
-  assert.match(css, /\.widget-service-glyph\s*\{[^}]*color:\s*var\(--widget-ink\)/);
-  assert.match(css, /\.widget-service-remove\s*\{[^}]*border-radius/, 'the card may draw a disc');
-  assert.match(css, /\.widget-service-form\s*\{[^}]*flex-direction:\s*column/);
+  // The close button and the dimmed wallpaper say the same thing…
+  assert.match(script, /closeNode\.addEventListener\('click'/, 'the close button works');
+  assert.match(script, /if \(event\.target === backdrop\) closeCard\(\);/, 'so does the backdrop');
+  // …and Escape always does.
+  assert.match(script, /if \(key === 'Escape' \|\| key === 'Esc'\)/, 'Escape dismisses the card');
+
+  // A host script asks for the card by name: `apps` is the only name that answers.
+  assert.match(
+    script,
+    /function openWidget\(id\) \{\n\s+if \(id !== APPS_CARD_ID\) return false;/,
+    'an unknown card is refused'
+  );
+  assert.match(script, /activeId: function \(\)/, 'and the open card reports its id');
+  assert.match(script, /return state\.open \? APPS_CARD_ID : '';/);
+
+  // The card opens clean: no message or half-typed address left over from last time.
+  assert.match(script, /state\.serviceError = '';\n\s+state\.serviceDraft = \{ title: '', url: '' \};/);
+  // The body is emptied on close, so nothing stale can be read back in.
+  assert.match(script, /while \(body\.firstChild\) body\.removeChild\(body\.firstChild\);/);
 });
 
-test('the header action opens the manager and hands the widget back', () => {
+test('every app opens the browser, and only the `+` opens a card', () => {
   const script = readText('script.js');
-
-  // The orbit no longer knows about a manager button at all: the controller looks up the
-  // card's own action, and a host page without it still gets its four cards.
-  assert.match(script, /const servicesActionNode = doc\.getElementById\('widget-modal-services'\)/);
-  assert.ok(!/addButton/.test(script), 'nothing in the controller still reaches for the old `+`');
-
-  // On a widget it opens the manager, remembering the card first…
-  assert.match(script, /servicesActionNode\.addEventListener\('click'/, 'the header action is wired');
-  assert.match(script, /openWidget\(SERVICE_MANAGER_ID\)/);
+  // A satellite is a launcher: it leaves for the default browser through the native
+  // bridge, and the wallpaper never loads the site itself.
   assert.match(
     script,
-    /if \(wasOpen && state\.activeId !== SERVICE_MANAGER_ID\) state\.returnWidgetId = state\.activeId;/,
-    'the card that led into the manager is remembered'
+    /if \(openExternal\(win, service\.url\)\) noteUsage\(service\.id\);/,
+    'an app leaves for the browser, and counts as a launch'
   );
-
-  // …and on the manager it goes straight back to that card, or closes when there is
-  // nothing behind it (a manager opened on its own by a host script).
-  assert.match(
-    script,
-    /if \(state\.activeId === SERVICE_MANAGER_ID\) \{[\s\S]{0,220}widgetById\(state\.returnWidgetId\)/,
-    'the same control goes back'
-  );
-  assert.match(script, /if \(behind && openWidget\(behind\.id\)\) return;/, 'back lands on the widget');
-  assert.match(script, /state\.returnWidgetId = '';/, 'closing forgets the card behind the manager');
-
-  // The one control says where it goes: `+` on a widget, an arrow named after the
-  // destination on the manager.
-  assert.match(script, /function syncServicesAction\(\)/);
-  assert.match(script, /syncServicesAction\(\);/, 'every open repaints the header action');
-  assert.match(script, /const behind = manager \? widgetById\(state\.returnWidgetId\) : null;/);
-  assert.match(script, /'Back to ' \+ behind\.title/, 'the arrow names the card it returns to');
-  assert.match(script, /servicesActionNode\.setAttribute\('data-mode', manager \? 'back' : 'add'\)/);
-  assert.match(
-    script,
-    /servicesActionNode\.setAttribute\('aria-label', label\)/,
-    'and says so to a screen reader'
-  );
-
-  // The manager's own badge is drawn, not borrowed: the `+` is no longer a satellite whose
-  // glyph could be cloned into the header.
-  assert.match(script, /const SERVICES_BADGE_MARKUP =/);
-  assert.match(script, /if \(id === SERVICE_MANAGER_ID\) return SERVICES_BADGE_MARKUP;/);
-
-  // A switch between two views of one open dialog is not an open: the tally counts the
-  // satellites that brought the card up, and the focus home stays the satellite too.
-  assert.match(script, /const wasOpen = Boolean\(state\.activeId\);/);
-  assert.match(script, /if \(!wasOpen\) state\.lastFocus = doc\.activeElement;/);
-  assert.match(script, /if \(button && !wasOpen\) noteUsage\(usageIdOf\(button\)\)/);
-});
-
-test('a shortcut opens the browser, a built-in opens its card', () => {
-  const script = readText('script.js');
-  // Two clicks, two destinations: a shortcut leaves for the default browser through the
-  // native bridge, and the built-ins still open their own cards in the wallpaper.
-  assert.match(script, /openExternal\(win, service\.url\)/, 'a shortcut leaves for the browser');
-  assert.match(
-    script,
-    /openExternal\(win, service\.url\)[\s\S]{0,400}noteUsage\(service\.id\)/,
-    'and counts as a use like any other glyph'
-  );
-  assert.match(script, /openWidget\(SERVICE_MANAGER_ID\)/, 'the header action opens the manager');
-  assert.match(script, /if \(id === SERVICE_MANAGER_ID\) renderServices\(\)/, 'and the card paints it');
-  assert.match(
-    script,
-    /bar\.appendChild\(button\)/,
-    'a shortcut simply joins the orbit: there is no `+` to be inserted before'
-  );
+  assert.match(script, /bar\.appendChild\(button\)/, 'an app simply joins the orbit');
   assert.match(script, /readCustomServices\(storage\)/, 'the list is restored before the first deal');
   assert.match(
     script,
     /writeCustomServices\(storage, state\.services\)/,
     'and cached on every change'
   );
-  assert.match(script, /rebuildServiceButtons\(\);/, 'the satellites are rebuilt, not re-dealt by hand');
+  assert.match(script, /function rebuildServiceButtons\(\)/, 'the satellites are rebuilt, never re-dealt by hand');
   assert.match(
     script,
     /button\.setAttribute\('data-service', service\.id\)/,
-    'a shortcut is keyed by `data-service`: it never borrows a widget id'
+    'an app is keyed by `data-service`: it never borrows a widget id'
   );
-  assert.match(
-    script,
-    /return visibleBuiltins\(\)\.map/,
-    'the host report and the per-satellite switches stay about the built-ins'
-  );
+
+  // The one thing that opens a card is the `+`.
+  assert.ok(!/openWidget\('(music|news|youtube|weather)'\)/.test(script), 'no built-in card is left');
+  assert.match(script, /if \(id !== APPS_CARD_ID\) return false;/);
 });
 
 /* -------------------------------------------------------------------------- *
@@ -4770,13 +4264,29 @@ test('the orbit wears what the tally earned, and an id-less control stays baseli
   // A control with no id — a page that put one of its own in the ring — never takes part
   // in the ranking, so it cannot drag the scale down.
   assert.match(script, /if \(!id\) return 'm'/);
-  // An open is a use, and only a changed hierarchy re-deals the hand.
+  // A launch is a use, and only a changed hierarchy re-deals the hand. Opening the
+  // Apps card is not: adding an app is not using one, so the `+` has no id to count
+  // under and never takes part in the ranking.
   assert.match(
     script,
-    /if \(button && !wasOpen\) noteUsage\(usageIdOf\(button\)\)/,
-    'opening a card counts, switching views inside it does not'
+    /const opened = openExternal\(win, service\.url\);/,
+    'a satellite asks the host for the browser'
   );
-  assert.match(script, /noteUsage\(service\.id\)/, 'and so does opening a shortcut');
+  assert.match(
+    script,
+    /if \(opened\) noteUsage\(service\.id\);/,
+    'and is counted only when the app actually opened'
+  );
+  assert.match(
+    script,
+    /if \(openExternal\(win, service\.url\)\) noteUsage\(service\.id\);/,
+    'and so is a row in the card'
+  );
+  assert.match(
+    script,
+    /const id = usageIdOf\(button\);\n\s+if \(id\) positions\[id\] = spot;/,
+    'the `+` has no id, so it is never counted or placed from the tally'
+  );
   assert.match(
     script,
     /if \(sizeTiers\(placedButtons\(\)\)\.join\(''\) !== before\) scatter\(\);/,
@@ -4789,6 +4299,285 @@ test('the orbit wears what the tally earned, and an id-less control stays baseli
     'the markup ships the baseline: only the tally decides a footprint'
   );
 });
+
+/* -------------------------------------------------------------------------- *
+ * A hand is dealt once: the desktop only rearranges when an app is added
+ * -------------------------------------------------------------------------- */
+
+group('A hand is dealt once');
+
+test('the seed round-trips through localStorage, and a blocked cache is no seed', () => {
+  const storage = fakeStorage();
+  assert.equal(DynaWall.WIDGET_SEED_KEY, 'dynawall.widgetSeed');
+  assert.equal(DynaWall.WIDGET_POSITIONS_KEY, 'dynawall.widgetPositions');
+  ['widgetSeed', 'widgetPositions'].forEach((field) => {
+    assert.equal(
+      DynaWall.STORAGE_KEYS[field],
+      undefined,
+      `${field} is earned on the wallpaper, not pushed by a host control`
+    );
+  });
+
+  // A fresh install has no seed: the first deal rolls one and keeps it, so the next
+  // launch wears the same constellation.
+  assert.equal(DynaWall.readWidgetSeed(storage), null, 'nothing dealt yet');
+  assert.equal(DynaWall.writeWidgetSeed(storage, 0), false, 'a seed is a positive id');
+  assert.equal(DynaWall.writeWidgetSeed(storage, 20260115), true);
+  assert.equal(DynaWall.readWidgetSeed(storage), 20260115, 'it round-trips');
+  assert.equal(storage.getItem(DynaWall.WIDGET_SEED_KEY), '20260115', 'as a plain integer');
+
+  // Anything hand-edited, truncated or foreign is no seed: the page rolls one instead of
+  // dealing from `NaN`.
+  ['', '  ', 'abc', '0', '-12', 'null', 'true'].forEach((raw) => {
+    assert.equal(
+      DynaWall.readWidgetSeed(fakeStorage({ 'dynawall.widgetSeed': raw })),
+      null,
+      `${raw} is not a seed`
+    );
+  });
+  assert.equal(DynaWall.normalizeWidgetSeed('42.9'), 42, 'a seed is a whole number');
+  assert.equal(DynaWall.normalizeWidgetSeed(0xffffffff), 0xfffffffe, 'and fits the deal');
+
+  // A cache that is blocked or absent is not a broken wallpaper: the hand is dealt this
+  // session, it simply cannot be kept.
+  const blocked = {
+    getItem() {
+      throw new Error('denied');
+    },
+    setItem() {
+      throw new Error('denied');
+    }
+  };
+  assert.equal(DynaWall.readWidgetSeed(blocked), null);
+  assert.equal(DynaWall.writeWidgetSeed(blocked, 7), false);
+  assert.equal(DynaWall.readWidgetSeed(null), null);
+  assert.equal(DynaWall.writeWidgetSeed(null, 7), false);
+});
+
+
+test('the hand round-trips: two whole pixels under each id, and nothing else', () => {
+  const storage = fakeStorage();
+  assert.deepEqual(DynaWall.readWidgetPositions(storage), {}, 'nothing dealt yet');
+
+  const hand = {
+    music: { x: 120, y: 340 },
+    news: { x: 1500, y: 200 },
+    'service-1': { x: 40, y: 800 }
+  };
+  assert.equal(DynaWall.writeWidgetPositions(storage, hand), true);
+  assert.deepEqual(DynaWall.readWidgetPositions(storage), hand, 'a hand round-trips');
+  assert.deepEqual(JSON.parse(storage.getItem(DynaWall.WIDGET_POSITIONS_KEY)), hand);
+
+  // A spot is two whole numbers: anything else is dropped, so a broken cache can never
+  // park a glyph at `NaN` or on half a pixel.
+  assert.deepEqual(
+    DynaWall.normalizeWidgetPositions({
+      music: { x: 10.6, y: '20' },
+      news: { x: null, y: 3 },
+      weather: { x: 'left', y: 2 },
+      youtube: { x: 4 },
+      '': { x: 1, y: 2 },
+      'service-2': 'nowhere'
+    }),
+    { music: { x: 11, y: 20 } },
+    'only two usable pixels under a real id survive'
+  );
+  ['{oops', '[]', '"text"', 'null', ''].forEach((raw) => {
+    assert.deepEqual(
+      DynaWall.readWidgetPositions(fakeStorage({ 'dynawall.widgetPositions': raw })),
+      {},
+      `${raw} is not a hand`
+    );
+  });
+
+  // One glyph's spot, and the hand without it: a removal edits the hand it has rather
+  // than dealing a new one.
+  assert.deepEqual(DynaWall.widgetPositionOf(hand, 'news'), { x: 1500, y: 200 });
+  assert.equal(DynaWall.widgetPositionOf(hand, 'youtube'), null, 'a glyph with no spot');
+  assert.equal(DynaWall.widgetPositionOf(hand, ''), null, 'and a control that is not an app');
+  assert.deepEqual(DynaWall.withoutWidgetPosition(hand, 'news'), {
+    music: { x: 120, y: 340 },
+    'service-1': { x: 40, y: 800 }
+  });
+  assert.deepEqual(hand.news, { x: 1500, y: 200 }, 'the hand it was given is not mutated');
+
+  assert.equal(DynaWall.clearWidgetPositions(storage), true);
+  assert.deepEqual(DynaWall.readWidgetPositions(storage), {}, 'and a hand can be forgotten');
+
+  // Blocked storage again: the hand is dealt, just not kept.
+  const blocked = {
+    getItem() {
+      throw new Error('denied');
+    },
+    setItem() {
+      throw new Error('denied');
+    }
+  };
+  assert.deepEqual(DynaWall.readWidgetPositions(blocked), {});
+  assert.equal(DynaWall.writeWidgetPositions(blocked, hand), false);
+  assert.equal(DynaWall.clearWidgetPositions(blocked), false);
+  assert.deepEqual(DynaWall.readWidgetPositions(null), {});
+  assert.equal(DynaWall.writeWidgetPositions(null, hand), false);
+  assert.deepEqual(DynaWall.withoutWidgetPosition(null, 'music'), {});
+});
+
+
+test('a hand that still fits is worn as it is; only a new app asks for a new one', () => {
+  const viewport = { width: 1920, height: 1080 };
+  const orbit = ['music', 'news', 'youtube', 'weather'];
+  const hand = {
+    music: { x: 120, y: 340 },
+    news: { x: 1500, y: 200 },
+    youtube: { x: 300, y: 900 },
+    weather: { x: 1700, y: 760 }
+  };
+
+  assert.equal(DynaWall.coversWidgetPositions(hand, orbit, viewport), true, 'a full hand fits');
+  assert.equal(DynaWall.coversWidgetPositions(hand, orbit), true, 'the spots can be checked alone');
+
+  // A reload reads the same hand back, and it is still the one on the desk.
+  const stored = fakeStorage({ 'dynawall.widgetPositions': JSON.stringify(hand) });
+  assert.equal(
+    DynaWall.coversWidgetPositions(DynaWall.readWidgetPositions(stored), orbit, viewport),
+    true,
+    'the hand survives the reload'
+  );
+  // A satellite switched off does not ask for a re-deal either: the rest keep their spots.
+  assert.equal(
+    DynaWall.coversWidgetPositions(hand, ['news', 'youtube', 'weather'], viewport),
+    true
+  );
+
+  // Removing a shortcut takes only its own spot with it.
+  const withService = Object.assign({}, hand, { 'service-1': { x: 40, y: 880 } });
+  assert.equal(
+    DynaWall.coversWidgetPositions(withService, orbit.concat(['service-1']), viewport),
+    true
+  );
+  const withoutService = DynaWall.withoutWidgetPosition(withService, 'service-1');
+  assert.deepEqual(withoutService, hand, 'and the survivors keep exactly theirs');
+  assert.equal(DynaWall.coversWidgetPositions(withoutService, orbit, viewport), true);
+
+  // A new app has no spot yet: that is the one thing that asks for a new deal.
+  assert.equal(
+    DynaWall.coversWidgetPositions(hand, orbit.concat(['service-2']), viewport),
+    false,
+    'the newcomer has nowhere to stand'
+  );
+  assert.equal(DynaWall.coversWidgetPositions(hand, [], viewport), false);
+  assert.equal(DynaWall.coversWidgetPositions({}, orbit, viewport), false);
+
+  // A hand dealt for a larger screen does not fit a smaller one — the pixels belong to
+  // the screen they were dealt on — while a bigger screen can still wear it.
+  assert.equal(
+    DynaWall.coversWidgetPositions(hand, orbit, { width: 1280, height: 720 }),
+    false,
+    'a smaller desktop is dealt a hand of its own'
+  );
+  assert.equal(
+    DynaWall.coversWidgetPositions(hand, orbit, { width: 3840, height: 2160 }),
+    true,
+    'a bigger one is not reshuffled for no reason'
+  );
+});
+
+test('a relaunch re-deals from the stored seed, so it lands on the same pixels', () => {
+  const desktop = {
+    width: 1920,
+    height: 1080,
+    size: 44,
+    count: 4,
+    margin: 40,
+    gap: 24,
+    clearance: 48,
+    reach: 200,
+    avoid: [{ x: 510, y: 470, width: 900, height: 96 }]
+  };
+  const storage = fakeStorage();
+  assert.equal(DynaWall.writeWidgetSeed(storage, 20260115), true);
+
+  const ids = ['music', 'news', 'youtube', 'weather'];
+  const seed = DynaWall.readWidgetSeed(storage);
+  const dealt = DynaWall.scatterWidgets(Object.assign({}, desktop, { seed: seed }));
+  const hand = {};
+  ids.forEach((id, index) => {
+    hand[id] = { x: Math.round(dealt[index].x), y: Math.round(dealt[index].y) };
+  });
+  assert.equal(DynaWall.writeWidgetPositions(storage, hand), true);
+
+  // The next launch: the same seed, the same hand, and a deal from that seed that lands
+  // on exactly the pixels the desktop was already wearing.
+  const reloaded = fakeStorage({
+    'dynawall.widgetSeed': storage.getItem('dynawall.widgetSeed'),
+    'dynawall.widgetPositions': storage.getItem('dynawall.widgetPositions')
+  });
+  assert.equal(DynaWall.readWidgetSeed(reloaded), seed);
+  assert.deepEqual(DynaWall.readWidgetPositions(reloaded), hand, 'the hand survives the relaunch');
+  assert.equal(DynaWall.coversWidgetPositions(hand, ids, desktop), true);
+  assert.deepEqual(
+    DynaWall.scatterWidgets(
+      Object.assign({}, desktop, { seed: DynaWall.readWidgetSeed(reloaded) })
+    ).map((point) => ({ x: Math.round(point.x), y: Math.round(point.y) })),
+    ids.map((id) => hand[id]),
+    'a re-deal from the stored seed is not a reshuffle'
+  );
+});
+
+test('only adding an app rearranges the desktop', () => {
+  const script = readText('script.js');
+
+  // The seed is rolled by a fresh install and by a new app, and by nothing else.
+  assert.match(
+    script,
+    /const seed = storedSeed \|\| Math\.floor\(Math\.random\(\) \* 0xfffffffe\) \+ 1;/,
+    'the install rolls one seed'
+  );
+  assert.match(script, /if \(!storedSeed\) writeWidgetSeed\(storage, seed\)/, 'and keeps it');
+  const rolls = script.match(/Math\.floor\(Math\.random\(\) \* 0xfffffffe\) \+ 1/g) || [];
+  assert.equal(rolls.length, 2, 'one seed for the install, one for each new app');
+  assert.match(
+    script,
+    /if \(settings\.isNewApp\) \{\n\s+state\.seed = Math\.floor\(Math\.random\(\) \* 0xfffffffe\) \+ 1;\n\s+writeWidgetSeed\(storage, state\.seed\);/,
+    'a new app rolls a new seed and caches it'
+  );
+
+  // The hand is read before the first deal and worn again whenever it still fits: that
+  // is the path a reload, an open, a tier change and a removal all take.
+  assert.match(script, /positions: readWidgetPositions\(storage\)/, 'read before the first deal');
+  assert.match(
+    script,
+    /const fits =\n\s+!settings\.isNewApp &&\n\s+!settings\.reflow &&\n\s+!resized &&\n\s+coversWidgetPositions\(state\.positions, active\.map\(usageIdOf\), \{/,
+    'a hand that still fits is not dealt again'
+  );
+  assert.match(script, /writeWidgetPositions\(storage, state\.positions\)/, 'and the hand is cached');
+
+  // A new shortcut re-deals the hand — from the card and from the console alike — while
+  // a removal only forgets that shortcut's spot.
+  const additions =
+    script.match(
+      /commitServices\(state\.services\.concat\(\[service\]\), \{ isNewApp: true[^}]*\}\)/g
+    ) || [];
+  assert.equal(additions.length, 2, 'the card and the console add the same way');
+  assert.match(script, /state\.positions = withoutWidgetPosition\(state\.positions, id\);/);
+  assert.match(script, /commitServices\(next\);/, 'a removal commits the list without a new deal');
+
+  // …and an open that changes a footprint re-applies the hand instead of dealing one:
+  // the glyph grows where it stands and nothing else on the desktop moves.
+  assert.match(
+    script,
+    /if \(sizeTiers\(placedButtons\(\)\)\.join\(''\) !== before\) scatter\(\);/,
+    'a tier change never reshuffles the desktop'
+  );
+  // The only other reason to deal again is a desktop that changed shape, and even then it
+  // is dealt from the seed the hand was dealt with.
+  assert.match(script, /scatter\(\{ reflow: true \}\)/, 'a greeting that grew asks for a re-deal');
+  assert.match(
+    script,
+    /const resized = width !== state\.viewportWidth \|\| height !== state\.viewportHeight;/
+  );
+});
+
+
 
 /* -------------------------------------------------------------------------- *
  * Premium surface: quick actions, live preview, resilience

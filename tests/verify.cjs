@@ -3662,11 +3662,36 @@ test('satellite styling supports favicons and the generic fallback', () => {
   assert.match(css, /\.widget-favicon\s*\{[^}]*object-fit:\s*contain/);
   assert.match(
     css,
-    /\.widget-favicon\s*\{[^}]*filter:\s*url\(#widget-favicon-filter\)/,
-    'every favicon is extracted into a white glyph without turning opaque tiles into solid white squares'
+    /\.widget-favicon\[data-glyph-ready="true"\]\s*\{[^}]*opacity:\s*1/,
+    'processed white-glyph favicons are revealed once extracted'
   );
-  const markup = readText('index.html');
-  assert.match(markup, /<filter\s+id="widget-favicon-filter"/, 'index.html defines the favicon extraction filter');
+  assert.equal(typeof DynaWall.faviconToWhiteGlyph, 'function');
+
+  // Verify `faviconToWhiteGlyph` keys out an opaque background plate and extracts a pure
+  // `#ffffff` glyph rather than turning the whole tile into a solid white block.
+  const S = 32;
+  const imgData = { data: new Uint8ClampedArray(S * S * 4), width: S, height: S };
+  for (let y = 0; y < S; y += 1) {
+    for (let x = 0; x < S; x += 1) {
+      const i = (y * S + x) * 4;
+      const inCenter = Math.hypot(x - 15.5, y - 15.5) < 6;
+      // Dark plate `(20, 20, 20)` with a bright center glyph `(255, 120, 40)`
+      imgData.data[i] = inCenter ? 255 : 20;
+      imgData.data[i + 1] = inCenter ? 120 : 20;
+      imgData.data[i + 2] = inCenter ? 40 : 20;
+      imgData.data[i + 3] = 255;
+    }
+  }
+  DynaWall.faviconToWhiteGlyph(imgData);
+  // Corner of the opaque plate must now be transparent (`alpha === 0`), not solid white!
+  assert.equal(imgData.data[(2 * S + 2) * 4 + 3], 0, 'opaque plate is keyed out');
+  // Center glyph must be pure white (`255, 255, 255`) and opaque (`alpha > 200`).
+  const centerIdx = (16 * S + 16) * 4;
+  assert.equal(imgData.data[centerIdx], 255);
+  assert.equal(imgData.data[centerIdx + 1], 255);
+  assert.equal(imgData.data[centerIdx + 2], 255);
+  assert.ok(imgData.data[centerIdx + 3] > 200, 'interior glyph stays opaque white');
+
   assert.match(css, /\.widget-icon\s*\{[^}]*stroke:\s*currentColor/);
   assert.match(css, /\.widget-service-glyph\s*\.widget-favicon\s*\{/);
 });

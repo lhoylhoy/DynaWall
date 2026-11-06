@@ -1146,6 +1146,10 @@ final class WidgetMessageHandler: NSObject, WKScriptMessageHandler {
 
     static let interactivityName = "dynawallInteractivity"
     static let openURLName = "dynawallOpenURL"
+    static let faviconName = "dynawallFavicon"
+
+    private let faviconLock = NSLock()
+    private var faviconCache: [String: String] = [:]
 
     func userContentController(
         _ userContentController: WKUserContentController,
@@ -1159,6 +1163,15 @@ final class WidgetMessageHandler: NSObject, WKScriptMessageHandler {
                 return
             }
             onOpenURL?(target)
+            return
+        }
+
+        if message.name == Self.faviconName {
+            guard let target = message.body as? String,
+                  Self.isFaviconURL(target),
+                  let url = URL(string: target),
+                  let webView = message.webView else { return }
+            fetchFavicon(target: target, url: url, for: webView)
             return
         }
 
@@ -1185,6 +1198,60 @@ final class WidgetMessageHandler: NSObject, WKScriptMessageHandler {
               let host = url.host,
               !host.isEmpty else { return false }
         return true
+    }
+
+    /// Only Google's favicon service endpoint is fetched by the favicon bridge.
+    static func isFaviconURL(_ target: String) -> Bool {
+        guard let url = URL(string: target),
+              url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == "www.google.com",
+              url.path == "/s2/favicons" else { return false }
+        return true
+    }
+
+    private func fetchFavicon(target: String, url: URL, for webView: WKWebView) {
+        faviconLock.lock()
+        let cached = faviconCache[target]
+        faviconLock.unlock()
+        if let cached {
+            Self.deliverFavicon(target: target, dataURI: cached, to: webView)
+            return
+        }
+
+        let task = URLSession.shared.dataTask(with: url) { [weak self, weak webView] data, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            var dataURI = ""
+            if status == 200, let data, !data.isEmpty {
+                if data.count > 8, data.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
+                    dataURI = "data:image/png;base64," + data.base64EncodedString()
+                } else if let image = NSImage(data: data),
+                          let tiff = image.tiffRepresentation,
+                          let rep = NSBitmapImageRep(data: tiff),
+                          let png = rep.representation(using: .png, properties: [:]) {
+                    dataURI = "data:image/png;base64," + png.base64EncodedString()
+                } else {
+                    let mime = response?.mimeType ?? "image/png"
+                    dataURI = "data:\(mime);base64," + data.base64EncodedString()
+                }
+            }
+            if !dataURI.isEmpty {
+                self?.faviconLock.lock()
+                self?.faviconCache[target] = dataURI
+                self?.faviconLock.unlock()
+            }
+            DispatchQueue.main.async {
+                guard let webView else { return }
+                Self.deliverFavicon(target: target, dataURI: dataURI, to: webView)
+            }
+        }
+        task.resume()
+    }
+
+    private static func deliverFavicon(target: String, dataURI: String, to webView: WKWebView) {
+        guard let encoded = try? JSONSerialization.data(withJSONObject: [target, dataURI]),
+              let json = String(data: encoded, encoding: .utf8) else { return }
+        let script = "(function(a){if(window.DynaWall&&typeof window.DynaWall.receiveFaviconData===\"function\"){window.DynaWall.receiveFaviconData(a[0],a[1]);}})(\(json));"
+        webView.evaluateJavaScript(script, completionHandler: nil)
     }
 }
 
@@ -2342,6 +2409,7 @@ final class DesktopWindowController: NSObject, ObservableObject {
             controller.removeScriptMessageHandler(forName: "dynawallPhoto")
             controller.removeScriptMessageHandler(forName: WidgetMessageHandler.interactivityName)
             controller.removeScriptMessageHandler(forName: WidgetMessageHandler.openURLName)
+            controller.removeScriptMessageHandler(forName: WidgetMessageHandler.faviconName)
             controller.removeAllUserScripts()
             entry.webView.stopLoading()
             entry.webView.navigationDelegate = nil
@@ -2575,6 +2643,7 @@ final class DesktopWindowController: NSObject, ObservableObject {
         // browser when the user picks a link.
         configuration.userContentController.add(widgetBridge, name: WidgetMessageHandler.interactivityName)
         configuration.userContentController.add(widgetBridge, name: WidgetMessageHandler.openURLName)
+        configuration.userContentController.add(widgetBridge, name: WidgetMessageHandler.faviconName)
         // First paint = the user's wallpaper. `script.js` reads this seed while it
         // resolves its configuration, so there is no built-in copy to cross-fade
         // (and no reason to hold the window back while that swap happens).

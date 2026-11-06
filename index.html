@@ -79,64 +79,6 @@
            targets — script.js measures them and tells the native host where the cursor
            may click, which is what keeps the rest of the desktop on the Finder
            (drag-select, right-click, Mission Control). -->
-      <!-- SVG filter pipeline that turns any site's raster favicon into a bare white
-           glyph: samples the icon's outer rim to find its background plate colour,
-           extracts the interior mark by colour difference into `#ffffff` ink, and falls
-           back to `SourceAlpha` when the favicon is already a flat transparent silhouette. -->
-      <svg class="widget-filter-defs" aria-hidden="true" focusable="false">
-        <defs>
-          <filter
-            id="widget-favicon-filter"
-            x="0%"
-            y="0%"
-            width="100%"
-            height="100%"
-            color-interpolation-filters="sRGB"
-          >
-            <feMorphology in="SourceAlpha" operator="erode" radius="1.5" result="innerMask" />
-            <feComposite in="SourceAlpha" in2="innerMask" operator="out" result="rimMask" />
-            <feComposite in="SourceGraphic" in2="rimMask" operator="in" result="rimPixels" />
-            <feGaussianBlur in="rimPixels" stdDeviation="4" result="rimSmooth" />
-            <feComponentTransfer in="rimSmooth" result="rimSolid">
-              <feFuncA type="linear" slope="25" intercept="0" />
-            </feComponentTransfer>
-            <feGaussianBlur in="rimSolid" stdDeviation="16" result="bgBlur" />
-            <feComponentTransfer in="bgBlur" result="bg">
-              <feFuncA type="linear" slope="25" intercept="0" />
-            </feComponentTransfer>
-            <feComponentTransfer in="SourceGraphic" result="srcOpaque">
-              <feFuncA type="discrete" tableValues="1 1" />
-            </feComponentTransfer>
-            <feBlend in="srcOpaque" in2="bg" mode="difference" result="rgbDiff" />
-            <feColorMatrix
-              in="rgbDiff"
-              type="matrix"
-              values="0 0 0 0 1
-                      0 0 0 0 1
-                      0 0 0 0 1
-                      2 2 2 0 -0.15"
-              result="rawDiffGlyph"
-            />
-            <feComposite in="rawDiffGlyph" in2="innerMask" operator="in" result="diffGlyph" />
-            <feMorphology in="diffGlyph" operator="dilate" radius="48" result="diffMax" />
-            <feColorMatrix
-              in="diffMax"
-              type="matrix"
-              values="0 0 0   0 1
-                      0 0 0   0 1
-                      0 0 0   0 1
-                      0 0 0 -10 1"
-              result="noContrastWhite"
-            />
-            <feComposite in="noContrastWhite" in2="SourceAlpha" operator="in" result="flatFallback" />
-            <feMerge>
-              <feMergeNode in="diffGlyph" />
-              <feMergeNode in="flatFallback" />
-            </feMerge>
-          </filter>
-        </defs>
-      </svg>
-
       <nav class="widget-orbit" id="widget-bar" aria-label="Desktop apps">
         <button
           type="button"

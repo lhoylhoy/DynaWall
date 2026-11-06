@@ -687,29 +687,22 @@ html.is-widgets-off .widget-orbit {
   stroke: none;
 }
 
-/* Zero-size container for the favicon silhouette `<filter>` in `index.html`: kept out of
-   flow rather than `display: none` so WebKit still resolves `url(#widget-favicon-filter)`. */
-.widget-filter-defs {
-  position: absolute;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-/* Favicon styling for satellites */
+/* Favicon styling for satellites: `script.js` extracts the foreground glyph onto an
+   offscreen `<canvas>` (`faviconToWhiteGlyph`) in pure `#ffffff` ink and reveals the
+   `<img>` once `data-glyph-ready="true"` is set, so raw coloured tiles never flash. */
 .widget-favicon {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  border-radius: 22%;
   display: block;
-  /* Every app wears the same white ink: `#widget-favicon-filter` keys out the icon's
-     background plate (so opaque tiles never turn into solid white blocks) and renders
-     the mark itself in `#ffffff`. */
-  filter: url(#widget-favicon-filter);
+  opacity: 0;
+  transition: opacity 140ms ease;
   pointer-events: none;
   user-select: none;
+}
+
+.widget-favicon[data-glyph-ready="true"] {
+  opacity: 1;
 }
 
 .widget-fallback {

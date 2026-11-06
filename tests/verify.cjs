@@ -3662,9 +3662,11 @@ test('satellite styling supports favicons and the generic fallback', () => {
   assert.match(css, /\.widget-favicon\s*\{[^}]*object-fit:\s*contain/);
   assert.match(
     css,
-    /\.widget-favicon\s*\{[^}]*filter:\s*brightness\(0\)\s+invert\(1\)/,
-    'every favicon, fetched or built in, is worn in white'
+    /\.widget-favicon\s*\{[^}]*filter:\s*url\(#widget-favicon-filter\)/,
+    'every favicon is extracted into a white glyph without turning opaque tiles into solid white squares'
   );
+  const markup = readText('index.html');
+  assert.match(markup, /<filter\s+id="widget-favicon-filter"/, 'index.html defines the favicon extraction filter');
   assert.match(css, /\.widget-icon\s*\{[^}]*stroke:\s*currentColor/);
   assert.match(css, /\.widget-service-glyph\s*\.widget-favicon\s*\{/);
 });

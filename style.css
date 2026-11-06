@@ -687,6 +687,16 @@ html.is-widgets-off .widget-orbit {
   stroke: none;
 }
 
+/* Zero-size container for the favicon silhouette `<filter>` in `index.html`: kept out of
+   flow rather than `display: none` so WebKit still resolves `url(#widget-favicon-filter)`. */
+.widget-filter-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
 /* Favicon styling for satellites */
 .widget-favicon {
   width: 100%;
@@ -694,9 +704,10 @@ html.is-widgets-off .widget-orbit {
   object-fit: contain;
   border-radius: 22%;
   display: block;
-  /* Every app wears the same white ink as the built-in marks: a fetched favicon is
-     flattened to a white silhouette so the orbit never turns into a colour palette. */
-  filter: brightness(0) invert(1);
+  /* Every app wears the same white ink: `#widget-favicon-filter` keys out the icon's
+     background plate (so opaque tiles never turn into solid white blocks) and renders
+     the mark itself in `#ffffff`. */
+  filter: url(#widget-favicon-filter);
   pointer-events: none;
   user-select: none;
 }

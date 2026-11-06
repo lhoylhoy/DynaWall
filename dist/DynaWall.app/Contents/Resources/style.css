@@ -694,6 +694,9 @@ html.is-widgets-off .widget-orbit {
   object-fit: contain;
   border-radius: 22%;
   display: block;
+  /* Every app wears the same white ink as the built-in marks: a fetched favicon is
+     flattened to a white silhouette so the orbit never turns into a colour palette. */
+  filter: brightness(0) invert(1);
   pointer-events: none;
   user-select: none;
 }
@@ -734,6 +737,9 @@ html.is-widgets-off .widget-orbit {
    turn while its card is up, so the glyph that opened the card is also the × that
    dismisses it. */
 .widget-btn-add .widget-icon {
+  /* Two bare strokes have far less ink than a favicon silhouette, so the `+` is drawn
+     heavier than the shared line weight to hold its own beside the apps. */
+  stroke-width: 4;
   transition: transform 220ms var(--ease-settle);
 }
 

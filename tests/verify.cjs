@@ -2848,7 +2848,7 @@ test('the wallpaper itself never reaches the network, and the apps only name pre
     return match;
   });
   const expected = new Set(
-    DynaWall.APP_PRESETS.map((preset) => new URL(preset.url).host).concat('example.com', 'www.google.com', 'www.w3.org')
+    DynaWall.APP_PRESETS.map((preset) => new URL(preset.url).host).concat('example.com', 'www.google.com')
   );
   assert.deepEqual(
     Array.from(hosts).sort(),
@@ -3611,9 +3611,18 @@ test('a shortcut wears a high-res favicon, with fallback to the generic window',
   );
   assert.equal(DynaWall.serviceFaviconUrl(''), '');
 
-  // Presets wear transparent vector overrides so adaptive dark/light SVGs never render as opaque white boxes
-  assert.match(DynaWall.serviceFaviconUrl('https://github.com/'), /^data:image\/svg\+xml;/);
-  assert.match(DynaWall.serviceFaviconUrl('https://chatgpt.com/'), /^data:image\/svg\+xml;/);
+  // 100% favicons: presets are fetched from the site like any other app, never hand-drawn
+  assert.equal(
+    DynaWall.serviceFaviconUrl('https://github.com/'),
+    'https://www.google.com/s2/favicons?domain=github.com&sz=128'
+  );
+  DynaWall.APP_PRESETS.forEach((preset) => {
+    assert.match(
+      DynaWall.serviceFaviconUrl(preset.url),
+      /^https:\/\/www\.google\.com\/s2\/favicons\?domain=/,
+      `${preset.title} is sourced from its favicon`
+    );
+  });
 
   // Markup generation
   const customService = { title: 'Hacker News', url: 'https://news.ycombinator.com/' };
@@ -3626,9 +3635,13 @@ test('a shortcut wears a high-res favicon, with fallback to the generic window',
   const presetService = { title: 'GitHub', url: 'https://github.com/' };
   const presetMarkup = DynaWall.serviceGlyphMarkup(presetService);
   assert.match(presetMarkup, /class="widget-favicon"/);
-  assert.match(presetMarkup, /data:image\/svg\+xml/);
+  assert.match(presetMarkup, /domain=github\.com/);
   assert.match(presetMarkup, /alt="GitHub"/);
   assert.match(presetMarkup, /class="widget-fallback"/);
+  // The address is escaped into src="…": the `&` arrives as `&amp;`, and nothing leaks out of the <img>
+  assert.match(presetMarkup, /src="https:\/\/www\.google\.com\/s2\/favicons\?domain=github\.com&amp;sz=128"/);
+  const imgTag = presetMarkup.slice(0, presetMarkup.indexOf('/>') + 2);
+  assert.match(imgTag, /^<img [^<>]*\/>$/, 'no markup leaks out of the <img> tag');
 
   // Fallback markup for empty or missing URL
   assert.equal(
@@ -3647,6 +3660,11 @@ test('a shortcut wears a high-res favicon, with fallback to the generic window',
 test('satellite styling supports favicons and the generic fallback', () => {
   const css = readText('style.css');
   assert.match(css, /\.widget-favicon\s*\{[^}]*object-fit:\s*contain/);
+  assert.match(
+    css,
+    /\.widget-favicon\s*\{[^}]*filter:\s*brightness\(0\)\s+invert\(1\)/,
+    'every favicon, fetched or built in, is worn in white'
+  );
   assert.match(css, /\.widget-icon\s*\{[^}]*stroke:\s*currentColor/);
   assert.match(css, /\.widget-service-glyph\s*\.widget-favicon\s*\{/);
 });

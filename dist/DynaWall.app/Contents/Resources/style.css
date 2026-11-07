@@ -687,35 +687,10 @@ html.is-widgets-off .widget-orbit {
   stroke: none;
 }
 
-/* Favicon styling for satellites: `script.js` extracts the foreground glyph onto an
-   offscreen `<canvas>` (`faviconToWhiteGlyph`) in pure `#ffffff` ink and reveals the
-   `<img>` once `data-glyph-ready="true"` is set, so raw coloured tiles never flash. */
-.widget-favicon {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
-  opacity: 0;
-  transition: opacity 140ms ease;
-  pointer-events: none;
-  user-select: none;
-}
-
-.widget-favicon[data-glyph-ready="true"] {
-  opacity: 1;
-}
-
-.widget-fallback {
-  display: contents;
-}
-
-/* A service's initials, on request: the wallpaper itself no longer falls back to them —
-   a shortcut nothing in the catalogue names wears the generic window (`.widget-icon`)
-   instead — but the rule stays for a host that would rather print "GH" than draw one,
-   and for a service saved before the window existed. Two capitals in the wallpaper's
-   face at the weight the line art is stroked at, in the same white ink as every other
-   satellite, so they read as a deliberate mark rather than a missing icon — and they
-   cost no request, no sprite and no favicon. */
+/* A service's initials when no curated mark claims its domain or title: two capitals in
+   the wallpaper's face at the weight the line art is stroked at, in the same white ink as
+   every other satellite, so they read as a deliberate mark rather than a missing icon —
+   and they cost no request, no sprite and no favicon. */
 .widget-monogram {
   display: grid;
   place-items: center;
@@ -1188,12 +1163,6 @@ html.is-suspended .widget-btn {
 
 .widget-service-glyph .widget-monogram {
   font-size: 0.6rem;
-}
-
-.widget-service-glyph .widget-favicon {
-  width: 1.55rem;
-  height: 1.55rem;
-  border-radius: 0.35rem;
 }
 
 /* Going there and removing it are two targets, never one confusing target for both:

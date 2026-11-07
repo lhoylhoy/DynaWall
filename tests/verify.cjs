@@ -2848,7 +2848,7 @@ test('the wallpaper itself never reaches the network, and the apps only name pre
     return match;
   });
   const expected = new Set(
-    DynaWall.APP_PRESETS.map((preset) => new URL(preset.url).host).concat('example.com', 'www.google.com')
+    DynaWall.APP_PRESETS.map((preset) => new URL(preset.url).host).concat('example.com')
   );
   assert.deepEqual(
     Array.from(hosts).sort(),
@@ -2949,7 +2949,7 @@ test('the satellites are bare white glyphs, not glass buttons', () => {
   assert.match(css, /\.widget-modal\s*\{[^}]*border-radius:\s*var\(--glass-radius\)/);
 });
 test('the presets wear the brand marks the orbit wears', () => {
-  // Every preset wears its high-res favicon markup
+  // Every preset wears its built-in vector brand mark
   DynaWall.APP_PRESETS.forEach((preset) => {
     assert.match(preset.url, /^https:\/\//, `${preset.title} is a plain https page`);
     assert.ok(
@@ -2960,8 +2960,8 @@ test('the presets wear the brand marks the orbit wears', () => {
     assert.ok(service, `${preset.title} must be a legal app`);
     assert.match(
       DynaWall.serviceGlyphMarkup(service),
-      /class="widget-favicon"/,
-      `${preset.title} wears a high-res favicon`
+      /^<svg class="widget-icon/,
+      `${preset.title} wears its vector brand mark`
     );
   });
 
@@ -3593,61 +3593,56 @@ test('a shortcut address is a plain https page, or nothing at all', () => {
   );
 });
 
-test('a shortcut wears a high-res favicon, with fallback to the generic window', () => {
-  // 100% favicon architecture: every shortcut gets the site's own high-res favicon
-  // from the favicon service, with a generic window SVG fallback if unavailable.
-  const genericIcon = DynaWall.SERVICE_ICONS[0];
-  assert.equal(genericIcon.id, DynaWall.GENERIC_ICON_ID);
-  assert.match(genericIcon.paths, /^<rect/);
+test('a shortcut wears a built-in vector mark, its initials, or the generic window', () => {
+  // Every mark is path data in script.js: nothing is fetched and no favicon pixels are
+  // guessed at, so the icons render identically on every host, online or offline.
+  assert.equal(typeof DynaWall.serviceFaviconUrl, 'undefined', 'no favicon service is consulted');
+  const script = readText('script.js');
+  assert.ok(!/s2\/favicons|widget-favicon|getImageData/.test(script), 'no raster favicon pipeline');
 
-  // Favicon URL resolver: arbitrary domains use the favicon service
-  assert.equal(
-    DynaWall.serviceFaviconUrl('https://example.com/app'),
-    'https://www.google.com/s2/favicons?domain=example.com&sz=128'
-  );
-  assert.equal(
-    DynaWall.serviceFaviconUrl('https://news.ycombinator.com/item?id=1', 64),
-    'https://www.google.com/s2/favicons?domain=news.ycombinator.com&sz=64'
-  );
-  assert.equal(DynaWall.serviceFaviconUrl(''), '');
-
-  // 100% favicons: presets are fetched from the site like any other app, never hand-drawn
-  assert.equal(
-    DynaWall.serviceFaviconUrl('https://github.com/'),
-    'https://www.google.com/s2/favicons?domain=github.com&sz=128'
-  );
+  // Every preset wears its curated brand mark, never a monogram.
   DynaWall.APP_PRESETS.forEach((preset) => {
-    assert.match(
-      DynaWall.serviceFaviconUrl(preset.url),
-      /^https:\/\/www\.google\.com\/s2\/favicons\?domain=/,
-      `${preset.title} is sourced from its favicon`
-    );
+    const markup = DynaWall.serviceGlyphMarkup(DynaWall.createCustomService(preset.title, preset.url));
+    assert.match(markup, /^<svg class="widget-icon/, `${preset.title} wears a vector mark`);
   });
 
-  // Markup generation
-  const customService = { title: 'Hacker News', url: 'https://news.ycombinator.com/' };
-  const customMarkup = DynaWall.serviceGlyphMarkup(customService);
-  assert.match(customMarkup, /class="widget-favicon"/);
-  assert.match(customMarkup, /domain=news\.ycombinator\.com/);
-  assert.match(customMarkup, /alt="Hacker News"/);
-  assert.match(customMarkup, /class="widget-fallback"/);
+  // The host is matched first, then the words.
+  assert.equal(DynaWall.serviceIconId('Code', 'https://github.com/froilan'), 'github');
+  assert.equal(DynaWall.serviceIconId('Bird', 'https://twitter.com/x'), 'x');
+  assert.equal(DynaWall.serviceIconId('Work', 'https://chat.openai.com'), 'chatgpt');
+  assert.equal(DynaWall.serviceIconId('My Calendar', 'https://example.com'), 'calendar');
+  assert.equal(DynaWall.serviceIconId('Somewhere', 'https://example.com'), '', 'no match, no mark');
 
-  const presetService = { title: 'GitHub', url: 'https://github.com/' };
-  const presetMarkup = DynaWall.serviceGlyphMarkup(presetService);
-  assert.match(presetMarkup, /class="widget-favicon"/);
-  assert.match(presetMarkup, /domain=github\.com/);
-  assert.match(presetMarkup, /alt="GitHub"/);
-  assert.match(presetMarkup, /class="widget-fallback"/);
-  // The address is escaped into src="…": the `&` arrives as `&amp;`, and nothing leaks out of the <img>
-  assert.match(presetMarkup, /src="https:\/\/www\.google\.com\/s2\/favicons\?domain=github\.com&amp;sz=128"/);
-  const imgTag = presetMarkup.slice(0, presetMarkup.indexOf('/>') + 2);
-  assert.match(imgTag, /^<img [^<>]*\/>$/, 'no markup leaks out of the <img> tag');
+  // Filled logos are painted filled; line art keeps the stroke weight.
+  assert.match(DynaWall.serviceIconMarkup('github'), /class="widget-icon is-solid"/);
+  assert.match(DynaWall.serviceIconMarkup('notion'), /class="widget-icon"/);
+  assert.ok(!/is-solid/.test(DynaWall.serviceIconMarkup('notion')));
 
-  // Fallback markup for empty or missing URL
+  // An unknown site wears its initials; nothing at all wears the generic window.
   assert.equal(
-    DynaWall.serviceGlyphMarkup({ title: 'Unknown', url: '' }),
+    DynaWall.serviceGlyphMarkup({ title: 'Hacker News', url: 'https://news.ycombinator.com/' }),
+    '<span class="widget-monogram">HN</span>'
+  );
+  assert.equal(
+    DynaWall.serviceGlyphMarkup({ title: '', url: '' }),
     DynaWall.serviceIconMarkup(DynaWall.GENERIC_ICON_ID)
   );
+  assert.equal(
+    DynaWall.serviceGlyphMarkup({ title: '<img src=x onerror=alert(1)>', url: 'https://example.com' }),
+    '<span class="widget-monogram">IS</span>',
+    'markup in a title cannot reach the page'
+  );
+
+  // A legacy id still reads as its brand.
+  assert.equal(DynaWall.normalizeServiceIcon('git'), 'github');
+  assert.equal(DynaWall.normalizeServiceIcon('GITHUB'), 'github');
+  assert.equal(DynaWall.normalizeServiceIcon('nope'), '');
+
+  // Every mark is plain path data: no colours, no images, no remote references.
+  DynaWall.SERVICE_ICONS.forEach((icon) => {
+    assert.ok(icon.paths.length > 0, `${icon.id} draws something`);
+    assert.ok(!/#[0-9a-f]{3,6}|url\(|<image|https?:/i.test(icon.paths), `${icon.id} is monochrome path data`);
+  });
 
   // Monogram helper
   assert.equal(DynaWall.serviceMonogram('GitHub', 'https://github.com'), 'GH');
@@ -3657,55 +3652,23 @@ test('a shortcut wears a high-res favicon, with fallback to the generic window',
   assert.equal(DynaWall.serviceMonogram('', 'https://example.com'), 'EX', 'unnamed: the host names it');
 });
 
-test('satellite styling supports favicons and the generic fallback', () => {
+test('satellite styling paints every mark in the one white ink', () => {
   const css = readText('style.css');
-  assert.match(css, /\.widget-favicon\s*\{[^}]*object-fit:\s*contain/);
-  assert.match(
-    css,
-    /\.widget-favicon\[data-glyph-ready="true"\]\s*\{[^}]*opacity:\s*1/,
-    'processed white-glyph favicons are revealed once extracted'
-  );
-  assert.equal(typeof DynaWall.faviconToWhiteGlyph, 'function');
-
-  // Verify `faviconToWhiteGlyph` keys out an opaque background plate and extracts a pure
-  // `#ffffff` glyph rather than turning the whole tile into a solid white block.
-  const S = 32;
-  const imgData = { data: new Uint8ClampedArray(S * S * 4), width: S, height: S };
-  for (let y = 0; y < S; y += 1) {
-    for (let x = 0; x < S; x += 1) {
-      const i = (y * S + x) * 4;
-      const inCenter = Math.hypot(x - 15.5, y - 15.5) < 6;
-      // Dark plate `(20, 20, 20)` with a bright center glyph `(255, 120, 40)`
-      imgData.data[i] = inCenter ? 255 : 20;
-      imgData.data[i + 1] = inCenter ? 120 : 20;
-      imgData.data[i + 2] = inCenter ? 40 : 20;
-      imgData.data[i + 3] = 255;
-    }
-  }
-  DynaWall.faviconToWhiteGlyph(imgData);
-  // Corner of the opaque plate must now be transparent (`alpha === 0`), not solid white!
-  assert.equal(imgData.data[(2 * S + 2) * 4 + 3], 0, 'opaque plate is keyed out');
-  // Center glyph must be pure white (`255, 255, 255`) and opaque (`alpha > 200`).
-  const centerIdx = (16 * S + 16) * 4;
-  assert.equal(imgData.data[centerIdx], 255);
-  assert.equal(imgData.data[centerIdx + 1], 255);
-  assert.equal(imgData.data[centerIdx + 2], 255);
-  assert.ok(imgData.data[centerIdx + 3] > 200, 'interior glyph stays opaque white');
-
+  assert.ok(!/widget-favicon|widget-filter-defs/.test(css), 'no favicon styling is left behind');
+  assert.ok(!/<filter/.test(readText('index.html')), 'no SVG filter pipeline is left behind');
   assert.match(css, /\.widget-icon\s*\{[^}]*stroke:\s*currentColor/);
-  assert.match(css, /\.widget-service-glyph\s*\.widget-favicon\s*\{/);
+  assert.match(css, /\.widget-icon\.is-solid\s*\{[^}]*fill:\s*currentColor/);
+  assert.match(css, /\.widget-monogram\s*\{[^}]*font-family:\s*var\(--font-sans\)/);
+  assert.match(css, /\.widget-service-glyph\s*\{[^}]*color:\s*var\(--widget-ink\)/);
 });
 
 test('the catch-all is the generic window mark', () => {
   assert.equal(DynaWall.GENERIC_ICON_ID, 'generic');
-  assert.equal(
-    DynaWall.normalizeServiceIcon(DynaWall.GENERIC_ICON_ID),
-    DynaWall.GENERIC_ICON_ID
-  );
-  assert.equal(
-    DynaWall.createCustomService('GitHub', 'https://github.com').icon,
-    ''
-  );
+  assert.equal(DynaWall.normalizeServiceIcon(DynaWall.GENERIC_ICON_ID), DynaWall.GENERIC_ICON_ID);
+  const last = DynaWall.SERVICE_ICONS[DynaWall.SERVICE_ICONS.length - 1];
+  assert.equal(last.id, DynaWall.GENERIC_ICON_ID, 'the catch-all closes the catalogue');
+  assert.match(last.paths, /^<rect/);
+  assert.equal(DynaWall.createCustomService('GitHub', 'https://github.com').icon, 'github');
 });
 
 test('a preset is a name and an address, and nothing a typed app could not be', () => {
@@ -3743,7 +3706,7 @@ test('a shortcut is a record, and the stored list is made safe', () => {
     id: 'service-2',
     title: 'GitHub',
     url: 'https://github.com/froilan',
-    icon: ''
+    icon: 'github'
   });
   assert.equal(
     DynaWall.createCustomService('', 'https://example.com').title,
@@ -3751,11 +3714,15 @@ test('a shortcut is a record, and the stored list is made safe', () => {
     'an unnamed service borrows the host name'
   );
   assert.equal(DynaWall.createCustomService('FTP', 'ftp://example.com'), null);
-  // icon is generic
   assert.equal(
     DynaWall.createCustomService('Odd', 'https://example.com', { icon: 'nope' }).icon,
     '',
-    'an unknown mark falls back to the generic window'
+    'an unknown mark falls back to the monogram'
+  );
+  assert.equal(
+    DynaWall.createCustomService('Talk', 'https://example.com', { icon: 'talk' }).icon,
+    'talk',
+    'a chosen mark wins over the guess'
   );
 
   // A record saved while the catalogue was all placeholders upgrades itself: the mark
@@ -3783,8 +3750,8 @@ test('a shortcut is a record, and the stored list is made safe', () => {
   );
   assert.deepEqual(
     services.map((service) => service.icon),
-    ['', ''],
-    'icons normalize to empty (fallback)'
+    ['github', 'chatgpt'],
+    'a kind mark saved before the brand existed upgrades to the brand'
   );
   assert.deepEqual(DynaWall.normalizeCustomServices('not json'), []);
   assert.deepEqual(DynaWall.normalizeCustomServices('{}'), []);
@@ -3819,8 +3786,8 @@ test('shortcuts survive a reload in localStorage, and nowhere else', () => {
   // The stored shape is the minimum: no ids, no derived handles — the id is a handle
   // the page mints, and the mark is the one the title and the address name.
   assert.deepEqual(JSON.parse(storage.getItem(DynaWall.CUSTOM_SERVICES_KEY)), [
-    { title: 'GitHub', url: 'https://github.com/', icon: '' },
-    { title: 'ChatGPT', url: 'https://chat.openai.com/', icon: '' }
+    { title: 'GitHub', url: 'https://github.com/', icon: 'github' },
+    { title: 'ChatGPT', url: 'https://chat.openai.com/', icon: 'chatgpt' }
   ]);
 
   // A cache that is blocked or absent is not a broken wallpaper.

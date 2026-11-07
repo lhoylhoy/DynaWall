@@ -1790,7 +1790,515 @@
       '<path d="M6.6 7h.01M9.1 7h.01"/>'
   });
 
-  const SERVICE_ICONS = Object.freeze([GENERIC_ICON]);
+  const SERVICE_ICONS = Object.freeze([
+
+    Object.freeze({
+      id: 'github',
+      solid: true,
+      label: 'GitHub',
+      hints: Object.freeze(['github', 'octocat']),
+      domains: Object.freeze(['github.com', 'gist.github.com', 'github.io', 'github.blog']),
+      paths:
+        '<path d="M12 1.47c-5.97 0-10.8 4.84-10.8 10.8c0 4.77 3.09 8.82 7.38 10.25c0.54 0.1 0.74-0.23 ' +
+        '0.74-0.52c0-0.26-0.01-0.94-0.01-1.84c-3 0.65-3.64-1.45-3.64-1.45C5.18 17.46 4.47 17.13 4.47 ' +
+        '17.13c-0.98-0.67 0.08-0.66 0.08-0.66c1.08 0.08 1.65 1.11 1.65 1.11c0.96 1.65 2.53 1.17 3.15 ' +
+        '0.9c0.1-0.7 0.38-1.17 0.68-1.44c-2.4-0.27-4.92-1.2-4.92-5.34c0-1.18 0.42-2.14 ' +
+        '1.11-2.9c-0.12-0.27-0.49-1.37 0.09-2.86c0 0 0.9-0.29 2.97 1.11c0.86-0.24 1.78-0.36 2.7-0.36c0.92 ' +
+        '0.01 1.84 0.12 2.7 0.36c2.05-1.4 2.96-1.11 2.96-1.11c0.58 1.49 0.22 2.59 0.11 2.86c0.69 0.76 ' +
+        '1.11 1.72 1.11 2.9c0 4.15-2.52 5.06-4.93 5.33c0.38 0.32 0.73 0.99 0.73 2c0 1.45-0.01 2.61-0.01 ' +
+        '2.96c0 0.28 0.19 0.62 0.74 0.51C19.71 21.08 22.8 17.03 22.8 12.27c0-5.96-4.84-10.8-10.8-10.8"/>'
+    }),
+    Object.freeze({
+      id: 'chatgpt',
+      label: 'ChatGPT',
+      hints: Object.freeze(['chatgpt', 'openai']),
+      domains: Object.freeze(['chatgpt.com', 'chat.openai.com', 'openai.com', 'platform.openai.com']),
+      paths:
+        '<path d="M11.22 19.38a3.5 3.5 0 0 0 6.78-1.22v-5.17l-6-3.35' +
+        'M5.21 15.01a3.5 3.5 0 0 0 4.45 5.27l4.34-2.54v-6.95' +
+        'M6 7.63c-1.39-.24-2.79.4-3.53 1.69a3.47 3.47 0 0 0 1.27 4.75l4.26 2.51l6-3.35' +
+        'M12.78 4.62a3.5 3.5 0 0 0-6.78 1.21v5.07l6 3.45' +
+        'M18.79 8.99a3.5 3.5 0 0 0-4.45-5.27l-4.34 2.53v6.95' +
+        'M18 16.3c1.39.24 2.79-.4 3.53-1.69a3.47 3.47 0 0 0-1.27-4.75l-4.31-2.51l-5.96 3.42"/>'
+    }),
+    Object.freeze({
+      id: 'claude',
+      solid: true,
+      label: 'Claude',
+      hints: Object.freeze(['claude', 'anthropic']),
+      domains: Object.freeze(['claude.ai', 'claude.com', 'anthropic.com']),
+      paths:
+        '<path d="m4.24 ' +
+        '14.36l4.25-2.38l0.07-0.21l-0.07-0.11h-0.21l-0.71-0.04l-2.43-0.07l-2.1-0.09l-2.04-0.11l-0.51-0.11' +
+        'l-0.48-0.63l0.05-0.32l0.43-0.29l0.62 0.05l1.37 0.09l2.05 0.14l1.49 0.09l2.2 ' +
+        '0.23h0.35l0.05-0.14l-0.12-0.09l-0.09-0.09L7.48 ' +
+        '10.05l-2.29-1.52l-1.2-0.87l-0.65-0.44l-0.33-0.42l-0.14-0.91l0.59-0.65l0.79 0.05l0.2 0.05l0.8 ' +
+        '0.62l1.72 1.33l2.24 1.65l0.33 ' +
+        '0.27l0.13-0.09l0.02-0.07l-0.15-0.25l-1.22-2.2l-1.3-2.24l-0.58-0.93l-0.15-0.56c-0.05-0.23-0.09-0.' +
+        '42-0.09-0.66L6.86 1.32L7.23 1.2l0.9 0.12l0.38 0.33l0.56 1.27l0.9 2.01l1.4 2.73l0.41 0.81l0.22 ' +
+        '0.75l0.08 0.23h0.14v-0.13l0.11-1.54l0.21-1.89l0.21-2.43l0.07-0.68l0.34-0.82l0.67-0.44l0.52 ' +
+        '0.25l0.43 0.62l-0.06 0.4l-0.26 1.67l-0.5 2.61l-0.33 ' +
+        '1.75h0.19l0.22-0.22l0.89-1.17l1.49-1.86l0.66-0.74l0.77-0.81l0.49-0.39h0.93l0.68 1.02l-0.31 ' +
+        '1.05l-0.96 1.21l-0.79 1.03l-1.14 1.53l-0.71 1.22l0.07 ' +
+        '0.1l0.17-0.02l2.57-0.55l1.39-0.25l1.66-0.28l0.75 0.35l0.08 0.36l-0.3 0.73l-1.77 0.44l-2.08 ' +
+        '0.42l-3.09 0.73l-0.04 0.03l0.04 0.05l1.39 0.13l0.6 0.03h1.46l2.72 0.2l0.71 0.47l0.43 0.57l-0.07 ' +
+        '0.44l-1.09 0.56l-1.48-0.35l-3.44-0.82l-1.18-0.3h-0.16v0.1l0.98 0.96l1.8 1.63l2.26 2.1l0.11 ' +
+        '0.52l-0.29 0.41l-0.31-0.04l-1.98-1.49l-0.76-0.67l-1.73-1.46h-0.11v0.15l0.4 0.58l2.11 3.17l0.11 ' +
+        '0.97l-0.15 0.32l-0.55 0.19l-0.6-0.11l-1.23-1.73L14.14 17.36l-1.03-1.75l-0.13 0.07l-0.61 ' +
+        '6.53l-0.28 0.33l-0.66 ' +
+        '0.25l-0.55-0.42l-0.29-0.67l0.29-1.33l0.35-1.73l0.28-1.38l0.26-1.71l0.15-0.57l-0.01-0.04l-0.13 ' +
+        '0.02l-1.29 1.77l-1.96 2.65l-1.55 1.66l-0.37 ' +
+        '0.15l-0.64-0.33l0.06-0.6l0.36-0.53l2.15-2.73l1.3-1.69l0.84-0.98l-0.01-0.14h-0.05l-5.7 3.7l-1.02 ' +
+        '0.13l-0.44-0.41l0.05-0.67l0.21-0.22l1.72-1.18Z"/>'
+    }),
+    Object.freeze({
+      id: 'gemini',
+      solid: true,
+      label: 'Gemini',
+      hints: Object.freeze(['gemini', 'bard']),
+      domains: Object.freeze(['gemini.google.com', 'bard.google.com']),
+      paths:
+        '<path d="M11.14 18.59Q12 20.56 12 22.8q0-2.24 0.84-4.21q0.86-1.97 2.32-3.43t3.43-2.29Q20.56 12 ' +
+        '22.8 12q-2.24 0-4.21-0.84a11.07 11.07 0 0 1-3.43-2.32a11.07 11.07 0 0 1-2.32-3.43Q12 3.44 12 ' +
+        '1.2q0 2.24-0.86 4.21q-0.84 1.97-2.29 3.43a11.07 11.07 0 0 1-3.43 2.32Q3.44 12 1.2 12q2.24 0 4.21 ' +
+        '0.86q1.97 0.84 3.43 2.3t2.3 3.43"/>'
+    }),
+    Object.freeze({
+      id: 'spotify',
+      label: 'Spotify',
+      hints: Object.freeze(['spotify']),
+      domains: Object.freeze(['spotify.com', 'spotify.link']),
+      paths:
+        '<circle cx="12" cy="12" r="9.55"/><path d="M6.9 10.05q5.1-1.9 10.2 1.2"/><path d="M7.55 ' +
+        '13.35q4.4-1.5 8.9 1.05"/><path d="M8.15 16.5q3.65-1.15 7.3 1"/>'
+    }),
+    Object.freeze({
+      id: 'discord',
+      solid: true,
+      label: 'Discord',
+      hints: Object.freeze(['discord']),
+      domains: Object.freeze(['discord.com', 'discord.gg', 'discordapp.com']),
+      paths:
+        '<path d="M19.49 5.13a17.81 17.81 0 0 0-4.4-1.36a0.07 0.07 0 0 0-0.07 0.03c-0.19 0.34-0.4 ' +
+        '0.78-0.55 1.12c-1.66-0.25-3.31-0.25-4.94 0c-0.15-0.35-0.37-0.79-0.56-1.12a0.07 0.07 0 0 ' +
+        '0-0.07-0.03a17.76 17.76 0 0 0-4.4 1.36a0.06 0.06 0 0 0-0.03 0.02C1.68 9.34 0.91 13.42 1.29 ' +
+        '17.45a0.07 0.07 0 0 0 0.03 0.05c1.85 1.36 3.64 2.18 5.39 2.73a0.07 0.07 0 0 0 ' +
+        '0.08-0.02c0.42-0.57 0.79-1.17 1.1-1.79a0.07 0.07 0 0 ' +
+        '0-0.04-0.1c-0.59-0.22-1.15-0.49-1.68-0.8a0.07 0.07 0 0 1-0.01-0.11c0.11-0.08 0.23-0.17 ' +
+        '0.33-0.26a0.07 0.07 0 0 1 0.07-0.01c3.54 1.61 7.36 1.61 10.86 0a0.07 0.07 0 0 1 0.07 0.01c0.11 ' +
+        '0.09 0.22 0.18 0.34 0.26a0.07 0.07 0 0 1-0.01 0.11a11.07 11.07 0 0 1-1.69 0.8a0.07 0.07 0 0 ' +
+        '0-0.04 0.1c0.32 0.63 0.69 1.23 1.1 1.79a0.07 0.07 0 0 0 0.08 0.03c1.76-0.55 3.55-1.37 ' +
+        '5.4-2.73a0.07 0.07 0 0 0 0.03-0.05c0.45-4.66-0.75-8.71-3.19-12.29a0.05 0.05 0 0 ' +
+        '0-0.03-0.03zM8.42 15c-1.06 0-1.94-0.98-1.94-2.18c0-1.2 0.86-2.18 1.94-2.18c1.09 0 1.96 0.99 1.94 ' +
+        '2.18c0 1.2-0.86 2.18-1.94 2.18zm7.18 0c-1.06 0-1.94-0.98-1.94-2.18c0-1.2 0.86-2.18 ' +
+        '1.94-2.18c1.09 0 1.96 0.99 1.94 2.18c0 1.2-0.85 2.18-1.94 2.18Z"/>'
+    }),
+    Object.freeze({
+      id: 'reddit',
+      solid: true,
+      label: 'Reddit',
+      hints: Object.freeze(['reddit']),
+      domains: Object.freeze(['reddit.com', 'redd.it']),
+      paths:
+        '<path d="M12 1.2C6.04 1.2 1.2 6.04 1.2 12c0 2.98 1.21 5.68 3.16 7.64l-2.06 2.06C1.9 22.1 2.19 ' +
+        '22.8 2.76 22.8H12c5.96 0 10.8-4.84 10.8-10.8S17.96 1.2 12 1.2Zm3.95 2.88c0.99 0 1.8 0.81 1.8 ' +
+        '1.8c0 0.99-0.81 1.8-1.8 1.8c-0.85 0-1.57-0.59-1.75-1.39v0c-1.03 0.15-1.83 1.03-1.83 ' +
+        '2.11v0.01c1.6 0.06 3.06 0.51 4.22 1.23c0.43-0.33 0.96-0.52 1.54-0.52c1.39 0 2.52 1.13 2.52 ' +
+        '2.52c0 1.01-0.59 1.87-1.44 2.28c-0.08 2.93-3.27 5.29-7.2 5.29c-3.92 ' +
+        '0-7.11-2.36-7.2-5.28c-0.86-0.4-1.45-1.27-1.45-2.28c0-1.39 1.13-2.52 2.52-2.52c0.58 0 1.12 0.2 ' +
+        '1.54 0.53c1.15-0.71 2.59-1.16 4.18-1.23v-0.01c0-1.5 1.14-2.73 2.59-2.89c0.17-0.82 0.89-1.44 ' +
+        '1.76-1.44Zm-7.28 7.54c-0.71 0-1.31 0.7-1.36 1.62c-0.04 0.91 0.58 1.29 1.28 1.29c0.71 0 1.23-0.33 ' +
+        '1.28-1.25c0.04-0.92-0.5-1.66-1.2-1.66Zm6.67 0c-0.71 0-1.25 0.74-1.2 1.66c0.04 0.92 0.57 1.25 ' +
+        '1.28 1.25c0.71 0 1.33-0.37 1.28-1.29c-0.04-0.92-0.65-1.62-1.36-1.62Zm-3.33 3.61c-0.88 0-1.72 ' +
+        '0.04-2.49 0.12c-0.13 0.01-0.22 0.15-0.16 0.27c0.43 1.04 1.46 1.77 2.66 1.77c1.2 0 2.22-0.73 ' +
+        '2.66-1.77c0.05-0.12-0.03-0.26-0.17-0.27c-0.78-0.08-1.62-0.12-2.49-0.12Z"/>'
+    }),
+    Object.freeze({
+      id: 'slack',
+      solid: true,
+      label: 'Slack',
+      hints: Object.freeze(['slack']),
+      domains: Object.freeze(['slack.com']),
+      paths:
+        '<path d="M5.74 14.85a2.28 2.28 0 0 1-2.27 2.27A2.28 2.28 0 0 1 1.2 14.85a2.27 2.27 0 0 1 ' +
+        '2.27-2.27h2.27v2.27zM6.88 14.85a2.27 2.27 0 0 1 2.27-2.27a2.27 2.27 0 0 1 2.27 2.27v5.68A2.28 ' +
+        '2.28 0 0 1 9.15 22.8a2.28 2.28 0 0 1-2.27-2.27v-5.68zM9.15 5.74a2.28 2.28 0 0 1-2.27-2.27A2.28 ' +
+        '2.28 0 0 1 9.15 1.2a2.28 2.28 0 0 1 2.27 2.27v2.27H9.15zM9.15 6.88a2.28 2.28 0 0 1 2.27 ' +
+        '2.27a2.28 2.28 0 0 1-2.27 2.27H3.47A2.28 2.28 0 0 1 1.2 9.15a2.28 2.28 0 0 1 ' +
+        '2.27-2.27h5.68zM18.26 9.15a2.28 2.28 0 0 1 2.27-2.27A2.28 2.28 0 0 1 22.8 9.15a2.28 2.28 0 0 ' +
+        '1-2.27 2.27h-2.27V9.15zM17.12 9.15a2.28 2.28 0 0 1-2.27 2.27a2.27 2.27 0 0 1-2.27-2.27V3.47A2.27 ' +
+        '2.27 0 0 1 14.85 1.2a2.28 2.28 0 0 1 2.27 2.27v5.68zM14.85 18.26a2.28 2.28 0 0 1 2.27 2.27A2.28 ' +
+        '2.28 0 0 1 14.85 22.8a2.27 2.27 0 0 1-2.27-2.27v-2.27h2.27zM14.85 17.12a2.27 2.27 0 0 ' +
+        '1-2.27-2.27a2.27 2.27 0 0 1 2.27-2.27h5.68A2.27 2.27 0 0 1 22.8 14.85a2.28 2.28 0 0 1-2.27 ' +
+        '2.27h-5.68z"/>'
+    }),
+    Object.freeze({
+      id: 'x',
+      solid: true,
+      label: 'X',
+      hints: Object.freeze(['twitter', 'tweet']),
+      domains: Object.freeze(['x.com', 'twitter.com', 't.co']),
+      paths:
+        '<path d="M18.21 2.24h3.31l-7.24 8.27L22.8 21.76h-6.67l-5.22-6.83l-5.97 6.83H1.63l7.74-8.85L1.2 ' +
+        '2.24h6.83l4.72 6.24ZM17.05 19.78h1.84L7.04 4.12H5.07Z"/>'
+    }),
+    Object.freeze({
+      id: 'notion',
+      label: 'Notion',
+      hints: Object.freeze(['notion']),
+      domains: Object.freeze(['notion.so', 'notion.site', 'notion.com']),
+      paths:
+        '<rect x="3.4" y="3.4" width="17.2" height="17.2" rx="3.2"/><path d="M8.6 16.6V7.4l6.8 9.2V7.4"/>'
+    }),
+    Object.freeze({
+      id: 'figma',
+      solid: true,
+      label: 'Figma',
+      hints: Object.freeze(['figma']),
+      domains: Object.freeze(['figma.com']),
+      paths:
+        '<path d="M15.47 9.28h-4.13V1.2h4.13c2.23 0 4.04 1.81 4.04 4.04s-1.81 4.04-4.04 4.04zM12.66 ' +
+        '7.96h2.81c1.5 0 2.72-1.22 2.72-2.72s-1.22-2.72-2.72-2.72h-2.81V7.96zm0 1.32H8.53c-2.23 ' +
+        '0-4.04-1.81-4.04-4.04S6.3 1.2 8.53 1.2h4.13v8.08zm-4.13-6.76c-1.5 0-2.72 1.22-2.72 2.72s1.22 ' +
+        '2.72 2.72 2.72h2.81V2.52H8.53zm4.13 13.52H8.53c-2.23 0-4.04-1.81-4.04-4.04s1.81-4.04 ' +
+        '4.04-4.04h4.13v8.08zM8.53 9.28c-1.5 0-2.72 1.22-2.72 2.72s1.22 2.72 2.72 ' +
+        '2.72h2.81V9.28H8.53zM8.55 22.8c-2.24 0-4.06-1.81-4.06-4.04s1.81-4.04 4.04-4.04h4.13v4c0 ' +
+        '2.25-1.84 4.09-4.11 4.09zm-0.02-6.76a2.72 2.72 0 0 0-2.72 2.72c0 1.5 1.23 2.72 2.74 2.72c1.53 0 ' +
+        '2.78-1.24 2.78-2.76v-2.67H8.53zm6.93 0h-0.09c-2.23 0-4.04-1.81-4.04-4.04s1.81-4.04 ' +
+        '4.04-4.04h0.09c2.23 0 4.04 1.81 4.04 4.04s-1.81 4.04-4.04 4.04zm-0.09-6.76c-1.5 0-2.72 1.22-2.72 ' +
+        '2.72s1.22 2.72 2.72 2.72h0.09c1.5 0 2.72-1.22 2.72-2.72s-1.22-2.72-2.72-2.72h-0.09z"/>'
+    }),
+    Object.freeze({
+      id: 'instagram',
+      solid: true,
+      label: 'Instagram',
+      hints: Object.freeze(['instagram']),
+      domains: Object.freeze(['instagram.com', 'instagr.am']),
+      paths:
+        '<path d="M7.53 1.28c-1.15 0.05-1.93 0.24-2.62 0.51c-0.71 0.28-1.31 0.65-1.91 1.25c-0.6 0.6-0.97 ' +
+        '1.2-1.24 1.91c-0.27 0.69-0.45 1.47-0.5 2.62c-0.05 1.15-0.06 1.52-0.06 4.45c0.01 2.93 0.02 3.3 ' +
+        '0.07 4.45c0.05 1.15 0.24 1.93 0.51 2.62c0.28 0.71 0.65 1.31 1.25 1.91c0.6 0.6 1.2 0.97 1.92 ' +
+        '1.24c0.69 0.27 1.47 0.45 2.62 0.5c1.15 0.05 1.52 0.06 4.45 0.06c2.93-0.01 3.3-0.02 ' +
+        '4.45-0.07c1.15-0.05 1.93-0.24 2.62-0.51c0.71-0.28 1.31-0.65 1.91-1.25c0.6-0.6 0.97-1.2 ' +
+        '1.24-1.92c0.27-0.69 0.45-1.47 0.5-2.62c0.05-1.15 0.06-1.52 ' +
+        '0.06-4.45c-0.01-2.93-0.02-3.3-0.07-4.45c-0.05-1.15-0.24-1.93-0.51-2.62c-0.28-0.71-0.65-1.31-1.25' +
+        '-1.91C20.37 2.4 19.77 2.03 19.05 1.75C18.37 1.49 17.58 1.31 16.43 1.26C15.28 1.21 14.91 1.2 ' +
+        '11.98 1.2C9.05 1.21 8.68 1.22 7.53 1.28m0.13 ' +
+        '19.52c-1.05-0.05-1.62-0.22-2.01-0.37c-0.5-0.19-0.86-0.43-1.24-0.81c-0.38-0.38-0.61-0.74-0.81-1.2' +
+        '4c-0.15-0.38-0.33-0.95-0.38-2.01c-0.05-1.14-0.06-1.48-0.07-4.36c-0.01-2.88 0-3.22 ' +
+        '0.05-4.36c0.05-1.05 0.22-1.62 0.37-2.01c0.19-0.51 0.43-0.86 0.81-1.24c0.38-0.38 0.74-0.61 ' +
+        '1.24-0.81c0.38-0.15 0.95-0.33 2-0.38c1.14-0.05 1.48-0.06 4.36-0.07c2.88-0.01 3.23 0 4.36 ' +
+        '0.05c1.05 0.05 1.62 0.22 2.01 0.37c0.5 0.19 0.86 0.43 1.24 0.81c0.38 0.38 0.61 0.74 0.81 ' +
+        '1.24c0.15 0.38 0.33 0.95 0.38 2c0.05 1.14 0.07 1.48 0.07 4.36c0.01 2.88 0 3.23-0.05 4.36c-0.05 ' +
+        '1.05-0.22 1.62-0.37 2.01c-0.19 0.5-0.43 0.86-0.81 1.24c-0.38 0.38-0.74 0.61-1.24 0.81c-0.38 ' +
+        '0.15-0.95 0.33-2 0.38c-1.14 0.05-1.48 0.06-4.36 0.07c-2.88 0.01-3.22-0.01-4.36-0.05M16.46 ' +
+        '6.23A1.3 1.3 0 1 0 17.75 4.93a1.3 1.3 0 0 0-1.29 1.3M6.45 12.01c0.01 3.06 2.49 5.54 5.56 ' +
+        '5.53c3.06-0.01 5.54-2.49 5.54-5.56c-0.01-3.06-2.49-5.54-5.56-5.53c-3.06 0.01-5.54 2.49-5.53 ' +
+        '5.56M8.4 12.01a3.6 3.6 0 1 1 3.61 3.59A3.6 3.6 0 0 1 8.4 12.01"/>'
+    }),
+    Object.freeze({
+      id: 'twitch',
+      solid: true,
+      label: 'Twitch',
+      hints: Object.freeze(['twitch']),
+      domains: Object.freeze(['twitch.tv']),
+      paths:
+        '<path d="M11.61 5.44h1.54v4.63H11.61zm4.24 0H17.4v4.63h-1.54zM6.6 1.2L2.74 ' +
+        '5.06v13.89h4.63V22.8l3.86-3.86h3.09L21.26 12V1.2zm13.11 10.03l-3.09 3.09h-3.09l-2.7 ' +
+        '2.7v-2.7H7.37V2.74h12.34Z"/>'
+    }),
+    Object.freeze({
+      id: 'netflix',
+      solid: true,
+      label: 'Netflix',
+      hints: Object.freeze(['netflix']),
+      domains: Object.freeze(['netflix.com']),
+      paths:
+        '<path d="M6.06 1.2v0.01c2.73 7.7 4.83 13.66 7.51 21.24c2.11 0.05 4.37 0.36 4.37 ' +
+        '0.36c-2.52-7.13-5.33-15.07-7.64-21.6zm7.64 0v8.67L17.94 21.86c-0.04-7.07 0-14.32 0-20.65zM6.06 ' +
+        '2.15V22.8c1.69-0.2 2.53-0.28 4.24-0.36v-8.3z"/>'
+    }),
+    Object.freeze({
+      id: 'gmail',
+      solid: true,
+      label: 'Gmail',
+      hints: Object.freeze(['gmail']),
+      domains: Object.freeze(['gmail.com', 'mail.google.com', 'googlemail.com']),
+      paths:
+        '<path d="M22.8 6.11v12.52c0 0.81-0.66 1.47-1.47 1.47h-3.44V11.76L12 ' +
+        '16.18l-5.89-4.42v8.35H2.67A1.47 1.47 0 0 1 1.2 18.63V6.11c0-1.82 2.08-2.86 3.53-1.77L6.11 ' +
+        '5.38L12 9.79l5.89-4.42l1.38-1.03C20.72 3.25 22.8 4.29 22.8 6.11z"/>'
+    }),
+    Object.freeze({
+      id: 'drive',
+      solid: true,
+      label: 'Google Drive',
+      hints: Object.freeze(['google drive', 'gdrive']),
+      domains: Object.freeze(['drive.google.com']),
+      paths:
+        '<path d="M12.01 2.54c-1.87 0-3.38 0.02-3.37 0.04c0.01 0.02 1.54 2.7 3.4 5.96l3.38 5.92h3.38c1.87 ' +
+        '0 3.38-0.02 3.37-0.04c0-0.02-1.54-2.7-3.4-5.96l-3.38-5.92zm-4.28 1.56a710.85 710.87 0 0 0-3.27 ' +
+        '5.69L1.2 15.48l1.7 2.97l1.7 2.97l3.26-5.7l3.26-5.7l-1.69-2.96C8.49 5.43 7.73 4.1 7.73 4.09zm2.03 ' +
+        '11.39l-0.18 0.31c-0.1 0.18-0.86 1.5-1.69 2.96a381.54 381.55 0 0 1-1.53 2.67c-0.01 0.02 2.92 0.04 ' +
+        '6.5 0.04h6.52l1.62-2.84c0.89-1.56 1.67-2.91 1.72-2.99l0.09-0.15h-6.52z"/>'
+    }),
+    Object.freeze({
+      id: 'docs',
+      solid: true,
+      label: 'Google Docs',
+      hints: Object.freeze(['google docs', 'gdocs']),
+      domains: Object.freeze(['docs.google.com']),
+      paths:
+        '<path d="M14.45 7.25H13.8V1.2H5.62c-0.81 0-1.47 0.66-1.47 1.47v18.66c0 0.81 0.66 1.47 1.47 ' +
+        '1.47h12.76c0.81 0 1.47-0.66 1.47-1.47V7.25h-5.4zm-0.49 ' +
+        '9.41H7.58v-1.23h6.38v1.23zm2.45-2.95H7.58v-1.23h8.84v1.23zm0-2.95H7.58V9.55h8.84v1.23zM14.45 ' +
+        '6.6h5.4l-5.4-5.4v5.4z"/>'
+    }),
+    Object.freeze({
+      id: 'whatsapp',
+      solid: true,
+      label: 'WhatsApp',
+      hints: Object.freeze(['whatsapp']),
+      domains: Object.freeze(['whatsapp.com', 'wa.me']),
+      paths:
+        '<path d="M16.92 14.14c-0.27-0.13-1.58-0.78-1.83-0.87c-0.25-0.09-0.42-0.13-0.6 0.14c-0.18 ' +
+        '0.27-0.69 0.87-0.85 1.05c-0.16 0.18-0.31 0.2-0.58 ' +
+        '0.07c-0.27-0.13-1.13-0.42-2.15-1.33c-0.79-0.71-1.33-1.58-1.49-1.85c-0.16-0.27-0.02-0.41 ' +
+        '0.12-0.55c0.12-0.12 0.27-0.31 0.4-0.47c0.13-0.16 0.18-0.27 0.27-0.45c0.09-0.18 ' +
+        '0.05-0.33-0.02-0.47c-0.07-0.13-0.6-1.45-0.82-1.99c-0.22-0.52-0.44-0.45-0.6-0.46c-0.16-0.01-0.33-' +
+        '0.01-0.51-0.01c-0.18 0-0.47 0.07-0.71 0.33c-0.24 0.27-0.94 0.91-0.94 2.23c0 1.32 0.96 2.59 1.09 ' +
+        '2.77c0.13 0.18 1.89 2.88 4.57 4.04c0.64 0.28 1.14 0.44 1.52 0.56c0.64 0.2 1.22 0.18 1.68 ' +
+        '0.11c0.51-0.08 1.58-0.65 1.81-1.27c0.22-0.62 0.22-1.16 ' +
+        '0.16-1.27c-0.07-0.11-0.24-0.18-0.51-0.31m-4.88 6.66h0a8.88 8.88 0 0 1-4.53-1.24l-0.32-0.19l-3.37 ' +
+        '0.88l0.9-3.28l-0.21-0.34a8.87 8.87 0 0 1-1.36-4.73c0-4.9 3.99-8.9 8.9-8.9c2.38 0 4.61 0.93 6.29 ' +
+        '2.61a8.84 8.84 0 0 1 2.6 6.29c0 4.91-3.99 8.9-8.9 8.9m7.57-16.47A10.63 10.63 0 0 0 12.05 ' +
+        '1.2C6.15 1.2 1.34 6 1.34 11.9c0 1.89 0.49 3.73 1.43 5.35L1.25 22.8l5.67-1.49a10.69 10.69 0 0 0 ' +
+        '5.11 1.3h0c5.9 0 10.7-4.8 10.7-10.7a10.64 10.64 0 0 0-3.13-7.57Z"/>'
+    }),
+    Object.freeze({
+      id: 'telegram',
+      solid: true,
+      label: 'Telegram',
+      hints: Object.freeze(['telegram']),
+      domains: Object.freeze(['telegram.org', 't.me', 'telegram.me', 'web.telegram.org']),
+      paths:
+        '<path d="M11.95 1.2A10.8 10.8 0 0 0 1.2 12a10.8 10.8 0 0 0 10.8 10.8a10.8 10.8 0 0 0 ' +
+        '10.8-10.8A10.8 10.8 0 0 0 12 1.2a10.8 10.8 0 0 0-0.05 0zm4.47 6.5c0.09 0 0.29 0.02 0.42 ' +
+        '0.13a0.46 0.46 0 0 1 0.15 0.29c0.01 0.08 0.03 0.28 0.02 0.42c-0.16 1.71-0.87 5.85-1.22 ' +
+        '7.76c-0.15 0.81-0.45 1.08-0.74 1.11c-0.63 ' +
+        '0.06-1.1-0.41-1.71-0.81c-0.95-0.62-1.49-1.01-2.41-1.62c-1.07-0.7-0.38-1.09 0.23-1.72c0.16-0.17 ' +
+        '2.92-2.68 2.98-2.91c0.01-0.03 0.01-0.13-0.05-0.19s-0.16-0.04-0.22-0.02c-0.1 0.02-1.61 1.03-4.55 ' +
+        '3.01c-0.43 0.3-0.82 0.44-1.17 ' +
+        '0.43c-0.39-0.01-1.13-0.22-1.68-0.4c-0.68-0.22-1.21-0.34-1.17-0.71c0.02-0.19 0.29-0.39 ' +
+        '0.8-0.6c3.15-1.37 5.25-2.28 6.3-2.71c3-1.25 3.62-1.46 4.03-1.47z"/>'
+    }),
+    Object.freeze({
+      id: 'apple',
+      solid: true,
+      label: 'Apple',
+      hints: Object.freeze(['apple', 'icloud']),
+      domains: Object.freeze(['apple.com', 'icloud.com']),
+      paths:
+        '<path d="M12.14 7.41c-0.85 0-2.17-0.97-3.56-0.94c-1.84 0.02-3.52 1.06-4.46 2.71c-1.91 3.31-0.49 ' +
+        '8.19 1.37 10.88c0.91 1.31 1.99 2.78 3.41 2.74c1.37-0.06 1.88-0.89 3.54-0.89c1.65 0 2.12 0.89 ' +
+        '3.56 0.85c1.47-0.02 2.41-1.33 3.31-2.65c1.04-1.52 1.47-2.99 ' +
+        '1.5-3.07c-0.04-0.01-2.86-1.1-2.9-4.37c-0.02-2.74 2.23-4.04 ' +
+        '2.34-4.1c-1.29-1.88-3.26-2.09-3.95-2.14c-1.8-0.14-3.31 0.98-4.15 0.98zM15.18 4.65c0.76-0.91 ' +
+        '1.26-2.18 1.12-3.45c-1.09 0.05-2.4 0.72-3.18 1.64c-0.7 0.81-1.31 2.1-1.15 3.34c1.2 0.09 ' +
+        '2.44-0.62 3.2-1.53"/>'
+    }),
+    Object.freeze({
+      id: 'linkedin',
+      solid: true,
+      label: 'LinkedIn',
+      hints: Object.freeze(['linkedin']),
+      domains: Object.freeze(['linkedin.com', 'lnkd.in']),
+      paths:
+        '<path d="M19.6 19.61h-3.2v-5.01c0-1.2-0.02-2.73-1.67-2.73c-1.67 0-1.92 1.3-1.92 ' +
+        '2.65v5.1H9.62V9.3h3.07v1.4h0.04c0.43-0.81 1.47-1.66 3.03-1.66c3.24 0 3.84 2.13 3.84 4.91v5.66zM6 ' +
+        '7.89c-1.03 0-1.86-0.83-1.86-1.86c0-1.02 0.83-1.86 1.86-1.86c1.03 0 1.86 0.83 1.86 1.86c0 ' +
+        '1.03-0.83 1.86-1.86 1.86zm1.6 11.72H4.4V9.3h3.21v10.31zM21.2 1.2H2.79C1.91 1.2 1.2 1.9 1.2 ' +
+        '2.76v18.49C1.2 22.1 1.91 22.8 2.79 22.8h18.41C22.08 22.8 22.8 22.1 22.8 21.24V2.76C22.8 1.9 ' +
+        '22.08 1.2 21.2 1.2h0z"/>'
+    }),
+    Object.freeze({
+      id: 'linear',
+      solid: true,
+      label: 'Linear',
+      hints: Object.freeze(['linear']),
+      domains: Object.freeze(['linear.app']),
+      paths:
+        '<path d="M3.8 4.96A10.78 10.78 0 0 1 11.99 1.2C17.96 1.2 22.8 6.04 22.8 12.01c0 3.28-1.46 ' +
+        '6.21-3.76 8.19L3.8 4.96ZM2.84 6.26l14.9 14.9c-0.47 0.3-0.97 0.56-1.48 0.78L2.06 7.75c0.22-0.52 ' +
+        '0.48-1.01 0.78-1.48ZM1.49 9.45l13.06 13.06c-0.64 0.15-1.3 0.25-1.98 0.29L1.2 11.42a10.8 10.8 0 0 ' +
+        '1 0.29-1.98Zm-0.15 4.38l8.84 8.84a10.82 10.82 0 0 1-8.84-8.84Z"/>'
+    }),
+    Object.freeze({
+      id: 'youtubemusic',
+      label: 'YouTube Music',
+      hints: Object.freeze(['youtube music', 'ytmusic', 'yt music']),
+      domains: Object.freeze(['music.youtube.com']),
+      paths:
+        '<circle cx="12" cy="12" r="10.9"/><circle cx="12" cy="12" r="6.05"/><path d="M9.9 15.2V8.8l5.6 ' +
+        '3.2Z" fill="currentColor" stroke-linejoin="round"/>'
+    }),
+    Object.freeze({
+      id: 'youtube',
+      label: 'YouTube',
+      hints: Object.freeze(['youtube', 'youtu']),
+      domains: Object.freeze(['youtube.com', 'youtu.be', 'm.youtube.com']),
+      paths:
+        '<path d="M3.8 4.32h16.4a2.72 2.72 0 0 1 2.72 2.72v8.24a2.72 2.72 0 0 1-2.72 2.72H3.8a2.72 2.72 0 ' +
+        '0 1-2.72-2.72V7.04A2.72 2.72 0 0 1 3.8 4.32Z"/><path d="M9.77 15.24V8.76L15.47 12Z" ' +
+        'fill="currentColor" stroke-linejoin="round"/>'
+    }),
+    Object.freeze({
+      id: 'sparkle',
+      label: 'Assistant',
+      hints: Object.freeze([
+        'assistant',
+        'copilot',
+        'perplexity',
+        'midjourney',
+        'grok',
+        'deepseek',
+        'mistral',
+        'huggingface'
+      ]),
+      paths:
+        '<path d="M11 3.5l1.8 5 5 1.8-5 1.8L11 17.1l-1.8-5-5-1.8 5-1.8Z"/>' +
+        '<path d="M18 15.2l.7 1.9 1.9.7-1.9.7-.7 1.9-.7-1.9-1.9-.7 1.9-.7Z"/>'
+    }),
+    Object.freeze({
+      id: 'wave',
+      label: 'Music',
+      hints: Object.freeze(['music', 'audio', 'soundcloud', 'tidal', 'deezer', 'bandcamp']),
+      paths:
+        '<path d="M4 10.5v3M8 7.5v9M12 9.5v5M16 6.5v11M20 10.5v3"/>'
+    }),
+    Object.freeze({
+      id: 'talk',
+      label: 'Chat',
+      hints: Object.freeze([
+        'chat',
+        'signal',
+        'messenger',
+        'threads',
+        'mastodon',
+        'teams',
+        'zoom',
+        'meet'
+      ]),
+      paths:
+        '<path d="M4 5.5h16v10H9.5L4 20Z"/>' +
+        '<path d="M8.7 10.5h.01M12 10.5h.01M15.3 10.5h.01"/>'
+    }),
+    Object.freeze({
+      id: 'play',
+      label: 'Video',
+      hints: Object.freeze(['video', 'vimeo', 'plex', 'stream', 'hulu', 'disney', 'dailymotion']),
+      paths:
+        '<circle cx="12" cy="12" r="8.5"/><path d="M10.2 8.6 16.2 12l-6 3.4Z"/>'
+    }),
+    Object.freeze({
+      id: 'page',
+      label: 'Document',
+      hints: Object.freeze([
+        'docs',
+        'document',
+        'dropbox',
+        'notes',
+        'wiki',
+        'confluence',
+        'obsidian',
+        'evernote',
+        'sheets',
+        'slides'
+      ]),
+      paths:
+        '<path d="M6.5 3.5h7l4 4v13h-11Z"/><path d="M13.5 3.5v4h4"/>' +
+        '<path d="M9.5 12h6M9.5 15.5h4"/>'
+    }),
+    Object.freeze({
+      id: 'mail',
+      label: 'Mail',
+      hints: Object.freeze(['mail', 'inbox', 'outlook', 'proton', 'fastmail', 'email']),
+      paths:
+        '<rect x="3.5" y="5.5" width="17" height="13" rx="2.5"/>' +
+        '<path d="M4.5 7.5 12 13l7.5-5.5"/>'
+    }),
+    Object.freeze({
+      id: 'calendar',
+      label: 'Calendar',
+      hints: Object.freeze(['calendar', 'calendly', 'agenda', 'scheduler', 'cron']),
+      paths:
+        '<rect x="3.5" y="5.5" width="17" height="15" rx="2.5"/>' +
+        '<path d="M8 3.5v4M16 3.5v4M3.5 10.5h17"/>'
+    }),
+    Object.freeze({
+      id: 'code',
+      label: 'Code',
+      hints: Object.freeze([
+        'code',
+        'git',
+        'gitlab',
+        'bitbucket',
+        'stackoverflow',
+        'gitpod',
+        'vercel',
+        'netlify',
+        'railway',
+        'supabase',
+        'postman'
+      ]),
+      paths:
+        '<path d="M9 8.5 4.5 12 9 15.5M15 8.5 19.5 12 15 15.5M13.5 6l-3 12"/>'
+    }),
+    Object.freeze({
+      id: 'pen',
+      label: 'Design',
+      hints: Object.freeze([
+        'design',
+        'canva',
+        'dribbble',
+        'behance',
+        'sketch',
+        'framer',
+        'miro',
+        'photoshop'
+      ]),
+      paths:
+        '<path d="M4.5 19.5 6 14l8.5-8.5a2.1 2.1 0 0 1 3 3L9 17Z"/>' +
+        '<path d="M13 6.5l4 4"/>'
+    }),
+    Object.freeze({
+      id: 'camera',
+      label: 'Photos',
+      hints: Object.freeze(['photos', 'flickr', 'pics', 'unsplash', 'pinterest', 'lightroom']),
+      paths:
+        '<rect x="3.5" y="6.5" width="17" height="13" rx="3"/><circle cx="12" cy="13" r="3.6"/>' +
+        '<path d="M8.5 6.5 10 4h4l1.5 2.5"/>'
+    }),
+    Object.freeze({
+      id: 'globe',
+      label: 'Web',
+      hints: Object.freeze([
+        'web',
+        'maps',
+        'earth',
+        'globe',
+        'weather',
+        'travel',
+        'airbnb',
+        'booking',
+        'wikipedia'
+      ]),
+      paths:
+        '<circle cx="12" cy="12" r="8.5"/>' +
+        '<path d="M3.5 12h17M12 3.5c2.6 2.4 2.6 14.6 0 17M12 3.5c-2.6 2.4-2.6 14.6 0 17"/>'
+    }),
+    GENERIC_ICON
+  ]);
 
   /**
    * The id of the catch-all at the end of the catalogue: the bare window every shortcut
@@ -1859,42 +2367,68 @@
   }
 
   /**
-   * The high-resolution favicon endpoint for an address, or ''.
-   *
-   * 100% favicon: every shortcut gets the site's own high-resolution favicon.
+   * The ids a shortcut may have been saved with before the catalogue named brands.
+   * A stored id is resolved through this map on every read, so an old list upgrades
+   * itself instead of losing its marks.
    */
-  function serviceFaviconUrl(url, size) {
-    const host = serviceHostName(url);
-    if (!host) return '';
-    const sz = Number(size) || 128;
-    return 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(host) + '&sz=' + sz;
+  const SERVICE_ICON_ALIASES = Object.freeze({ git: 'github' });
+
+  /** Whether a host is `domain` itself or one of its subdomains. */
+  function serviceHostMatches(host, domain) {
+    return host === domain || host.slice(-(domain.length + 1)) === '.' + domain;
   }
 
-  /**
-   * The curated entry for an id, or null when the catalogue has no such mark.
-   */
+  /** The curated entry for an id, or `null` when the catalogue has no such mark. */
   function serviceIconById(id) {
     const key = String(id || '').trim().toLowerCase();
     if (!key) return null;
-    return key === GENERIC_ICON_ID ? GENERIC_ICON : null;
+    const resolved = ownLookup(SERVICE_ICON_ALIASES, key) || key;
+    for (let index = 0; index < SERVICE_ICONS.length; index += 1) {
+      if (SERVICE_ICONS[index].id === resolved) return SERVICE_ICONS[index];
+    }
+    return null;
   }
 
   /**
-   * A service's fallback mark id.
+   * The curated mark a title/address pair suggests, or `''` for a monogram.
+   *
+   * The host is asked first (`x.com` is a brand, `x` is a letter), then the hint words
+   * in the title and the address. The generic window is never guessed: it carries no
+   * domains and is skipped here, so an unknown site wears its initials instead.
    */
   function serviceIconId(title, url) {
-    return GENERIC_ICON_ID;
+    const text = String(title || '').toLowerCase();
+    const address = String(url || '').toLowerCase();
+    if (!text.trim() && !address.trim()) return '';
+
+    const host = serviceHostName(url);
+    let index;
+    for (index = 0; host && index < SERVICE_ICONS.length; index += 1) {
+      const domains = SERVICE_ICONS[index].domains;
+      if (!domains) continue;
+      for (let domain = 0; domain < domains.length; domain += 1) {
+        if (serviceHostMatches(host, domains[domain])) return SERVICE_ICONS[index].id;
+      }
+    }
+
+    const haystack = text + ' ' + address;
+    for (index = 0; index < SERVICE_ICONS.length; index += 1) {
+      const icon = SERVICE_ICONS[index];
+      if (icon.id === GENERIC_ICON_ID) continue;
+      for (let hint = 0; hint < icon.hints.length; hint += 1) {
+        if (haystack.indexOf(icon.hints[hint]) !== -1) return icon.id;
+      }
+    }
+    return '';
   }
 
-  /** A stored icon id, or '' when it names nothing in the catalogue. */
+  /** A stored icon id, or `''` when it names nothing in the catalogue. */
   function normalizeServiceIcon(value) {
     const icon = serviceIconById(value);
     return icon ? icon.id : '';
   }
 
-  /**
-   * The SVG markup for a curated mark; '' when there is none.
-   */
+  /** The SVG markup for a curated mark; `''` when there is none. */
   function serviceIconMarkup(iconId) {
     const icon = serviceIconById(iconId);
     if (!icon) return '';
@@ -1908,7 +2442,10 @@
   }
 
   /**
-   * A two-letter mark for a service's initials.
+   * A two-letter mark for a service with no curated glyph.
+   *
+   * "GitHub" → "GH", "My Notes" → "MN", "Figma" → "FI", and an unnamed service falls
+   * back to its first host label.
    */
   function serviceMonogram(title, url) {
     const words = String(title || '')
@@ -1925,489 +2462,34 @@
   }
 
   /**
-   * Normalises the bounding box of a white-on-transparent glyph buffer so icons whose
-   * background plates were stripped away still share a consistent visual weight (~78% of
-   * the icon box).
-   */
-  function normalizeGlyphBounds(data, w, h) {
-    const total = w * h;
-    let minX = w;
-    let minY = h;
-    let maxX = -1;
-    let maxY = -1;
-    for (let y = 0; y < h; y += 1) {
-      for (let x = 0; x < w; x += 1) {
-        if (data[(y * w + x) * 4 + 3] > 40) {
-          if (x < minX) minX = x;
-          if (x > maxX) maxX = x;
-          if (y < minY) minY = y;
-          if (y > maxY) maxY = y;
-        }
-      }
-    }
-    const bw = maxX - minX + 1;
-    const bh = maxY - minY + 1;
-    const maxDim = Math.max(bw, bh);
-    const targetDim = w * 0.78;
-    if (maxDim >= 6 && (maxDim < w * 0.70 || maxDim > w * 0.86)) {
-      const scale = Math.min(1.65, Math.max(0.80, targetDim / maxDim));
-      const cx = (minX + maxX) * 0.5;
-      const cy = (minY + maxY) * 0.5;
-      const halfW = (w - 1) * 0.5;
-      const halfH = (h - 1) * 0.5;
-      const srcAlpha = new Uint8Array(total);
-      for (let p = 0; p < total; p += 1) srcAlpha[p] = data[p * 4 + 3];
-      for (let y = 0; y < h; y += 1) {
-        for (let x = 0; x < w; x += 1) {
-          const sx = (x - halfW) / scale + cx;
-          const sy = (y - halfH) / scale + cy;
-          let a = 0;
-          if (sx >= 0 && sx <= w - 1 && sy >= 0 && sy <= h - 1) {
-            const x0 = sx | 0;
-            const y0 = sy | 0;
-            const x1 = Math.min(w - 1, x0 + 1);
-            const y1 = Math.min(h - 1, y0 + 1);
-            const fx = sx - x0;
-            const fy = sy - y0;
-            const a00 = srcAlpha[y0 * w + x0];
-            const a10 = srcAlpha[y0 * w + x1];
-            const a01 = srcAlpha[y1 * w + x0];
-            const a11 = srcAlpha[y1 * w + x1];
-            a = Math.round(
-              a00 * (1 - fx) * (1 - fy) +
-                a10 * fx * (1 - fy) +
-                a01 * (1 - fx) * fy +
-                a11 * fx * fy
-            );
-          }
-          data[(y * w + x) * 4 + 3] = a;
-        }
-      }
-    }
-  }
-
-  /**
-   * Pure pixel processor: turns any favicon RGBA buffer into a crisp white (`#ffffff`)
-   * glyph with a transparent background, keying out uniform, bordered, or gradient
-   * background plates so opaque favicons never turn into solid white blocks.
-   */
-  function faviconToWhiteGlyph(imgData) {
-    if (!imgData || !imgData.data || !imgData.width || !imgData.height) return imgData;
-    const w = imgData.width;
-    const h = imgData.height;
-    const data = imgData.data;
-    const total = w * h;
-
-    // 1. Distance transform (in steps of 0..6 px) from transparent exterior (A < 180)
-    //    or image border, so we can sample the background plate inside any AA fringe.
-    const dist = new Uint8Array(total);
-    let opaqueCount = 0;
-    for (let y = 0; y < h; y += 1) {
-      for (let x = 0; x < w; x += 1) {
-        const p = y * w + x;
-        if (data[p * 4 + 3] < 180) {
-          dist[p] = 0;
-        } else {
-          opaqueCount += 1;
-          if (x === 0 || x === w - 1 || y === 0 || y === h - 1) {
-            dist[p] = 1;
-          } else {
-            dist[p] = 255;
-          }
-        }
-      }
-    }
-    for (let pass = 0; pass <= 6; pass += 1) {
-      for (let y = 1; y < h - 1; y += 1) {
-        for (let x = 1; x < w - 1; x += 1) {
-          const p = y * w + x;
-          if (dist[p] > pass) {
-            if (
-              dist[p - 1] === pass ||
-              dist[p + 1] === pass ||
-              dist[p - w] === pass ||
-              dist[p + w] === pass
-            ) {
-              dist[p] = pass + 1;
-            }
-          }
-        }
-      }
-    }
-
-    function findDominantRim(minD, maxD) {
-      const bins = new Int32Array(512);
-      const binR = new Float64Array(512);
-      const binG = new Float64Array(512);
-      const binB = new Float64Array(512);
-      const idx = [];
-      for (let p = 0; p < total; p += 1) {
-        const d = dist[p];
-        if (d >= minD && d <= maxD) {
-          const i = p * 4;
-          const r = data[i];
-          const g = data[i + 1];
-          const b = data[i + 2];
-          const key = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5);
-          bins[key] += 1;
-          binR[key] += r;
-          binG[key] += g;
-          binB[key] += b;
-          idx.push(p);
-        }
-      }
-      if (idx.length === 0) return null;
-      let bestBin = 0;
-      for (let k = 1; k < 512; k += 1) {
-        if (bins[k] > bins[bestBin]) bestBin = k;
-      }
-      const seedR = binR[bestBin] / bins[bestBin];
-      const seedG = binG[bestBin] / bins[bestBin];
-      const seedB = binB[bestBin] / bins[bestBin];
-      let sumR = 0;
-      let sumG = 0;
-      let sumB = 0;
-      let inliers = 0;
-      for (let k = 0; k < idx.length; k += 1) {
-        const i = idx[k] * 4;
-        const dr = data[i] - seedR;
-        const dg = data[i + 1] - seedG;
-        const db = data[i + 2] - seedB;
-        if (dr * dr + dg * dg + db * db <= 42 * 42) {
-          sumR += data[i];
-          sumG += data[i + 1];
-          sumB += data[i + 2];
-          inliers += 1;
-        }
-      }
-      return {
-        idx: idx,
-        count: idx.length,
-        ratio: inliers / idx.length,
-        r: sumR / Math.max(1, inliers),
-        g: sumG / Math.max(1, inliers),
-        b: sumB / Math.max(1, inliers)
-      };
-    }
-
-    let rim = findDominantRim(2, 4);
-    const innerRim = findDominantRim(4, 6);
-    let minInteriorDist = 2;
-
-    if (!rim) {
-      for (let i = 0; i < total * 4; i += 4) {
-        data[i] = 255;
-        data[i + 1] = 255;
-        data[i + 2] = 255;
-      }
-      normalizeGlyphBounds(data, w, h);
-      return imgData;
-    }
-
-    // If the icon has a 1..3px outer border around a uniform inner plate (e.g. Hacker News),
-    // step past the border into the inner plate (dist >= 4).
-    if (innerRim && innerRim.ratio >= 0.80) {
-      const dBorder = Math.hypot(rim.r - innerRim.r, rim.g - innerRim.g, rim.b - innerRim.b);
-      if (dBorder > 45) {
-        rim = innerRim;
-        minInteriorDist = 4;
-      }
-    }
-
-    const rimIdx = rim.idx;
-    const rimCount = rim.count;
-    const uniformRimRatio = rim.ratio;
-    const opaqueRatio = opaqueCount / total;
-
-    // Multi-coloured glyph already cut out on a transparent background (e.g. Google's 'G'):
-    // keep its existing silhouette and paint it white.
-    if (opaqueRatio < 0.62 && uniformRimRatio < 0.72) {
-      for (let i = 0; i < total * 4; i += 4) {
-        data[i] = 255;
-        data[i + 1] = 255;
-        data[i + 2] = 255;
-      }
-      normalizeGlyphBounds(data, w, h);
-      return imgData;
-    }
-
-    const colorDist = new Float32Array(total);
-    let maxDist = 0;
-
-    if (uniformRimRatio >= 0.65) {
-      const bgR = rim.r;
-      const bgG = rim.g;
-      const bgB = rim.b;
-      for (let p = 0; p < total; p += 1) {
-        if (dist[p] >= minInteriorDist) {
-          const i = p * 4;
-          const dr = data[i] - bgR;
-          const dg = data[i + 1] - bgG;
-          const db = data[i + 2] - bgB;
-          const cd = Math.sqrt(dr * dr + dg * dg + db * db);
-          colorDist[p] = cd;
-          if (cd > maxDist) maxDist = cd;
-        }
-      }
-    } else {
-      const step = Math.max(1, Math.floor(rimCount / 64));
-      const sampleX = [];
-      const sampleY = [];
-      const sampleR = [];
-      const sampleG = [];
-      const sampleB = [];
-      for (let k = 0; k < rimCount; k += step) {
-        const p = rimIdx[k];
-        sampleX.push(p % w);
-        sampleY.push((p / w) | 0);
-        sampleR.push(data[p * 4]);
-        sampleG.push(data[p * 4 + 1]);
-        sampleB.push(data[p * 4 + 2]);
-      }
-      const nSamples = sampleX.length;
-      for (let y = 0; y < h; y += 1) {
-        for (let x = 0; x < w; x += 1) {
-          const p = y * w + x;
-          if (dist[p] < minInteriorDist) continue;
-          let wSum = 0;
-          let rSum = 0;
-          let gSum = 0;
-          let bSum = 0;
-          for (let s = 0; s < nSamples; s += 1) {
-            const dx = x - sampleX[s];
-            const dy = y - sampleY[s];
-            const wt = 1 / (dx * dx + dy * dy + 4);
-            wSum += wt;
-            rSum += sampleR[s] * wt;
-            gSum += sampleG[s] * wt;
-            bSum += sampleB[s] * wt;
-          }
-          const i = p * 4;
-          const dr = data[i] - rSum / wSum;
-          const dg = data[i + 1] - gSum / wSum;
-          const db = data[i + 2] - bSum / wSum;
-          const cd = Math.sqrt(dr * dr + dg * dg + db * db);
-          colorDist[p] = cd;
-          if (cd > maxDist) maxDist = cd;
-        }
-      }
-    }
-
-    // Single-colour silhouette already on a transparent background: keep its alpha as-is.
-    if (maxDist < 45 && opaqueRatio < 0.62) {
-      for (let i = 0; i < total * 4; i += 4) {
-        data[i] = 255;
-        data[i + 1] = 255;
-        data[i + 2] = 255;
-      }
-      normalizeGlyphBounds(data, w, h);
-      return imgData;
-    }
-
-    // Solid blank tile with no interior mark at all: clear alpha so fallback mark can step in.
-    if (maxDist < 8 && opaqueRatio >= 0.62) {
-      for (let i = 0; i < total * 4; i += 4) {
-        data[i] = 255;
-        data[i + 1] = 255;
-        data[i + 2] = 255;
-        data[i + 3] = 0;
-      }
-      return imgData;
-    }
-
-    const low = Math.max(8, maxDist * 0.18);
-    const high = Math.max(low + 10, maxDist * 0.72);
-    const span = high - low;
-
-    for (let p = 0; p < total; p += 1) {
-      const i = p * 4;
-      const origA = data[i + 3];
-      if (origA === 0 || dist[p] < minInteriorDist) {
-        data[i] = 255;
-        data[i + 1] = 255;
-        data[i + 2] = 255;
-        data[i + 3] = 0;
-        continue;
-      }
-      const t = Math.min(1, Math.max(0, (colorDist[p] - low) / span));
-      data[i] = 255;
-      data[i + 1] = 255;
-      data[i + 2] = 255;
-      data[i + 3] = Math.round(origA * t);
-    }
-
-    normalizeGlyphBounds(data, w, h);
-    return imgData;
-  }
-
-  const FAVICON_GLYPH_CACHE = Object.create(null);
-  const FAVICON_PENDING = Object.create(null);
-
-  function renderImageToWhiteGlyphDataUrl(img, doc) {
-    const d = doc || (typeof document !== 'undefined' ? document : null);
-    if (!d || typeof d.createElement !== 'function') return '';
-    const size = 64;
-    const canvas = d.createElement('canvas');
-    if (!canvas) return '';
-    canvas.width = size;
-    canvas.height = size;
-    const ctx = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
-    if (!ctx) return '';
-    ctx.clearRect(0, 0, size, size);
-    ctx.drawImage(img, 0, 0, size, size);
-    const imageData = ctx.getImageData(0, 0, size, size);
-    faviconToWhiteGlyph(imageData);
-    let visiblePixels = 0;
-    for (let i = 3; i < imageData.data.length; i += 4) {
-      if (imageData.data[i] > 32) visiblePixels += 1;
-    }
-    if (visiblePixels < 4) return '';
-    ctx.putImageData(imageData, 0, 0);
-    return typeof canvas.toDataURL === 'function' ? canvas.toDataURL('image/png') : '';
-  }
-
-  function applyGlyphToMatchingImages(faviconUrl, whiteDataUrl, doc) {
-    const d = doc || (typeof document !== 'undefined' ? document : null);
-    if (!d || typeof d.querySelectorAll !== 'function') return;
-    const images = d.querySelectorAll('.widget-favicon');
-    for (let i = 0; i < images.length; i += 1) {
-      const el = images[i];
-      const tracked = el.getAttribute('data-favicon-url') || el.getAttribute('src') || '';
-      if (tracked !== faviconUrl) continue;
-      if (whiteDataUrl) {
-        el.src = whiteDataUrl;
-        el.setAttribute('data-glyph-ready', 'true');
-      } else {
-        el.style.display = 'none';
-        if (el.nextElementSibling) el.nextElementSibling.style.display = '';
-      }
-    }
-  }
-
-  function receiveFaviconData(faviconUrl, rawDataUri, optDoc, optWin) {
-    if (!faviconUrl) return false;
-    delete FAVICON_PENDING[faviconUrl];
-    const d = optDoc || (typeof document !== 'undefined' ? document : null);
-    const w = optWin || (typeof window !== 'undefined' ? window : null);
-    if (!rawDataUri) {
-      applyGlyphToMatchingImages(faviconUrl, '', d);
-      return false;
-    }
-    if (FAVICON_GLYPH_CACHE[faviconUrl]) {
-      applyGlyphToMatchingImages(faviconUrl, FAVICON_GLYPH_CACHE[faviconUrl], d);
-      return true;
-    }
-    const loader =
-      w && typeof w.Image === 'function'
-        ? new w.Image()
-        : d && typeof d.createElement === 'function'
-        ? d.createElement('img')
-        : null;
-    if (!loader) return false;
-    let handled = false;
-    function finish() {
-      if (handled) return;
-      handled = true;
-      try {
-        const whiteDataUrl = renderImageToWhiteGlyphDataUrl(loader, d);
-        if (whiteDataUrl) {
-          FAVICON_GLYPH_CACHE[faviconUrl] = whiteDataUrl;
-        }
-        applyGlyphToMatchingImages(faviconUrl, whiteDataUrl, d);
-      } catch (err) {
-        applyGlyphToMatchingImages(faviconUrl, '', d);
-      }
-    }
-    loader.onload = finish;
-    loader.onerror = function () {
-      if (handled) return;
-      handled = true;
-      applyGlyphToMatchingImages(faviconUrl, '', d);
-    };
-    loader.src = rawDataUri;
-    if (loader.complete && loader.naturalWidth > 0) {
-      finish();
-    }
-    return true;
-  }
-
-  function hydrateFaviconGlyph(container, win, doc) {
-    if (!container || typeof container.querySelector !== 'function') return;
-    const img = container.querySelector('.widget-favicon');
-    if (!img || typeof img.getAttribute !== 'function') return;
-    const faviconUrl = img.getAttribute('data-favicon-url') || img.getAttribute('src') || '';
-    if (!faviconUrl) return;
-    img.setAttribute('data-favicon-url', faviconUrl);
-    if (FAVICON_GLYPH_CACHE[faviconUrl]) {
-      img.src = FAVICON_GLYPH_CACHE[faviconUrl];
-      img.setAttribute('data-glyph-ready', 'true');
-      return;
-    }
-    const nativeHandler =
-      win &&
-      win.webkit &&
-      win.webkit.messageHandlers &&
-      win.webkit.messageHandlers.dynawallFavicon;
-    if (nativeHandler && typeof nativeHandler.postMessage === 'function') {
-      if (!FAVICON_PENDING[faviconUrl]) {
-        FAVICON_PENDING[faviconUrl] = true;
-        try {
-          nativeHandler.postMessage(faviconUrl);
-        } catch (err) {
-          delete FAVICON_PENDING[faviconUrl];
-        }
-      }
-    }
-    if (typeof img.addEventListener === 'function') {
-      img.addEventListener('load', function () {
-        if (img.getAttribute('data-glyph-ready') === 'true') return;
-        try {
-          const whiteDataUrl = renderImageToWhiteGlyphDataUrl(img, doc);
-          if (whiteDataUrl) {
-            FAVICON_GLYPH_CACHE[faviconUrl] = whiteDataUrl;
-            img.src = whiteDataUrl;
-            img.setAttribute('data-glyph-ready', 'true');
-          }
-        } catch (err) {
-          if (!nativeHandler) {
-            img.setAttribute('data-glyph-ready', 'true');
-          }
-        }
-      });
-    }
-  }
-
-  /**
-   * The mark a service wears: 100% favicon from the site itself,
-   * falling back to the generic app window icon when the image fails to load.
+   * The mark a service wears, always a bare white vector drawn from this file:
+   * its stored or matched catalogue mark, else its initials, else the generic window.
+   * Nothing is fetched and no pixels are guessed at, so every icon renders the same
+   * way on every host, online or offline.
    */
   function serviceGlyphMarkup(service) {
-    const url = service && service.url;
     const title = service && service.title;
-    const faviconUrl = serviceFaviconUrl(url, 128);
-    if (!faviconUrl) {
-      return serviceIconMarkup(GENERIC_ICON_ID);
-    }
-    const escapedTitle = escapeMarkup(title || serviceHostLabel(url) || 'App');
-    return (
-      '<img class="widget-favicon" src="' +
-      // The vector overrides are `data:` URIs full of raw `"`: unescaped, the first one
-      // closes the attribute and the rest of the SVG spills onto the desktop as text.
-      escapeMarkup(faviconUrl) +
-      '" alt="' +
-      escapedTitle +
-      '" loading="lazy" decoding="async" onerror="this.style.display=\'none\';if(this.nextElementSibling)this.nextElementSibling.style.display=\'\';" />' +
-      '<span class="widget-fallback" style="display:none;">' +
-      serviceIconMarkup(GENERIC_ICON_ID) +
-      '</span>'
-    );
+    const url = service && service.url;
+    const id = normalizeServiceIcon(service && service.icon) || serviceIconId(title, url);
+    const icon = serviceIconMarkup(id);
+    if (icon) return icon;
+    const monogram = serviceMonogram(title, url);
+    if (monogram) return '<span class="widget-monogram">' + escapeMarkup(monogram) + '</span>';
+    return serviceIconMarkup(GENERIC_ICON_ID);
   }
 
   /**
-   * The mark a record wears: the generic fallback mark.
+   * The mark a record wears: the brand it was saved with, or the best match for its
+   * title and address (a record saved with a kind mark upgrades to a brand once one
+   * claims it). `''` means "wear the monogram".
    */
   function resolveServiceIcon(storedId, title, url) {
-    return normalizeServiceIcon(storedId);
+    const stored = normalizeServiceIcon(storedId);
+    const icon = serviceIconById(stored);
+    if (icon && icon.domains) return stored;
+    const matched = serviceIconId(title, url);
+    if (matched) return matched;
+    return stored === GENERIC_ICON_ID ? '' : stored;
   }
 
   /**
@@ -3614,7 +3696,6 @@
       button.style.setProperty('--widget-drift-y', driftY.toFixed(2) + 'rem');
 
       button.innerHTML = serviceGlyphMarkup(service);
-      hydrateFaviconGlyph(button, win, doc);
       button.addEventListener('click', function (event) {
         event.preventDefault();
         // An app is not a card: it leaves for the default browser through the same native
@@ -4379,7 +4460,6 @@
       open.title = 'Open ' + service.title;
       const glyph = el('span', 'widget-service-glyph');
       glyph.innerHTML = serviceGlyphMarkup(service);
-      hydrateFaviconGlyph(glyph, win, doc);
       open.appendChild(glyph);
       const text = el('span', 'widget-row-text');
       text.appendChild(el('span', 'widget-row-title', service.title));
@@ -4667,12 +4747,10 @@
     normalizeServiceIcon: normalizeServiceIcon,
     resolveServiceIcon: resolveServiceIcon,
     serviceIconId: serviceIconId,
+    serviceIconById: serviceIconById,
     serviceIconMarkup: serviceIconMarkup,
     serviceMonogram: serviceMonogram,
     serviceGlyphMarkup: serviceGlyphMarkup,
-    serviceFaviconUrl: serviceFaviconUrl,
-    faviconToWhiteGlyph: faviconToWhiteGlyph,
-    receiveFaviconData: receiveFaviconData,
     serviceHostName: serviceHostName,
     serviceHostLabel: serviceHostLabel,
     createCustomService: createCustomService,

@@ -1146,6 +1146,12 @@ final class WidgetMessageHandler: NSObject, WKScriptMessageHandler {
 
     static let interactivityName = "dynawallInteractivity"
     static let openURLName = "dynawallOpenURL"
+    static let faviconName = "dynawallFavicon"
+
+    /// Answers already fetched, keyed by the endpoint the page asked for: a second display
+    /// (or a rebuilt card) never waits on the network twice for the same mark.
+    private let faviconLock = NSLock()
+    private var faviconCache: [String: String] = [:]
 
     func userContentController(
         _ userContentController: WKUserContentController,
@@ -1159,6 +1165,22 @@ final class WidgetMessageHandler: NSObject, WKScriptMessageHandler {
                 return
             }
             onOpenURL?(target)
+            return
+        }
+
+        if message.name == Self.faviconName {
+            // The page asked for a favicon endpoint. The host fetches it so the bytes reach
+            // the page as a `data:` URI: same-origin as far as the canvas is concerned, so
+            // `faviconToWhiteGlyph` can read the pixels and key the plate out. Fetching the
+            // same address inside the WebView would taint the canvas in some engines.
+            guard let target = message.body as? String,
+                  Self.isFaviconURL(target),
+                  let url = URL(string: target),
+                  let webView = message.webView else {
+                dynaLog("refused to fetch a non-favicon address from the page")
+                return
+            }
+            fetchFavicon(target: target, url: url, for: webView)
             return
         }
 
@@ -1185,6 +1207,116 @@ final class WidgetMessageHandler: NSObject, WKScriptMessageHandler {
               let host = url.host,
               !host.isEmpty else { return false }
         return true
+    }
+
+    /// Only Google's favicon endpoint is ever fetched on the page's behalf: it is the one
+    /// address `serviceFaviconUrl` builds, and the host derives every fallback itself rather
+    /// than letting the page name another remote host.
+    static func isFaviconURL(_ target: String) -> Bool {
+        guard let url = URL(string: target),
+              url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == "www.google.com",
+              url.path == "/s2/favicons" else { return false }
+        return true
+    }
+
+    /// The site an endpoint names, read from its `domain` parameter.
+    static func faviconHost(from url: URL) -> String? {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let domain = components.queryItems?.first(where: { $0.name == "domain" })?.value
+        else { return nil }
+        let host = domain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // A hostname and nothing else: letters, digits, dots and hyphens. A slash, a colon
+        // or an `@` would let the page turn the fallback into a different URL than the one
+        // it named, so the whole answer is refused instead.
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789.-")
+        guard !host.isEmpty,
+              host.count <= 253,
+              host.rangeOfCharacter(from: allowed.inverted) == nil,
+              !host.hasPrefix("."),
+              !host.hasPrefix("-") else { return nil }
+        return host
+    }
+
+    /// Google first — it is the high-resolution source — then the two mirrors an unindexed
+    /// subdomain still has: DuckDuckGo's icon service and the site's own `/favicon.ico`.
+    static func faviconSources(for url: URL) -> [URL] {
+        var sources = [url]
+        guard let host = faviconHost(from: url) else { return sources }
+        if let duck = URL(string: "https://icons.duckduckgo.com/ip3/\(host).ico") {
+            sources.append(duck)
+        }
+        if let origin = URL(string: "https://\(host)/favicon.ico") {
+            sources.append(origin)
+        }
+        return sources
+    }
+
+    /// Bytes as a `data:` URI the page can draw: PNG untouched, anything else decoded and
+    /// re-encoded so WebKit is never handed a format it might refuse.
+    static func faviconDataURI(_ data: Data, mimeType: String?) -> String {
+        if data.count > 8, data.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
+            return "data:image/png;base64," + data.base64EncodedString()
+        }
+        if let image = NSImage(data: data),
+           let tiff = image.tiffRepresentation,
+           let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            return "data:image/png;base64," + png.base64EncodedString()
+        }
+        return "data:\(mimeType ?? "image/png");base64," + data.base64EncodedString()
+    }
+
+    private func fetchFavicon(target: String, url: URL, for webView: WKWebView) {
+        faviconLock.lock()
+        let cached = faviconCache[target]
+        faviconLock.unlock()
+        if let cached {
+            Self.deliverFavicon(target: target, dataURI: cached, to: webView)
+            return
+        }
+        loadFavicon(sources: Self.faviconSources(for: url), index: 0, target: target, for: webView)
+    }
+
+    /// Ask each source in turn; the first 200 with decodable bytes wins and is cached.
+    private func loadFavicon(sources: [URL], index: Int, target: String, for webView: WKWebView) {
+        guard index < sources.count else {
+            // Every source said no (offline, or a site with no extractable icon): tell the
+            // page, so it reveals its monogram instead of leaving an invisible satellite.
+            DispatchQueue.main.async { [weak webView] in
+                guard let webView else { return }
+                Self.deliverFavicon(target: target, dataURI: "", to: webView)
+            }
+            return
+        }
+        let task = URLSession.shared.dataTask(with: sources[index]) { [weak self, weak webView] data, response, _ in
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            var dataURI = ""
+            if status == 200, let data, !data.isEmpty {
+                dataURI = Self.faviconDataURI(data, mimeType: response?.mimeType)
+            }
+            if dataURI.isEmpty {
+                guard let webView else { return }
+                self?.loadFavicon(sources: sources, index: index + 1, target: target, for: webView)
+                return
+            }
+            self?.faviconLock.lock()
+            self?.faviconCache[target] = dataURI
+            self?.faviconLock.unlock()
+            DispatchQueue.main.async { [weak webView] in
+                guard let webView else { return }
+                Self.deliverFavicon(target: target, dataURI: dataURI, to: webView)
+            }
+        }
+        task.resume()
+    }
+
+    /// Hand the glyph back to the page, which keys it out and paints every waiting `<img>`.
+    static func deliverFavicon(target: String, dataURI: String, to webView: WKWebView) {
+        guard let encoded = try? JSONSerialization.data(withJSONObject: [target, dataURI]),
+              let json = String(data: encoded, encoding: .utf8) else { return }
+        let script = "(function(a){if(window.DynaWall&&typeof window.DynaWall.receiveFaviconData===\"function\"){window.DynaWall.receiveFaviconData(a[0],a[1]);}})(\(json));"
+        webView.evaluateJavaScript(script, completionHandler: nil)
     }
 }
 
@@ -2342,6 +2474,7 @@ final class DesktopWindowController: NSObject, ObservableObject {
             controller.removeScriptMessageHandler(forName: "dynawallPhoto")
             controller.removeScriptMessageHandler(forName: WidgetMessageHandler.interactivityName)
             controller.removeScriptMessageHandler(forName: WidgetMessageHandler.openURLName)
+            controller.removeScriptMessageHandler(forName: WidgetMessageHandler.faviconName)
             controller.removeAllUserScripts()
             entry.webView.stopLoading()
             entry.webView.navigationDelegate = nil
@@ -2575,6 +2708,9 @@ final class DesktopWindowController: NSObject, ObservableObject {
         // browser when the user picks a link.
         configuration.userContentController.add(widgetBridge, name: WidgetMessageHandler.interactivityName)
         configuration.userContentController.add(widgetBridge, name: WidgetMessageHandler.openURLName)
+        // Favicons for the apps the catalogue does not draw: the host fetches the mark so
+        // the page receives a same-origin `data:` URI and the offscreen canvas stays clean.
+        configuration.userContentController.add(widgetBridge, name: WidgetMessageHandler.faviconName)
         // First paint = the user's wallpaper. `script.js` reads this seed while it
         // resolves its configuration, so there is no built-in copy to cross-fade
         // (and no reason to hold the window back while that swap happens).

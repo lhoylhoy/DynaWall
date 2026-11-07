@@ -687,10 +687,39 @@ html.is-widgets-off .widget-orbit {
   stroke: none;
 }
 
-/* A service's initials when no curated mark claims its domain or title: two capitals in
-   the wallpaper's face at the weight the line art is stroked at, in the same white ink as
-   every other satellite, so they read as a deliberate mark rather than a missing icon —
-   and they cost no request, no sprite and no favicon. */
+/* Favicon glyphs, for every app the catalogue does not draw: `script.js` fetches the
+   site's high-resolution mark, keys the background plate out on an offscreen canvas
+   (`faviconToWhiteGlyph`) and swaps the `<img>` over to the resulting pure-`#ffffff`
+   `data:` URI. The raw tile stays at `opacity: 0` until `data-glyph-ready="true"`, so a
+   coloured logo never flashes on the desktop before it becomes white ink — and it is
+   never a plate: no ring, no disc, no border, exactly like the vector marks beside it. */
+.widget-favicon {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  opacity: 0;
+  transition: opacity 140ms ease;
+  pointer-events: none;
+  user-select: none;
+}
+
+.widget-favicon[data-glyph-ready="true"] {
+  opacity: 1;
+}
+
+/* The mark a satellite wears when its favicon cannot be had (offline, no extractable
+   icon): the catalogue's category mark, the app's initials or the generic window, laid
+   out exactly where the glyph would have been. `display: contents` keeps the inner mark
+   a direct child of the button's grid, so it is centred like every other glyph. */
+.widget-fallback {
+  display: contents;
+}
+
+/* A service's initials when no curated mark claims its domain or title, and no favicon can
+   be extracted from it: two capitals in the wallpaper's face at the weight the line art is
+   stroked at, in the same white ink as every other satellite, so they read as a deliberate
+   mark rather than a missing icon — and they cost no request of their own. */
 .widget-monogram {
   display: grid;
   place-items: center;
@@ -1163,6 +1192,16 @@ html.is-suspended .widget-btn {
 
 .widget-service-glyph .widget-monogram {
   font-size: 0.6rem;
+}
+
+/* A row in the Apps card: the favicon glyph is a touch smaller than the satellite's, so
+   the white keyed-out mark reads at list scale the same way it does on the desktop. The
+   radius only matters on a host whose canvas is tainted: the raw tile stays clipped to
+   the row's corner instead of bleeding a square logo into the list. */
+.widget-service-glyph .widget-favicon {
+  width: 1.55rem;
+  height: 1.55rem;
+  border-radius: 0.35rem;
 }
 
 /* Going there and removing it are two targets, never one confusing target for both:

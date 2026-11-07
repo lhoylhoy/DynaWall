@@ -2277,6 +2277,20 @@ test('the policy names exactly the hosts the page and the native hosts use', () 
     }
   );
 
+  // The favicon hosts: the one remote image the page may load (an app outside the curated
+  // catalogue wears its own site's mark), plus the CDNs Google redirects to and the
+  // DuckDuckGo mirror the native host falls back to.
+  [
+    'https://www.google.com',
+    'https://t0.gstatic.com',
+    'https://t1.gstatic.com',
+    'https://t2.gstatic.com',
+    'https://t3.gstatic.com',
+    'https://icons.duckduckgo.com'
+  ].forEach((source) => {
+    assert.ok(imgSrc.includes(source), `img-src must allow the favicon host ${source}`);
+  });
+
   // A remote image is never a wallpaper source (script.js ships relative `images/…`
   // paths and host URLs only), so https: is not opened up wholesale.
   assert.ok(!imgSrc.includes('https:'), 'img-src must list hosts, not the whole https: scheme');
@@ -2838,9 +2852,11 @@ test('the wallpaper itself never reaches the network, and the apps only name pre
     assert.ok(!/https?:\/\//.test(source), `${file} must not reference a remote URL`);
   });
 
-  // script.js names exactly two kinds of address: the quick-add presets and the
-  // `https://example.com` placeholder in the card's form. Every one of them is only
-  // ever handed to the OS browser — the page loads none of them.
+  // script.js names exactly three kinds of address: the quick-add presets, the
+  // `https://example.com` placeholder in the card's form, and the one favicon endpoint
+  // `serviceFaviconUrl` builds. Every preset and placeholder is only ever handed to the
+  // OS browser — the page loads none of them; the favicon endpoint is only ever an
+  // `<img src>`/CSP source, never a fetch.
   const script = readText('script.js');
   const hosts = new Set();
   script.replace(/https?:\/\/([^/'"\s)]+)/g, (match, host) => {
@@ -2848,15 +2864,18 @@ test('the wallpaper itself never reaches the network, and the apps only name pre
     return match;
   });
   const expected = new Set(
-    DynaWall.APP_PRESETS.map((preset) => new URL(preset.url).host).concat('example.com')
+    DynaWall.APP_PRESETS.map((preset) => new URL(preset.url).host)
+      .concat('example.com')
+      .concat('www.google.com')
   );
   assert.deepEqual(
     Array.from(hosts).sort(),
     Array.from(expected).sort(),
-    'script.js must name exactly the presets and the form placeholder'
+    'script.js must name exactly the presets, the form placeholder and the favicon endpoint'
   );
 
-  // A page that opens links instead of loading them: no request of any kind.
+  // A page that opens links instead of loading them: no request of its own — the favicon
+  // is an image the browser (or the native host) fetches, not a `fetch()` from this code.
   assert.ok(!/\bfetch\(|XMLHttpRequest|fetchJson\(/.test(script), 'the page makes no request');
   assert.ok(
     !/<iframe|new Image\(|<script[^>]+src="https?:/.test(script),
@@ -3412,6 +3431,41 @@ test('the macOS host forwards desktop clicks into a card without taking any', ()
   assert.match(swift, /NSEvent\.removeMonitor\(clickMonitor\)/);
 });
 
+test('the macOS host fetches favicons natively, with mirrors behind Google', () => {
+  const swift = hostSwift();
+
+  // The bridge is registered on every display and removed with it, exactly like the other
+  // two: a handler left on a dead web view keeps the bridge reachable from WebKit.
+  assert.match(swift, /static let faviconName = "dynawallFavicon"/);
+  assert.match(swift, /add\(widgetBridge, name: WidgetMessageHandler\.faviconName\)/);
+  assert.match(
+    swift,
+    /removeScriptMessageHandler\(forName: WidgetMessageHandler\.faviconName\)/
+  );
+
+  // The page may only ask for the one endpoint `serviceFaviconUrl` builds: https, Google's
+  // `/s2/favicons`, nothing else. The host derives every fallback itself.
+  assert.match(swift, /static func isFaviconURL\(_ target: String\) -> Bool/);
+  assert.match(swift, /url\.host\?\.lowercased\(\) == "www\.google\.com"/);
+  assert.match(swift, /url\.path == "\/s2\/favicons"/);
+  assert.match(swift, /static func faviconHost\(from url: URL\) -> String\?/);
+
+  // Three sources, in order: Google, DuckDuckGo's icon service, then the site's own icon.
+  assert.match(swift, /https:\/\/icons\.duckduckgo\.com\/ip3\/\\\(host\)\.ico/, 'DuckDuckGo is the first mirror');
+  assert.match(swift, /https:\/\/\\\(host\)\/favicon\.ico/, 'the site itself is the last resort');
+  assert.match(swift, /index: index \+ 1/, 'a non-200 moves on to the next source');
+
+  // Answers are cached, decoded, and handed to the page as the `data:` URI the canvas needs.
+  assert.match(swift, /faviconCache\[target\] = dataURI/, 'an answer is cached per endpoint');
+  assert.match(swift, /data:image\/png;base64,/, 'the bytes travel as PNG');
+  assert.match(
+    swift,
+    /window\.DynaWall\.receiveFaviconData\(a\[0\],a\[1\]\)/,
+    'the keyed-out glyph is requested from the page'
+  );
+  assert.match(swift, /dataURI: ""/, 'an empty answer is delivered, so the monogram can step in');
+});
+
 test('a card takes the keyboard while it is open and gives it straight back', () => {
   const swift = hostSwift();
 
@@ -3593,17 +3647,44 @@ test('a shortcut address is a plain https page, or nothing at all', () => {
   );
 });
 
-test('a shortcut wears a built-in vector mark, its initials, or the generic window', () => {
-  // Every mark is path data in script.js: nothing is fetched and no favicon pixels are
-  // guessed at, so the icons render identically on every host, online or offline.
-  assert.equal(typeof DynaWall.serviceFaviconUrl, 'undefined', 'no favicon service is consulted');
+test('a shortcut wears an instant brand mark, or its own site\'s white favicon glyph', () => {
+  // Two halves, one catalogue. A curated brand (`icon.domains`) is path data in script.js:
+  // instant, crisp and offline. Everything else wears its site's favicon, fetched once,
+  // keyed out to a white glyph, cached — and backed by a hidden fallback, so an offline
+  // launch is never an invisible button.
   const script = readText('script.js');
-  assert.ok(!/s2\/favicons|widget-favicon|getImageData/.test(script), 'no raster favicon pipeline');
+  assert.match(script, /function serviceFaviconUrl\(url, size\)/, 'the favicon endpoint exists');
+  assert.match(script, /function faviconToWhiteGlyph\(imgData\)/, 'the pixels are keyed out');
+  assert.match(script, /function hydrateFaviconGlyph\(container, win, doc\)/, 'and hydrated');
+  assert.match(script, /messageHandlers\.dynawallFavicon/, 'the macOS bridge is asked first');
+  assert.match(script, /hydrateFaviconGlyph\(button, win, doc\)/, 'a satellite is hydrated');
+  assert.match(script, /hydrateFaviconGlyph\(glyph, win, doc\)/, 'so is an Apps row');
 
-  // Every preset wears its curated brand mark, never a monogram.
+  // The endpoint is Google's high-resolution service, keyed by the bare host.
+  assert.equal(
+    DynaWall.serviceFaviconUrl('https://www.news.ycombinator.com/x?q=1', 128),
+    'https://www.google.com/s2/favicons?domain=news.ycombinator.com&sz=128'
+  );
+  assert.equal(
+    DynaWall.serviceFaviconUrl('https://example.com/', 64),
+    'https://www.google.com/s2/favicons?domain=example.com&sz=64'
+  );
+  assert.equal(DynaWall.serviceFaviconUrl('not a url'), '', 'no host, no request');
+  assert.equal(DynaWall.serviceFaviconUrl(''), '');
+
+  // Every preset, and every curated brand domain, is instant vector art: no `<img>`, no
+  // request, no flash of a coloured tile.
   DynaWall.APP_PRESETS.forEach((preset) => {
     const markup = DynaWall.serviceGlyphMarkup(DynaWall.createCustomService(preset.title, preset.url));
-    assert.match(markup, /^<svg class="widget-icon/, `${preset.title} wears a vector mark`);
+    assert.match(markup, /^<svg class="widget-icon/, `${preset.title} wears its vector brand mark`);
+    assert.ok(!/widget-favicon/.test(markup), `${preset.title} fetches nothing`);
+  });
+  DynaWall.SERVICE_ICONS.filter((icon) => icon.domains).forEach((icon) => {
+    const markup = DynaWall.serviceGlyphMarkup({
+      title: icon.label,
+      url: 'https://' + icon.domains[0] + '/'
+    });
+    assert.match(markup, /^<svg class="widget-icon/, `${icon.id} is a brand mark, not a favicon`);
   });
 
   // The host is matched first, then the words.
@@ -3618,19 +3699,57 @@ test('a shortcut wears a built-in vector mark, its initials, or the generic wind
   assert.match(DynaWall.serviceIconMarkup('notion'), /class="widget-icon"/);
   assert.ok(!/is-solid/.test(DynaWall.serviceIconMarkup('notion')));
 
-  // An unknown site wears its initials; nothing at all wears the generic window.
-  assert.equal(
-    DynaWall.serviceGlyphMarkup({ title: 'Hacker News', url: 'https://news.ycombinator.com/' }),
-    '<span class="widget-monogram">HN</span>'
+  // An app outside the catalogue wears an `<img>` from its own host, with the fallback
+  // hidden behind it — the monogram, the category mark, or the generic window.
+  const custom = DynaWall.serviceGlyphMarkup({ title: 'Hacker News', url: 'https://news.ycombinator.com/' });
+  assert.match(custom, /^<img class="widget-favicon"/, 'a custom site fetches its favicon');
+  assert.ok(
+    custom.includes('https://www.google.com/s2/favicons?domain=news.ycombinator.com'),
+    'from its own host'
   );
+  assert.match(
+    custom,
+    /data-favicon-url="https:\/\/www\.google\.com\/s2\/favicons\?domain=news\.ycombinator\.com&amp;sz=128"/
+  );
+  assert.match(
+    custom,
+    /<span class="widget-fallback" style="display:none;"><span class="widget-monogram">HN<\/span><\/span>/,
+    'the monogram waits behind it'
+  );
+  assert.match(custom, /onerror="this\.style\.display='none'/, 'a failed image reveals the fallback');
+
+  // A category hint is the fallback, not the mark: the favicon is still attempted, and the
+  // category vector is what steps in when it cannot be had.
+  const hinted = DynaWall.serviceGlyphMarkup({
+    title: 'My Calendar',
+    url: 'https://example.com/calendar'
+  });
+  assert.match(hinted, /^<img class="widget-favicon"/, 'a hinted app still fetches its favicon');
+  const fallbackAt = hinted.indexOf('<span class="widget-fallback"');
+  assert.ok(fallbackAt > 0, 'and keeps a fallback');
+  assert.match(hinted.slice(fallbackAt), /<svg class="widget-icon/, 'the category mark is the fallback');
+
+  // Nothing to fetch and nothing chosen: the generic window, never an empty satellite.
   assert.equal(
     DynaWall.serviceGlyphMarkup({ title: '', url: '' }),
     DynaWall.serviceIconMarkup(DynaWall.GENERIC_ICON_ID)
   );
+  // An explicitly chosen mark with no address wears that mark outright.
   assert.equal(
-    DynaWall.serviceGlyphMarkup({ title: '<img src=x onerror=alert(1)>', url: 'https://example.com' }),
-    '<span class="widget-monogram">IS</span>',
-    'markup in a title cannot reach the page'
+    DynaWall.serviceGlyphMarkup({ title: 'Calendar', url: '', icon: 'calendar' }),
+    DynaWall.serviceIconMarkup('calendar')
+  );
+
+  // Markup in a title cannot reach the page: the attribute is escaped, and the fallback is
+  // a monogram of letters rather than a tag.
+  const hostile = DynaWall.serviceGlyphMarkup({
+    title: '<img src=x onerror=alert(1)>',
+    url: 'https://example.com'
+  });
+  assert.match(hostile, /alt="&lt;img src=x onerror=alert\(1\)&gt;"/, 'the title is escaped');
+  assert.ok(
+    hostile.includes('<span class="widget-monogram">IS</span>'),
+    'and the fallback is still two letters'
   );
 
   // A legacy id still reads as its brand.
@@ -3652,14 +3771,309 @@ test('a shortcut wears a built-in vector mark, its initials, or the generic wind
   assert.equal(DynaWall.serviceMonogram('', 'https://example.com'), 'EX', 'unnamed: the host names it');
 });
 
+/**
+ * A favicon bitmap as a canvas would hand it over: `size` square, every pixel painted by
+ * `paint(x, y)`, which returns `[r, g, b, a]` (or nothing for transparent).
+ */
+function fakeFaviconPixels(size, paint) {
+  const data = new Uint8ClampedArray(size * size * 4);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const rgba = paint(x, y) || [0, 0, 0, 0];
+      const i = (y * size + x) * 4;
+      data[i] = rgba[0];
+      data[i + 1] = rgba[1];
+      data[i + 2] = rgba[2];
+      data[i + 3] = rgba[3];
+    }
+  }
+  return { data: data, width: size, height: size };
+}
+
+/** How many pixels of a glyph buffer a viewer would actually see. */
+function countGlyphPixels(imageData) {
+  let visible = 0;
+  for (let i = 3; i < imageData.data.length; i += 4) {
+    if (imageData.data[i] > 32) visible += 1;
+  }
+  return visible;
+}
+
+/**
+ * A document just real enough for the glyph pipeline: its canvas hands back the pixels it
+ * was opened with and a marker `data:` URI, and `querySelectorAll('.widget-favicon')`
+ * finds the nodes registered in `images`.
+ */
+function fakeGlyphDocument(imageData) {
+  const images = [];
+  return {
+    images: images,
+    querySelectorAll(selector) {
+      return selector === '.widget-favicon' ? images.slice() : [];
+    },
+    createElement(tag) {
+      if (tag === 'canvas') {
+        return {
+          width: 0,
+          height: 0,
+          getContext() {
+            return {
+              clearRect() {},
+              drawImage() {},
+              getImageData() {
+                return {
+                  data: new Uint8ClampedArray(imageData.data),
+                  width: imageData.width,
+                  height: imageData.height
+                };
+              },
+              putImageData() {}
+            };
+          },
+          toDataURL() {
+            return 'data:image/png;base64,GLYPH';
+          }
+        };
+      }
+      if (tag === 'img') {
+        // A loader that has already decoded: setting `src` fires `onload` immediately.
+        const loader = { complete: true, naturalWidth: imageData.width, onload: null, onerror: null };
+        let src = '';
+        Object.defineProperty(loader, 'src', {
+          get() {
+            return src;
+          },
+          set(value) {
+            src = value;
+            if (typeof loader.onload === 'function') loader.onload();
+          }
+        });
+        return loader;
+      }
+      return null;
+    }
+  };
+}
+
+/** A `.widget-favicon` node: attributes, inline style, and the fallback beside it. */
+function fakeFaviconImage(faviconUrl, doc) {
+  const attrs = { src: faviconUrl, 'data-favicon-url': faviconUrl };
+  const listeners = { load: [], error: [] };
+  const fallback = { style: { display: 'none' } };
+  const img = {
+    style: { display: '' },
+    nextElementSibling: fallback,
+    fallback: fallback,
+    complete: false,
+    naturalWidth: 0,
+    getAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null;
+    },
+    setAttribute(name, value) {
+      attrs[name] = String(value);
+    },
+    removeAttribute(name) {
+      delete attrs[name];
+    },
+    addEventListener(type, listener) {
+      if (listeners[type]) listeners[type].push(listener);
+    },
+    fireLoad() {
+      listeners.load.slice().forEach((listener) => listener());
+    },
+    fireError() {
+      listeners.error.slice().forEach((listener) => listener());
+    }
+  };
+  Object.defineProperty(img, 'src', {
+    get() {
+      return attrs.src;
+    },
+    set(value) {
+      attrs.src = value;
+    }
+  });
+  if (doc) doc.images.push(img);
+  return img;
+}
+
+test('a favicon is keyed out to white ink, or handed back to its fallback', () => {
+  const size = 64;
+  const mark = (x, y) => x >= 16 && x < 48 && y >= 16 && y < 48;
+
+  // An opaque dark plate with a mark on it: the plate disappears, the mark turns white.
+  const darkPlate = fakeFaviconPixels(size, (x, y) =>
+    mark(x, y) ? [250, 250, 250, 255] : [18, 18, 18, 255]
+  );
+  DynaWall.faviconToWhiteGlyph(darkPlate);
+  assert.ok(countGlyphPixels(darkPlate) > 500, 'the mark survives the conversion');
+  assert.equal(darkPlate.data[3], 0, 'the dark plate is keyed out, corner and all');
+  for (let i = 0; i < darkPlate.data.length; i += 4) {
+    if (darkPlate.data[i + 3] > 32) {
+      assert.equal(darkPlate.data[i], 255, 'a glyph pixel is #ffffff (R)');
+      assert.equal(darkPlate.data[i + 1], 255, 'a glyph pixel is #ffffff (G)');
+      assert.equal(darkPlate.data[i + 2], 255, 'a glyph pixel is #ffffff (B)');
+    }
+  }
+
+  // A light plate is no harder: the mark is dark, and it still comes out white.
+  const lightPlate = fakeFaviconPixels(size, (x, y) =>
+    mark(x, y) ? [24, 24, 24, 255] : [246, 246, 246, 255]
+  );
+  DynaWall.faviconToWhiteGlyph(lightPlate);
+  assert.ok(countGlyphPixels(lightPlate) > 500, 'a dark mark on a light plate survives');
+  assert.equal(lightPlate.data[3], 0, 'the light plate is keyed out too');
+
+  // A 1..3px border around a uniform plate: the border goes with the plate.
+  const bordered = fakeFaviconPixels(size, (x, y) => {
+    if (x < 4 || y < 4 || x >= size - 4 || y >= size - 4) return [255, 96, 0, 255];
+    return mark(x, y) ? [255, 255, 255, 255] : [255, 96, 0, 255];
+  });
+  DynaWall.faviconToWhiteGlyph(bordered);
+  assert.ok(countGlyphPixels(bordered) > 200, 'the mark inside a bordered tile survives');
+  assert.equal(bordered.data[3], 0, 'the border is keyed out');
+
+  // Nothing to extract: a solid tile and a fully transparent one are both "no glyph".
+  const solid = fakeFaviconPixels(size, () => [30, 30, 30, 255]);
+  DynaWall.faviconToWhiteGlyph(solid);
+  assert.equal(countGlyphPixels(solid), 0, 'a solid tile is not a glyph');
+  const blank = fakeFaviconPixels(size, () => [0, 0, 0, 0]);
+  DynaWall.faviconToWhiteGlyph(blank);
+  assert.equal(countGlyphPixels(blank), 0, 'a transparent tile is not a glyph');
+
+  // Nothing at all is left alone rather than invented.
+  assert.equal(DynaWall.faviconToWhiteGlyph(null), null);
+
+  // The native answer: keyed out, cached, and painted onto the waiting `<img>`.
+  const doc = fakeGlyphDocument(darkPlate);
+  const img = fakeFaviconImage(
+    'https://www.google.com/s2/favicons?domain=news.ycombinator.com&sz=128',
+    doc
+  );
+  const faviconUrl = img.getAttribute('data-favicon-url');
+  assert.equal(DynaWall.receiveFaviconData(faviconUrl, 'data:image/png;base64,RAW', doc, null), true);
+  assert.equal(img.getAttribute('data-glyph-ready'), 'true', 'the glyph is ready');
+  assert.equal(img.src, 'data:image/png;base64,GLYPH', 'the raw tile is replaced by the keyed-out glyph');
+  assert.equal(img.style.display, '', 'the image is shown');
+  assert.equal(img.fallback.style.display, 'none', 'and the fallback stays hidden');
+
+  // A satellite hydrated before it is inserted still receives its answer: the element is
+  // tracked, which is what the document query alone could never see.
+  const trackedNode = fakeFaviconImage(
+    'https://www.google.com/s2/favicons?domain=tracked.example&sz=128',
+    null
+  );
+  const trackedUrl = trackedNode.getAttribute('data-favicon-url');
+  const trackedDoc = fakeGlyphDocument(darkPlate);
+  const posted = [];
+  const postedWin = {
+    webkit: {
+      messageHandlers: {
+        dynawallFavicon: {
+          postMessage(value) {
+            posted.push(value);
+          }
+        }
+      }
+    }
+  };
+  DynaWall.hydrateFaviconGlyph({ querySelector: () => trackedNode }, postedWin, trackedDoc);
+  assert.deepEqual(posted, [trackedUrl], 'the native host is asked once for the endpoint');
+  assert.equal(trackedNode.getAttribute('data-glyph-ready'), null, 'nothing is painted before the answer');
+  assert.equal(DynaWall.receiveFaviconData(trackedUrl, 'data:image/png;base64,RAW', trackedDoc, null), true);
+  assert.equal(trackedNode.getAttribute('data-glyph-ready'), 'true', 'a detached node still gets its glyph');
+  assert.equal(trackedNode.src, 'data:image/png;base64,GLYPH');
+
+  // …and the cache short-circuits the next one: no bridge call, no second decode.
+  const cachedNode = fakeFaviconImage(trackedUrl, null);
+  const askedAgain = [];
+  DynaWall.hydrateFaviconGlyph(
+    { querySelector: () => cachedNode },
+    { webkit: { messageHandlers: { dynawallFavicon: { postMessage: (value) => askedAgain.push(value) } } } },
+    trackedDoc
+  );
+  assert.equal(cachedNode.getAttribute('data-glyph-ready'), 'true', 'a cached glyph is painted at once');
+  assert.equal(askedAgain.length, 0, 'and the host is not asked again');
+
+  // A browser host has no bridge: the `<img>` itself is keyed out when it loads.
+  const browserDoc = fakeGlyphDocument(darkPlate);
+  const browserImg = fakeFaviconImage(
+    'https://www.google.com/s2/favicons?domain=browser.example&sz=128',
+    browserDoc
+  );
+  browserImg.complete = true;
+  browserImg.naturalWidth = size;
+  DynaWall.hydrateFaviconGlyph({ querySelector: () => browserImg }, {}, browserDoc);
+  assert.equal(browserImg.getAttribute('data-glyph-ready'), 'true', 'a browser host converts the image itself');
+  assert.equal(browserImg.src, 'data:image/png;base64,GLYPH');
+
+  // A failed answer (offline, 404 on every mirror) reveals the fallback instead of leaving
+  // an invisible button: the image steps aside and the monogram takes its place.
+  const failedDoc = fakeGlyphDocument(darkPlate);
+  const failedImg = fakeFaviconImage(
+    'https://www.google.com/s2/favicons?domain=offline.example&sz=128',
+    failedDoc
+  );
+  const failedUrl = failedImg.getAttribute('data-favicon-url');
+  assert.equal(DynaWall.receiveFaviconData(failedUrl, '', failedDoc, null), false, 'no bytes, no glyph');
+  assert.equal(failedImg.style.display, 'none', 'the image steps aside');
+  assert.equal(failedImg.fallback.style.display, '', 'and the fallback steps in');
+  assert.equal(failedImg.getAttribute('data-glyph-ready'), null, 'no glyph is claimed');
+
+  // A browser host whose `<img>` never receives the tile (offline, 404, a blocking host)
+  // fires `error`, never `load`. The stylesheet keeps the raw tile at `opacity: 0`, so that
+  // listener is the only thing between the user and an invisible satellite.
+  const brokenDoc = fakeGlyphDocument(darkPlate);
+  const brokenImg = fakeFaviconImage(
+    'https://www.google.com/s2/favicons?domain=broken.example&sz=128',
+    brokenDoc
+  );
+  brokenImg.complete = true;
+  brokenImg.naturalWidth = 0;
+  DynaWall.hydrateFaviconGlyph({ querySelector: () => brokenImg }, {}, brokenDoc);
+  assert.equal(brokenImg.getAttribute('data-glyph-ready'), null, 'a broken tile claims no glyph');
+  brokenImg.fireError();
+  assert.equal(brokenImg.style.display, 'none', 'the broken tile steps aside');
+  assert.equal(brokenImg.fallback.style.display, '', 'and the fallback steps in');
+
+  // A solid tile is a failure too: the converter yields nothing, so the same transition
+  // happens even though the host *did* answer.
+  const tileDoc = fakeGlyphDocument(fakeFaviconPixels(size, () => [30, 30, 30, 255]));
+  const tileImg = fakeFaviconImage(
+    'https://www.google.com/s2/favicons?domain=solid.example&sz=128',
+    tileDoc
+  );
+  DynaWall.receiveFaviconData(tileImg.getAttribute('data-favicon-url'), 'data:image/png;base64,RAW', tileDoc, null);
+  assert.equal(tileImg.style.display, 'none', 'a blank tile is not painted');
+  assert.equal(tileImg.fallback.style.display, '', 'the fallback is revealed');
+
+  // An empty favicon URL is not a request at all, and hydrating nothing does nothing.
+  assert.equal(DynaWall.receiveFaviconData('', 'data:image/png;base64,RAW', doc, null), false);
+  DynaWall.hydrateFaviconGlyph(null, {}, doc);
+});
+
 test('satellite styling paints every mark in the one white ink', () => {
   const css = readText('style.css');
-  assert.ok(!/widget-favicon|widget-filter-defs/.test(css), 'no favicon styling is left behind');
-  assert.ok(!/<filter/.test(readText('index.html')), 'no SVG filter pipeline is left behind');
+
+  // The favicon is a mark, not a plate: it fills the button, stays invisible until its
+  // glyph is ready (so a coloured tile never flashes), and fades in as white pixels.
+  assert.match(css, /\.widget-favicon\s*\{[^}]*width:\s*100%/, 'the favicon fills its button');
+  assert.match(css, /\.widget-favicon\s*\{[^}]*opacity:\s*0/, 'the raw tile never shows');
+  assert.match(css, /\.widget-favicon\[data-glyph-ready="true"\]\s*\{[^}]*opacity:\s*1/);
+  assert.match(css, /\.widget-fallback\s*\{[^}]*display:\s*contents/, 'the fallback lays out like a glyph');
+  assert.match(
+    css,
+    /\.widget-service-glyph \.widget-favicon\s*\{[^}]*width:\s*1\.55rem/,
+    'an Apps row scales the glyph to the list'
+  );
+  // The satellite itself is still a bare glyph: no disc, no plate, no ring.
+  assert.ok(!/\.widget-btn[^{]*\{[^}]*border-radius/.test(css), 'no plate sneaks back in');
+
   assert.match(css, /\.widget-icon\s*\{[^}]*stroke:\s*currentColor/);
   assert.match(css, /\.widget-icon\.is-solid\s*\{[^}]*fill:\s*currentColor/);
   assert.match(css, /\.widget-monogram\s*\{[^}]*font-family:\s*var\(--font-sans\)/);
   assert.match(css, /\.widget-service-glyph\s*\{[^}]*color:\s*var\(--widget-ink\)/);
+  assert.ok(!/<filter/.test(readText('index.html')), 'no SVG filter pipeline is left behind');
 });
 
 test('the catch-all is the generic window mark', () => {

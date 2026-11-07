@@ -62,9 +62,16 @@
  *
  * The apps themselves are the user's, not the host's: the list is added, launched and
  * forgotten on the wallpaper (`+` → Apps) and cached in `localStorage`
- * (`dynawall.customServices`), so no host control has to know what an app is. A page
- * that fetches nothing can launch anything: the wallpaper never loads the site it
- * opens, which is why the Content Security Policy allows no remote host at all.
+ * (`dynawall.customServices`), so no host control has to know what an app is. The
+ * wallpaper never loads the site it opens — an app is handed to the OS browser — but it
+ * does draw the app's own mark, so icons are a hybrid: a curated brand in `SERVICE_ICONS`
+ * (a domain, a filled or stroked path) renders instantly as vector art with no request at
+ * all, while every other app fetches its high-resolution favicon, keys the background
+ * plate out on an offscreen canvas (`faviconToWhiteGlyph`) and paints the resulting
+ * `#ffffff` glyph — falling back to its category mark, initials or the generic window
+ * whenever there is nothing to fetch, which is why the Content Security Policy names the
+ * favicon hosts and nothing else. Native hosts fetch the same mark themselves
+ * (`dynawallFavicon`), so the canvas never sees a cross-origin image.
  *
  * Suspension: `setSuspended(true)` — from `livelyPropertyListener('suspend', …)`,
  * `DynaWall.setSuspended(...)` or `document.visibilitychange` — parks the clock and
@@ -2367,6 +2374,24 @@
   }
 
   /**
+   * The high-resolution favicon endpoint for an address, or `''`.
+   *
+   * The one remote address the wallpaper ever names: a curated brand needs it not at all
+   * (its mark is path data in this file), but every other app wears its own site's mark.
+   * Browser hosts paint the `<img>` straight from here — `index.html`'s policy allows
+   * exactly this host (and the CDNs Google redirects to) — while the macOS host fetches
+   * the same URL natively through `dynawallFavicon` and hands the bytes back as a `data:`
+   * URI, which is what keeps the offscreen canvas untainted so the glyph can be keyed
+   * out to pure white.
+   */
+  function serviceFaviconUrl(url, size) {
+    const host = serviceHostName(url);
+    if (!host) return '';
+    const sz = Number(size) || 128;
+    return 'https://www.google.com/s2/favicons?domain=' + encodeURIComponent(host) + '&sz=' + sz;
+  }
+
+  /**
    * The ids a shortcut may have been saved with before the catalogue named brands.
    * A stored id is resolved through this map on every read, so an old list upgrades
    * itself instead of losing its marks.
@@ -2462,26 +2487,627 @@
   }
 
   /**
-   * The mark a service wears, always a bare white vector drawn from this file:
-   * its stored or matched catalogue mark, else its initials, else the generic window.
-   * Nothing is fetched and no pixels are guessed at, so every icon renders the same
-   * way on every host, online or offline.
+   * Normalises the bounding box of a white-on-transparent glyph buffer so icons whose
+   * background plates were stripped away still share a consistent visual weight (~78% of
+   * the icon box) with the vector brand marks beside them.
    */
-  function serviceGlyphMarkup(service) {
-    const title = service && service.title;
-    const url = service && service.url;
-    const id = normalizeServiceIcon(service && service.icon) || serviceIconId(title, url);
-    const icon = serviceIconMarkup(id);
-    if (icon) return icon;
+  function normalizeGlyphBounds(data, w, h) {
+    const total = w * h;
+    let minX = w;
+    let minY = h;
+    let maxX = -1;
+    let maxY = -1;
+    for (let y = 0; y < h; y += 1) {
+      for (let x = 0; x < w; x += 1) {
+        if (data[(y * w + x) * 4 + 3] > 40) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    const bw = maxX - minX + 1;
+    const bh = maxY - minY + 1;
+    const maxDim = Math.max(bw, bh);
+    const targetDim = w * 0.78;
+    if (maxDim >= 6 && (maxDim < w * 0.70 || maxDim > w * 0.86)) {
+      const scale = Math.min(1.65, Math.max(0.80, targetDim / maxDim));
+      const cx = (minX + maxX) * 0.5;
+      const cy = (minY + maxY) * 0.5;
+      const halfW = (w - 1) * 0.5;
+      const halfH = (h - 1) * 0.5;
+      const srcAlpha = new Uint8Array(total);
+      for (let p = 0; p < total; p += 1) srcAlpha[p] = data[p * 4 + 3];
+      for (let y = 0; y < h; y += 1) {
+        for (let x = 0; x < w; x += 1) {
+          const sx = (x - halfW) / scale + cx;
+          const sy = (y - halfH) / scale + cy;
+          let a = 0;
+          if (sx >= 0 && sx <= w - 1 && sy >= 0 && sy <= h - 1) {
+            const x0 = sx | 0;
+            const y0 = sy | 0;
+            const x1 = Math.min(w - 1, x0 + 1);
+            const y1 = Math.min(h - 1, y0 + 1);
+            const fx = sx - x0;
+            const fy = sy - y0;
+            const a00 = srcAlpha[y0 * w + x0];
+            const a10 = srcAlpha[y0 * w + x1];
+            const a01 = srcAlpha[y1 * w + x0];
+            const a11 = srcAlpha[y1 * w + x1];
+            a = Math.round(
+              a00 * (1 - fx) * (1 - fy) +
+                a10 * fx * (1 - fy) +
+                a01 * (1 - fx) * fy +
+                a11 * fx * fy
+            );
+          }
+          data[(y * w + x) * 4 + 3] = a;
+        }
+      }
+    }
+  }
+
+  /**
+   * Pure pixel processor: turns any favicon RGBA buffer into a crisp white (`#ffffff`)
+   * glyph with a transparent background, keying out uniform, bordered, or gradient
+   * background plates so opaque favicons never turn into solid white blocks.
+   *
+   * Nothing here touches the DOM, which is what makes the conversion testable headlessly:
+   * a `{ data, width, height }` object in, the same object normalised out. A blank or
+   * solid tile comes back fully transparent, so the caller can let the monogram step in.
+   */
+  function faviconToWhiteGlyph(imgData) {
+    if (!imgData || !imgData.data || !imgData.width || !imgData.height) return imgData;
+    const w = imgData.width;
+    const h = imgData.height;
+    const data = imgData.data;
+    const total = w * h;
+
+    // 1. Distance transform (in steps of 0..6 px) from transparent exterior (A < 180)
+    //    or image border, so we can sample the background plate inside any AA fringe.
+    const dist = new Uint8Array(total);
+    let opaqueCount = 0;
+    for (let y = 0; y < h; y += 1) {
+      for (let x = 0; x < w; x += 1) {
+        const p = y * w + x;
+        if (data[p * 4 + 3] < 180) {
+          dist[p] = 0;
+        } else {
+          opaqueCount += 1;
+          if (x === 0 || x === w - 1 || y === 0 || y === h - 1) {
+            dist[p] = 1;
+          } else {
+            dist[p] = 255;
+          }
+        }
+      }
+    }
+    for (let pass = 0; pass <= 6; pass += 1) {
+      for (let y = 1; y < h - 1; y += 1) {
+        for (let x = 1; x < w - 1; x += 1) {
+          const p = y * w + x;
+          if (dist[p] > pass) {
+            if (
+              dist[p - 1] === pass ||
+              dist[p + 1] === pass ||
+              dist[p - w] === pass ||
+              dist[p + w] === pass
+            ) {
+              dist[p] = pass + 1;
+            }
+          }
+        }
+      }
+    }
+
+    function findDominantRim(minD, maxD) {
+      const bins = new Int32Array(512);
+      const binR = new Float64Array(512);
+      const binG = new Float64Array(512);
+      const binB = new Float64Array(512);
+      const idx = [];
+      for (let p = 0; p < total; p += 1) {
+        const d = dist[p];
+        if (d >= minD && d <= maxD) {
+          const i = p * 4;
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const key = ((r >> 5) << 6) | ((g >> 5) << 3) | (b >> 5);
+          bins[key] += 1;
+          binR[key] += r;
+          binG[key] += g;
+          binB[key] += b;
+          idx.push(p);
+        }
+      }
+      if (idx.length === 0) return null;
+      let bestBin = 0;
+      for (let k = 1; k < 512; k += 1) {
+        if (bins[k] > bins[bestBin]) bestBin = k;
+      }
+      const seedR = binR[bestBin] / bins[bestBin];
+      const seedG = binG[bestBin] / bins[bestBin];
+      const seedB = binB[bestBin] / bins[bestBin];
+      let sumR = 0;
+      let sumG = 0;
+      let sumB = 0;
+      let inliers = 0;
+      for (let k = 0; k < idx.length; k += 1) {
+        const i = idx[k] * 4;
+        const dr = data[i] - seedR;
+        const dg = data[i + 1] - seedG;
+        const db = data[i + 2] - seedB;
+        if (dr * dr + dg * dg + db * db <= 42 * 42) {
+          sumR += data[i];
+          sumG += data[i + 1];
+          sumB += data[i + 2];
+          inliers += 1;
+        }
+      }
+      return {
+        idx: idx,
+        count: idx.length,
+        ratio: inliers / idx.length,
+        r: sumR / Math.max(1, inliers),
+        g: sumG / Math.max(1, inliers),
+        b: sumB / Math.max(1, inliers)
+      };
+    }
+
+    let rim = findDominantRim(2, 4);
+    const innerRim = findDominantRim(4, 6);
+    let minInteriorDist = 2;
+
+    if (!rim) {
+      // Nothing opaque enough to call a plate: the mark is already cut out, so keep its
+      // silhouette and paint it in the one ink.
+      for (let i = 0; i < total * 4; i += 4) {
+        data[i] = 255;
+        data[i + 1] = 255;
+        data[i + 2] = 255;
+      }
+      normalizeGlyphBounds(data, w, h);
+      return imgData;
+    }
+
+    // If the icon has a 1..3px outer border around a uniform inner plate (e.g. Hacker News),
+    // step past the border into the inner plate (dist >= 4).
+    if (innerRim && innerRim.ratio >= 0.80) {
+      const dBorder = Math.hypot(rim.r - innerRim.r, rim.g - innerRim.g, rim.b - innerRim.b);
+      if (dBorder > 45) {
+        rim = innerRim;
+        minInteriorDist = 4;
+      }
+    }
+
+    const rimIdx = rim.idx;
+    const rimCount = rim.count;
+    const uniformRimRatio = rim.ratio;
+    const opaqueRatio = opaqueCount / total;
+
+    // Multi-coloured glyph already cut out on a transparent background (e.g. Google's 'G'):
+    // keep its existing silhouette and paint it white.
+    if (opaqueRatio < 0.62 && uniformRimRatio < 0.72) {
+      for (let i = 0; i < total * 4; i += 4) {
+        data[i] = 255;
+        data[i + 1] = 255;
+        data[i + 2] = 255;
+      }
+      normalizeGlyphBounds(data, w, h);
+      return imgData;
+    }
+
+    const colorDist = new Float32Array(total);
+    let maxDist = 0;
+
+    if (uniformRimRatio >= 0.65) {
+      const bgR = rim.r;
+      const bgG = rim.g;
+      const bgB = rim.b;
+      for (let p = 0; p < total; p += 1) {
+        if (dist[p] >= minInteriorDist) {
+          const i = p * 4;
+          const dr = data[i] - bgR;
+          const dg = data[i + 1] - bgG;
+          const db = data[i + 2] - bgB;
+          const cd = Math.sqrt(dr * dr + dg * dg + db * db);
+          colorDist[p] = cd;
+          if (cd > maxDist) maxDist = cd;
+        }
+      }
+    } else {
+      // A gradient or photographic plate: compare each interior pixel with the plate
+      // sampled around it, so a smooth background keys out without a hard threshold.
+      const step = Math.max(1, Math.floor(rimCount / 64));
+      const sampleX = [];
+      const sampleY = [];
+      const sampleR = [];
+      const sampleG = [];
+      const sampleB = [];
+      for (let k = 0; k < rimCount; k += step) {
+        const p = rimIdx[k];
+        sampleX.push(p % w);
+        sampleY.push((p / w) | 0);
+        sampleR.push(data[p * 4]);
+        sampleG.push(data[p * 4 + 1]);
+        sampleB.push(data[p * 4 + 2]);
+      }
+      const nSamples = sampleX.length;
+      for (let y = 0; y < h; y += 1) {
+        for (let x = 0; x < w; x += 1) {
+          const p = y * w + x;
+          if (dist[p] < minInteriorDist) continue;
+          let wSum = 0;
+          let rSum = 0;
+          let gSum = 0;
+          let bSum = 0;
+          for (let s = 0; s < nSamples; s += 1) {
+            const dx = x - sampleX[s];
+            const dy = y - sampleY[s];
+            const wt = 1 / (dx * dx + dy * dy + 4);
+            wSum += wt;
+            rSum += sampleR[s] * wt;
+            gSum += sampleG[s] * wt;
+            bSum += sampleB[s] * wt;
+          }
+          const i = p * 4;
+          const dr = data[i] - rSum / wSum;
+          const dg = data[i + 1] - gSum / wSum;
+          const db = data[i + 2] - bSum / wSum;
+          const cd = Math.sqrt(dr * dr + dg * dg + db * db);
+          colorDist[p] = cd;
+          if (cd > maxDist) maxDist = cd;
+        }
+      }
+    }
+
+    // Single-colour silhouette already on a transparent background: keep its alpha as-is.
+    if (maxDist < 45 && opaqueRatio < 0.62) {
+      for (let i = 0; i < total * 4; i += 4) {
+        data[i] = 255;
+        data[i + 1] = 255;
+        data[i + 2] = 255;
+      }
+      normalizeGlyphBounds(data, w, h);
+      return imgData;
+    }
+
+    // Solid blank tile with no interior mark at all: clear alpha so the fallback steps in
+    // rather than a full white square being painted onto the desktop.
+    if (maxDist < 8 && opaqueRatio >= 0.62) {
+      for (let i = 0; i < total * 4; i += 4) {
+        data[i] = 255;
+        data[i + 1] = 255;
+        data[i + 2] = 255;
+        data[i + 3] = 0;
+      }
+      return imgData;
+    }
+
+    const low = Math.max(8, maxDist * 0.18);
+    const high = Math.max(low + 10, maxDist * 0.72);
+    const span = high - low;
+
+    for (let p = 0; p < total; p += 1) {
+      const i = p * 4;
+      const origA = data[i + 3];
+      if (origA === 0 || dist[p] < minInteriorDist) {
+        data[i] = 255;
+        data[i + 1] = 255;
+        data[i + 2] = 255;
+        data[i + 3] = 0;
+        continue;
+      }
+      const t = Math.min(1, Math.max(0, (colorDist[p] - low) / span));
+      data[i] = 255;
+      data[i + 1] = 255;
+      data[i + 2] = 255;
+      data[i + 3] = Math.round(origA * t);
+    }
+
+    normalizeGlyphBounds(data, w, h);
+    return imgData;
+  }
+
+  /** White glyphs, keyed by the favicon endpoint that produced them: one per session. */
+  const FAVICON_GLYPH_CACHE = Object.create(null);
+
+  /** Endpoints a host has already been asked for, so a rebuild never doubles a request. */
+  const FAVICON_PENDING = Object.create(null);
+
+  /**
+   * The `<img>` elements waiting on a glyph.
+   *
+   * A satellite is built as markup and hydrated *before* it is appended to the orbit, so
+   * `document.querySelectorAll('.widget-favicon')` cannot see it yet. Those elements are
+   * tracked here until their glyph — or their fallback — is applied, which is what makes
+   * the desktop and the Apps card agree even when the answer arrives before insertion.
+   */
+  const FAVICON_WAITING = [];
+
+  /** Remember an `<img>` until its glyph lands; one entry per element, latest URL wins. */
+  function trackFaviconImage(img, faviconUrl) {
+    for (let i = 0; i < FAVICON_WAITING.length; i += 1) {
+      if (FAVICON_WAITING[i].el === img) {
+        FAVICON_WAITING[i].url = faviconUrl;
+        return;
+      }
+    }
+    FAVICON_WAITING.push({ el: img, url: faviconUrl });
+  }
+
+  /** Every `<img>` a glyph for `faviconUrl` could belong to: the document's and the tracked. */
+  function faviconImageTargets(doc) {
+    const targets = [];
+    const d = doc || (typeof document !== 'undefined' ? document : null);
+    if (d && typeof d.querySelectorAll === 'function') {
+      const images = d.querySelectorAll('.widget-favicon');
+      for (let i = 0; i < images.length; i += 1) targets.push(images[i]);
+    }
+    for (let i = 0; i < FAVICON_WAITING.length; i += 1) {
+      const el = FAVICON_WAITING[i].el;
+      if (targets.indexOf(el) === -1) targets.push(el);
+    }
+    return targets;
+  }
+
+  /**
+   * Paint one `<img>`: the white glyph when there is one, the fallback mark when there is
+   * not. `display` and `data-glyph-ready` always move together here, so a stale inline
+   * `display:none` can never hide a glyph that has arrived, and a revealed fallback is
+   * never left behind a glyph that has.
+   */
+  function applyFaviconGlyph(el, faviconUrl, whiteDataUrl) {
+    if (!el || typeof el.getAttribute !== 'function') return false;
+    const tracked = el.getAttribute('data-favicon-url') || el.getAttribute('src') || '';
+    if (tracked !== faviconUrl) return false;
+    const fallback = el.nextElementSibling;
+    if (whiteDataUrl) {
+      el.src = whiteDataUrl;
+      if (typeof el.setAttribute === 'function') el.setAttribute('data-glyph-ready', 'true');
+      if (el.style) el.style.display = '';
+      if (fallback && fallback.style) fallback.style.display = 'none';
+    } else {
+      if (el.style) el.style.display = 'none';
+      if (typeof el.removeAttribute === 'function') el.removeAttribute('data-glyph-ready');
+      if (fallback && fallback.style) fallback.style.display = '';
+    }
+    return true;
+  }
+
+  /** Apply a glyph (or a failure) to every image the endpoint belongs to. */
+  function applyGlyphToMatchingImages(faviconUrl, whiteDataUrl, doc) {
+    if (!faviconUrl) return false;
+    const targets = faviconImageTargets(doc);
+    let applied = false;
+    for (let i = 0; i < targets.length; i += 1) {
+      if (applyFaviconGlyph(targets[i], faviconUrl, whiteDataUrl)) applied = true;
+    }
+    if (applied) {
+      for (let i = FAVICON_WAITING.length - 1; i >= 0; i -= 1) {
+        if (FAVICON_WAITING[i].url === faviconUrl) FAVICON_WAITING.splice(i, 1);
+      }
+    }
+    return applied;
+  }
+
+  /**
+   * Draw an image onto an offscreen 64×64 canvas and key it out to a white glyph.
+   * `''` means "no glyph": a blank or solid tile, or a canvas this engine will not read.
+   */
+  function renderImageToWhiteGlyphDataUrl(img, doc) {
+    const d = doc || (typeof document !== 'undefined' ? document : null);
+    if (!d || typeof d.createElement !== 'function') return '';
+    const size = 64;
+    const canvas = d.createElement('canvas');
+    if (!canvas) return '';
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = typeof canvas.getContext === 'function' ? canvas.getContext('2d') : null;
+    if (!ctx) return '';
+    ctx.clearRect(0, 0, size, size);
+    ctx.drawImage(img, 0, 0, size, size);
+    const imageData = ctx.getImageData(0, 0, size, size);
+    faviconToWhiteGlyph(imageData);
+    let visiblePixels = 0;
+    for (let i = 3; i < imageData.data.length; i += 4) {
+      if (imageData.data[i] > 32) visiblePixels += 1;
+    }
+    if (visiblePixels < 4) return '';
+    ctx.putImageData(imageData, 0, 0);
+    return typeof canvas.toDataURL === 'function' ? canvas.toDataURL('image/png') : '';
+  }
+
+  /**
+   * The native host's answer: a `data:` URI for the favicon it fetched, or `''` when it
+   * could not get one (offline, 404 on every source). Keyed out here, cached, and applied
+   * to every `<img>` already waiting on that endpoint — in the document or not.
+   */
+  function receiveFaviconData(faviconUrl, rawDataUri, optDoc, optWin) {
+    if (!faviconUrl) return false;
+    delete FAVICON_PENDING[faviconUrl];
+    const d = optDoc || (typeof document !== 'undefined' ? document : null);
+    const w = optWin || (typeof window !== 'undefined' ? window : null);
+    if (!rawDataUri) {
+      applyGlyphToMatchingImages(faviconUrl, '', d);
+      return false;
+    }
+    if (FAVICON_GLYPH_CACHE[faviconUrl]) {
+      applyGlyphToMatchingImages(faviconUrl, FAVICON_GLYPH_CACHE[faviconUrl], d);
+      return true;
+    }
+    const loader =
+      w && typeof w.Image === 'function'
+        ? new w.Image()
+        : d && typeof d.createElement === 'function'
+        ? d.createElement('img')
+        : null;
+    if (!loader) return false;
+    let handled = false;
+    function finish() {
+      if (handled) return;
+      handled = true;
+      try {
+        const whiteDataUrl = renderImageToWhiteGlyphDataUrl(loader, d);
+        if (whiteDataUrl) FAVICON_GLYPH_CACHE[faviconUrl] = whiteDataUrl;
+        applyGlyphToMatchingImages(faviconUrl, whiteDataUrl, d);
+      } catch (err) {
+        applyGlyphToMatchingImages(faviconUrl, '', d);
+      }
+    }
+    loader.onload = finish;
+    loader.onerror = function () {
+      if (handled) return;
+      handled = true;
+      applyGlyphToMatchingImages(faviconUrl, '', d);
+    };
+    loader.src = rawDataUri;
+    if (loader.complete && loader.naturalWidth > 0) finish();
+    return true;
+  }
+
+  /**
+   * Ask for a glyph for the `<img>` inside `container`: a cached one is painted at once,
+   * the macOS host is asked through `dynawallFavicon` (it can fetch and decode without
+   * tainting the canvas), and a browser host falls back to the `<img>` loading the
+   * endpoint itself. Either way the mark ends up as white pixels, or the fallback does.
+   */
+  function hydrateFaviconGlyph(container, win, doc) {
+    if (!container || typeof container.querySelector !== 'function') return;
+    const img = container.querySelector('.widget-favicon');
+    if (!img || typeof img.getAttribute !== 'function') return;
+    const faviconUrl = img.getAttribute('data-favicon-url') || img.getAttribute('src') || '';
+    if (!faviconUrl) return;
+    if (typeof img.setAttribute === 'function') img.setAttribute('data-favicon-url', faviconUrl);
+    trackFaviconImage(img, faviconUrl);
+
+    if (FAVICON_GLYPH_CACHE[faviconUrl]) {
+      applyFaviconGlyph(img, faviconUrl, FAVICON_GLYPH_CACHE[faviconUrl]);
+      return;
+    }
+
+    const nativeHandler =
+      win &&
+      win.webkit &&
+      win.webkit.messageHandlers &&
+      win.webkit.messageHandlers.dynawallFavicon;
+    if (nativeHandler && typeof nativeHandler.postMessage === 'function') {
+      if (!FAVICON_PENDING[faviconUrl]) {
+        FAVICON_PENDING[faviconUrl] = true;
+        try {
+          nativeHandler.postMessage(faviconUrl);
+        } catch (err) {
+          delete FAVICON_PENDING[faviconUrl];
+        }
+      }
+    }
+
+    function convert() {
+      if (img.getAttribute('data-glyph-ready') === 'true') return;
+      try {
+        const whiteDataUrl = renderImageToWhiteGlyphDataUrl(img, doc);
+        if (whiteDataUrl) {
+          FAVICON_GLYPH_CACHE[faviconUrl] = whiteDataUrl;
+          applyFaviconGlyph(img, faviconUrl, whiteDataUrl);
+        } else {
+          applyFaviconGlyph(img, faviconUrl, '');
+        }
+      } catch (err) {
+        // A cross-origin image taints the canvas in some engines. Without a native bridge
+        // the site's own mark is still better than an empty button; with one, the native
+        // answer is still on its way, so keep the fallback in the meantime.
+        if (!nativeHandler) {
+          if (typeof img.setAttribute === 'function') img.setAttribute('data-glyph-ready', 'true');
+          if (img.style) img.style.display = '';
+          const fallback = img.nextElementSibling;
+          if (fallback && fallback.style) fallback.style.display = 'none';
+        } else {
+          applyFaviconGlyph(img, faviconUrl, '');
+        }
+      }
+    }
+
+    if (typeof img.addEventListener === 'function') {
+      img.addEventListener('load', convert);
+      // Offline, a 404, or a host that blocks the request: the tile never arrives, so the
+      // fallback mark takes its place instead of leaving an invisible satellite behind.
+      img.addEventListener('error', function () {
+        if (img.getAttribute('data-glyph-ready') === 'true') return;
+        applyFaviconGlyph(img, faviconUrl, '');
+      });
+    }
+    if (img.complete && img.naturalWidth > 0) convert();
+  }
+
+  /**
+   * The fallback a satellite wears when its favicon cannot be had: the stored mark, the
+   * category hint its title or address suggests, its initials, or the generic window.
+   */
+  function serviceFallbackMarkup(title, url, storedId, matchedId) {
+    const stored = serviceIconMarkup(storedId);
+    if (stored) return stored;
+    const matched = serviceIconMarkup(matchedId);
+    if (matched) return matched;
     const monogram = serviceMonogram(title, url);
     if (monogram) return '<span class="widget-monogram">' + escapeMarkup(monogram) + '</span>';
     return serviceIconMarkup(GENERIC_ICON_ID);
   }
 
   /**
-   * The mark a record wears: the brand it was saved with, or the best match for its
-   * title and address (a record saved with a kind mark upgrades to a brand once one
-   * claims it). `''` means "wear the monogram".
+   * The mark a service wears — hybrid resolution:
+   *
+   * - A curated **brand mark** (`icon.domains`) is instant, local and crisp: path data in
+   *   this file, rendered before the first frame with no request at all. Every quick-add
+   *   preset and every major service lands here.
+   * - Anything else with an `https` address gets its own site's favicon: an `<img>` paired
+   *   with a hidden `.widget-fallback` holding the category mark, monogram or window, so
+   *   an offline launch or an icon-less site is never an invisible button.
+   * - An explicitly chosen mark with no address (a host script's icon, a record saved
+   *   before its address) wears that mark outright — there is nothing to fetch.
+   */
+  function serviceGlyphMarkup(service) {
+    const title = service && service.title;
+    const url = service && service.url;
+    const storedId = normalizeServiceIcon(service && service.icon);
+    const stored = serviceIconById(storedId);
+    if (stored && stored.domains) return serviceIconMarkup(stored.id);
+
+    const matchedId = serviceIconId(title, url);
+    const matched = serviceIconById(matchedId);
+    if (matched && matched.domains) return serviceIconMarkup(matched.id);
+
+    const fallback = serviceFallbackMarkup(title, url, storedId, matchedId);
+    const faviconUrl = serviceFaviconUrl(url, 128);
+    if (!faviconUrl) return fallback;
+
+    const escapedTitle = escapeMarkup(title || serviceHostLabel(url) || 'App');
+    const escapedFaviconUrl = escapeMarkup(faviconUrl);
+    return (
+      '<img class="widget-favicon" src="' +
+      escapedFaviconUrl +
+      '" data-favicon-url="' +
+      escapedFaviconUrl +
+      '" alt="' +
+      escapedTitle +
+      // The inline handler is the belt for a host with no policy at all; the real braces are
+      // `hydrateFaviconGlyph`'s `error` listener, because `script-src` without
+      // `'unsafe-inline'` makes the CSP drop an inline handler before it ever runs.
+      '" decoding="async" onerror="this.style.display=\'none\';if(this.nextElementSibling)this.nextElementSibling.style.display=\'\';" />' +
+      '<span class="widget-fallback" style="display:none;">' +
+      fallback +
+      '</span>'
+    );
+  }
+
+  /**
+   * The mark a record is saved with: the brand it was given, else the best match for its
+   * title and address (a record saved with a category mark upgrades to a brand once one
+   * claims it), else that category mark, else `''` — "let the glyph resolution decide".
+   *
+   * A brand answers `serviceGlyphMarkup` with an instant vector; anything else is only the
+   * *fallback* behind that site's favicon, which is why a hint is worth keeping here.
    */
   function resolveServiceIcon(storedId, title, url) {
     const stored = normalizeServiceIcon(storedId);
@@ -3696,6 +4322,9 @@
       button.style.setProperty('--widget-drift-y', driftY.toFixed(2) + 'rem');
 
       button.innerHTML = serviceGlyphMarkup(service);
+      // A brand mark is finished already (it is path data); a favicon is hydrated here, on
+      // the detached button, so the glyph is in place before the satellite is ever shown.
+      hydrateFaviconGlyph(button, win, doc);
       button.addEventListener('click', function (event) {
         event.preventDefault();
         // An app is not a card: it leaves for the default browser through the same native
@@ -4460,6 +5089,7 @@
       open.title = 'Open ' + service.title;
       const glyph = el('span', 'widget-service-glyph');
       glyph.innerHTML = serviceGlyphMarkup(service);
+      hydrateFaviconGlyph(glyph, win, doc);
       open.appendChild(glyph);
       const text = el('span', 'widget-row-text');
       text.appendChild(el('span', 'widget-row-title', service.title));
@@ -4751,6 +5381,10 @@
     serviceIconMarkup: serviceIconMarkup,
     serviceMonogram: serviceMonogram,
     serviceGlyphMarkup: serviceGlyphMarkup,
+    serviceFaviconUrl: serviceFaviconUrl,
+    faviconToWhiteGlyph: faviconToWhiteGlyph,
+    receiveFaviconData: receiveFaviconData,
+    hydrateFaviconGlyph: hydrateFaviconGlyph,
     serviceHostName: serviceHostName,
     serviceHostLabel: serviceHostLabel,
     createCustomService: createCustomService,

@@ -211,7 +211,14 @@ git push origin v1.0.0
   [Google Sans Flex](https://fonts.google.com/specimen/Google+Sans+Flex),
   [Space Grotesk](https://fonts.google.com/specimen/Space+Grotesk) and
   [Geist](https://fonts.google.com/specimen/Geist) — all SIL OFL 1.1, licences in `assets/fonts/`.
-- App icons: 100% high-resolution site favicons retrieved dynamically from each site's domain and rendered with subtle rounded squircle framing. An app whose icon cannot be loaded falls back cleanly to a generic application window drawn by the wallpaper itself.
+- App icons: a hybrid of curated vector brand marks and live site favicons. Apps matching a
+  built-in brand (GitHub, ChatGPT, Claude, Gemini, YouTube, Spotify, Discord, Reddit, Slack, X,
+  Notion, Figma, Linear and the rest of the `SERVICE_ICONS` catalogue) draw crisp monochrome SVG
+  path data with no request at all; any other app has its high-resolution favicon fetched
+  (natively on macOS, through Google's favicon service with a DuckDuckGo mirror and the site's own
+  `/favicon.ico` behind it) and keyed out to a pure white glyph on an offscreen canvas. An app whose
+  icon cannot be loaded falls back cleanly to its category mark, its initials or a generic
+  application window drawn by the wallpaper itself.
 - Photos: six Golden Gate 5K time-of-day wallpapers plus six generated abstracts, free to replace via
   `GOLDEN_GATE_PHOTOS` / `ABSTRACT_PHOTOS` in `script.js`.
 
